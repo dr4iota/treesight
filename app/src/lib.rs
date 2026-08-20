@@ -257,7 +257,13 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
             // the first thing the app ever did, and it asked a question the answer
             // to which is often "the one I opened last" — a question the page can
             // put on screen instead of in the way.
+            // A phone has no argv to read, and the function that reads one is
+            // desktop's — so this is where the two platforms differ, in one line
+            // each, rather than in two copies of what follows.
+            #[cfg(desktop)]
             let opened = first_dir_arg(std::env::args().skip(1));
+            #[cfg(mobile)]
+            let opened: Option<PathBuf> = None;
             match opened {
                 Some(dir) => open_root(&handle, dir, true),
                 // Including on a phone, where there is no argv and no picker to
