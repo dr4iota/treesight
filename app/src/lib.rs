@@ -135,6 +135,14 @@ pub struct ShellExt {
     #[allow(clippy::type_complexity)]
     pub extra_sections:
         Vec<Box<dyn Fn(&AppHandle) -> Vec<treeserve::PaneSection> + Send + Sync>>,
+    /// Whether *this* shell can ask for a folder on a platform where this crate
+    /// cannot. `/.ts/open` is a link an action may claim (see [`Self::actions`]),
+    /// and a downstream app that claims it knows something this crate does not:
+    /// Android has no folder picker, but it does have a folder *grant*, and a
+    /// shell that asks for one should have a control to ask from.
+    ///
+    /// Desktop needs nothing here — the shell's own dialog is the picker.
+    pub picker: bool,
     /// What the start page says this program is, in a sentence or two. Plain
     /// text; the page escapes it. A downstream app is a different program with
     /// different reasons to exist — telesight browses machines it has a login
@@ -169,6 +177,7 @@ struct Ext {
     extra_sections:
         Vec<Box<dyn Fn(&AppHandle) -> Vec<treeserve::PaneSection> + Send + Sync>>,
     init_script: String,
+    picker: bool,
     intro: Option<String>,
     allowed_origins: Vec<String>,
 }
@@ -186,6 +195,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         extra_places: ext.extra_places,
         extra_sections: ext.extra_sections,
         init_script: ext.init_script.unwrap_or_else(|| SHORTCUTS.to_string()),
+        picker: ext.picker,
         intro: ext.intro,
         allowed_origins: ext.allowed_origins,
     });
@@ -711,8 +721,10 @@ fn start(app: &AppHandle) -> Result<(), String> {
     // Recent and the picker button. Only ever set here — a server reachable by
     // anything but this window has no business offering them.
     cfg.app_ui = true;
-    // And whether that chooser can ask this platform for a folder at all.
-    cfg.picker = cfg!(desktop);
+    // And whether that chooser can ask this platform for a folder at all: our own
+    // dialog on a desktop, or a downstream shell that claims `/.ts/open` and has
+    // something to ask with where we have not.
+    cfg.picker = cfg!(desktop) || ext.picker;
     // The name on the start page and in the window title, which have no folder
     // to be named after. From Tauri's own product name rather than this crate's:
     // a downstream shell embedding this one is a different program, and it was
