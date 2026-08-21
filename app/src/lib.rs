@@ -39,6 +39,8 @@ const RECENT_MAX: usize = 8;
 /// itself. Clicks need nothing of the sort: the page's controls are ordinary
 /// links to `/.ts/…` that `on_navigation` intercepts, which is why this script
 /// only ever navigates — the same thing a click does.
+mod usage;
+
 const SHORTCUTS: &str = r#"
 addEventListener('keydown', function (e) {
   if (e.altKey && !e.ctrlKey && e.key === 'ArrowLeft') { history.back(); }
@@ -161,6 +163,11 @@ pub struct ShellExt {
     /// suffix cannot ride the allowlist. Everything not local and not listed
     /// still opens in the user's browser.
     pub allowed_origins: Vec<String>,
+    /// Usage pages of the downstream app's own, added to this crate's set and
+    /// served from the Usage root. `(path, bytes)` pairs, `/`-joined and
+    /// relative; a page whose path is already taken replaces it, which is how
+    /// `index.md` comes to name the right program without the rest being copied.
+    pub usage_pages: Vec<(&'static str, &'static [u8])>,
     /// One shot at the builder before the shell finishes it: plugins to
     /// register, mobile-specific setup.
     #[allow(clippy::type_complexity)]
@@ -180,6 +187,7 @@ struct Ext {
     picker: bool,
     intro: Option<String>,
     allowed_origins: Vec<String>,
+    usage_pages: Vec<(&'static str, &'static [u8])>,
 }
 
 struct SharedExt(Arc<Ext>);
@@ -198,6 +206,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         picker: ext.picker,
         intro: ext.intro,
         allowed_origins: ext.allowed_origins,
+        usage_pages: ext.usage_pages,
     });
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
@@ -743,6 +752,12 @@ fn start(app: &AppHandle) -> Result<(), String> {
         .into_iter()
         .map(|(label, dir)| (label, treeserve::util::display_path(&dir)))
         .chain(ext.extra_places.iter().flat_map(|f| f(app)))
+        // Last, because it is the one row that is not a folder on this machine —
+        // and the one row that is there on a device where nothing else is yet.
+        .chain(std::iter::once((
+            usage::LABEL.to_string(),
+            usage::ROOT_ID.to_string(),
+        )))
         .collect();
     cfg.set_recent(recent(app));
     cfg.set_sections(ext.extra_sections.iter().flat_map(|f| f(app)).collect());
@@ -1171,6 +1186,9 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // already lists it. Both carry a path we rendered ourselves, though
         // `open_root` still checks it — a remembered folder can go away.
         "/.ts/root" | "/.ts/place" => match url.query_pairs().find(|(k, _)| k == "path") {
+            // Ours, and already in memory: no canonicalizing, no thread, and no
+            // status to record afterwards.
+            Some((_, path)) if usage::claims(path.trim()) => usage::open(app),
             // A remote id reaching this arm means no extension action claimed
             // it. Coercing it into a PathBuf would "open" a folder named
             // `ssh:…`, fail, and grey a healthy entry with a status nothing
