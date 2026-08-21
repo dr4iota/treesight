@@ -1277,37 +1277,49 @@ fn eval(app: &AppHandle, js: &str) {
 /// picker calls "Other Locations" and the Windows picker calls "This PC";
 /// having our own means it is in the same place on both.
 fn places(app: &AppHandle) -> Vec<(String, PathBuf)> {
-    let p = app.path();
     let mut out: Vec<(String, PathBuf)> = Vec::new();
 
-    // First on a phone, because it is the only entry that is certainly readable:
-    // everything below it resolves to a path the system may still refuse.
+    // First on a phone, and on Android the only one: a folder of the app's own is
+    // the one a phone has that nobody has to grant.
     #[cfg(mobile)]
     if let Some(dir) = app_storage_dir(app) {
         out.push(("App storage".to_string(), dir));
     }
 
-    let mut named: Vec<(&str, Option<PathBuf>)> = vec![("Home", p.home_dir().ok())];
-    // No desktop on a device with no desktop — `desktop_dir` is not among the
-    // directories the mobile resolver answers for at all.
-    #[cfg(desktop)]
-    named.push(("Desktop", p.desktop_dir().ok()));
-    named.push(("Documents", p.document_dir().ok()));
-    named.push(("Downloads", p.download_dir().ok()));
-
-    out.extend(named.into_iter().filter_map(|(label, dir)| {
-        let dir = dir?;
-        // Desktop drops what is not there; offering a folder that does not exist
-        // helps nobody. Mobile keeps it: under scoped storage `document_dir()`
-        // names a real place the app may not stat, so probing would hide exactly
-        // the entries a grant is meant to open. Listed, and answered for when it
-        // is clicked — the same trade the drive letters take below.
+    // Everywhere but Android, where all three of these name something other than
+    // what the label says. `document_dir()` and `download_dir()` resolve to
+    // `getExternalFilesDir(…)` — the app's own external folder wearing the user's
+    // folder names, so the row would promise Documents and open an empty one of
+    // ours — and `home_dir()` is `getExternalStorageDirectory()`, the volume root,
+    // which scoped storage lets nobody list. There is one way to a folder of the
+    // user's on that platform and it is asking for it, which is the picker's job.
+    //
+    // iOS is not in that position and is not excluded with it: `$HOME` there is
+    // the app's own sandbox, so Home and Documents are folders this app may read.
+    #[cfg(not(target_os = "android"))]
+    {
+        let p = app.path();
+        let mut named: Vec<(&str, Option<PathBuf>)> = vec![("Home", p.home_dir().ok())];
+        // No desktop on a device with no desktop.
         #[cfg(desktop)]
-        if !dir.is_dir() {
-            return None;
-        }
-        Some((label.to_string(), dir))
-    }));
+        named.push(("Desktop", p.desktop_dir().ok()));
+        named.push(("Documents", p.document_dir().ok()));
+        named.push(("Downloads", p.download_dir().ok()));
+
+        out.extend(named.into_iter().filter_map(|(label, dir)| {
+            let dir = dir?;
+            // Dropped if it is not there; offering a folder that does not exist
+            // helps nobody. A sandbox path is as cheap and as honest to stat as a
+            // desktop one — `$HOME/Downloads` is a folder nothing on iOS creates,
+            // and a row for it would never come good. The probe this used to skip
+            // for all of mobile was skipped for Android's reasons, and Android no
+            // longer reaches here.
+            if !dir.is_dir() {
+                return None;
+            }
+            Some((label.to_string(), dir))
+        }));
+    }
 
     // Which letters exist, asked of the system rather than of the drives. The
     // obvious loop — `is_dir()` on A:\ through Z:\ — puts a `GetFileAttributesW`
