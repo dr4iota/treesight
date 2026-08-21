@@ -6,7 +6,7 @@
 //! files to every view in `treeserve`.
 //!
 //! A program built on this shell contributes pages of its own for the things it
-//! does that this one does not, and replaces `index.md`, which is the one page
+//! does that this one does not, and replaces `README.md`, which is the one page
 //! that has to name the program it is about. Whole pages, rather than markers
 //! inside a page: what differs between two shells is nearly always a subject,
 //! not a paragraph, and a placeholder nobody filled in is visible to the reader.
@@ -29,11 +29,16 @@ pub const ROOT_ID: &str = "usage:/";
 /// What the Places row and the window title call it.
 pub const LABEL: &str = "Usage";
 
-/// This shell's own pages. Registered by hand rather than swept up from the
+/// This shell's own pages. `README.md` rather than `index.md` for the front one,
+/// because a listing already renders a README under it — so opening the folder
+/// shows the page instead of a table of file names, and the set reads the way any
+/// other folder in the tree does. See `README_NAMES` in `treeserve::page`.
+///
+/// Registered by hand rather than swept up from the
 /// directory: a file that was forgotten is then visibly absent instead of
 /// silently unreachable, and it costs no build script and no dependency.
 const PAGES: &[(&str, &[u8])] = &[
-    ("index.md", include_bytes!("../usage/index.md")),
+    ("README.md", include_bytes!("../usage/README.md")),
     ("keyboard.md", include_bytes!("../usage/keyboard.md")),
     (
         "opening-folders.md",
@@ -98,6 +103,6 @@ mod tests {
         paths.sort_unstable();
         paths.dedup();
         assert_eq!(paths.len(), count, "a page is registered twice");
-        assert!(paths.contains(&"index.md"), "the set needs an index");
+        assert!(paths.contains(&"README.md"), "the set needs a front page");
     }
 }

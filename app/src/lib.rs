@@ -166,7 +166,7 @@ pub struct ShellExt {
     /// Usage pages of the downstream app's own, added to this crate's set and
     /// served from the Usage root. `(path, bytes)` pairs, `/`-joined and
     /// relative; a page whose path is already taken replaces it, which is how
-    /// `index.md` comes to name the right program without the rest being copied.
+    /// `README.md` comes to name the right program without the rest being copied.
     pub usage_pages: Vec<(&'static str, &'static [u8])>,
     /// One shot at the builder before the shell finishes it: plugins to
     /// register, mobile-specific setup.
