@@ -201,8 +201,11 @@ nav.tree section h2:has(a.secact) {
   justify-content: space-between;
 }
 /* More than one action on a heading: they group at the far end together, so the
-   bar keeps two ends instead of spreading its children across the line. */
-nav.tree section h2 .acts { display: flex; align-items: center; gap: .35rem; }
+   bar keeps two ends instead of spreading its children across the line. Both
+   headings that carry them group the same way — the pane's and the start page's —
+   and where the two differ is only in how the group reaches the far end. */
+nav.tree section h2 .acts,
+body.nothing .start h2 .acts { display: flex; align-items: center; gap: .35rem; }
 nav.tree section h2 a.secact {
   padding: 0 .1rem;
   line-height: 1;
@@ -335,8 +338,11 @@ body.nothing .start h2 {
    than the heading beside it and the two rules underneath did not meet. Its box
    is the line's height, and the drawing overflows it: the rule is what the eye
    lines up, not the icon. */
+/* The wrapper is the flex child, so the wrapper is what goes to the far end. On
+   the anchor inside it, `margin-left: auto` moved nothing and the marks sat
+   against the heading's own words. */
+body.nothing .start h2 .acts { margin-left: auto; }
 body.nothing .start h2 a.secact {
-  margin-left: auto;
   height: 1em;
   line-height: 1;
   color: var(--muted);
