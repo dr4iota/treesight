@@ -475,7 +475,7 @@ fn head_and_header(
 <html lang="en"{data_theme}>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>{title}</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%234c8dff' stroke-width='1.4' stroke-linejoin='round'><path d='M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z'/></svg>">
 <link rel="stylesheet" href="/.ts/app.css">
@@ -526,7 +526,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
 <html lang="en"{data_theme}>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>{title}</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%234c8dff' stroke-width='1.4' stroke-linejoin='round'><path d='M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z'/></svg>">
 <link rel="stylesheet" href="/.ts/app.css">

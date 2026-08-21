@@ -53,6 +53,23 @@
 }
 
 * { box-sizing: border-box; }
+
+/* What the screen keeps for itself: a notch, a status bar, a gesture strip.
+   `env(safe-area-inset-*)` is the engine's answer and it is only non-zero when the
+   page asked to be laid out under those things — `viewport-fit=cover` in the
+   viewport meta — which is what a full-screen WebView does whether we ask or not.
+   So the padding is opt-in and the layout is not: without this the header draws
+   behind the clock.
+   The floor is for Android WebViews before Chromium 140, which report every inset
+   as zero in a full-screen WebView and are wrong. Script measures which case this
+   is and sets `--safe-floor-*`; `max()` means a WebView that does report always
+   wins, and nothing is needed at all on a desktop. */
+:root {
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-floor-top, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--safe-floor-right, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-floor-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--safe-floor-left, 0px));
+}
 html, body { margin: 0; padding: 0; }
 body {
   background: var(--bg);
@@ -72,7 +89,11 @@ header {
   flex-wrap: wrap;
   align-items: center;
   gap: .5rem 1rem;
-  padding: .5rem 1rem;
+  /* The inset goes on the padding rather than above the element: the header is
+     sticky and paints its own background, so growing it upward is what puts a
+     backplate under the status bar instead of leaving a stripe of page there. */
+  padding: calc(.5rem + var(--safe-top)) calc(1rem + var(--safe-right)) .5rem
+    calc(1rem + var(--safe-left));
   border-bottom: 1px solid var(--border);
   background: var(--bg-subtle);
   position: sticky;
@@ -171,7 +192,7 @@ nav.tree {
   max-width: 17rem;
   border-right: 1px solid var(--border);
   background: var(--bg-subtle);
-  padding: .75rem .5rem .8rem;
+  padding: .75rem .5rem .8rem calc(.5rem + var(--safe-left));
   overflow-x: hidden;
   font-size: .85rem;
 }
@@ -499,7 +520,9 @@ nav.tree .chooser .why {
   color: var(--muted);
 }
 
-main { flex: 1; min-width: 0; padding: 1rem 1.25rem 3rem; }
+/* The listing keeps clear of a cutout on its own side. Not the left: the pane is
+   there, and where the pane is gone the drawer's own padding answers for it. */
+main { flex: 1; min-width: 0; padding: 1rem calc(1.25rem + var(--safe-right)) 3rem; }
 
 table.listing { border-collapse: collapse; width: 100%; max-width: 60rem; }
 table.listing th {
@@ -771,7 +794,9 @@ iframe.raw { flex: 1; min-height: 0; display: block; width: 100%; border: 0; bac
 .bigmsg a { font-weight: 600; }
 
 footer {
-  padding: .6rem 1.25rem;
+  /* The other end: a gesture strip, or a navigation bar. */
+  padding: .6rem calc(1.25rem + var(--safe-right)) calc(.6rem + var(--safe-bottom))
+    calc(1.25rem + var(--safe-left));
   color: var(--muted);
   font-size: .75rem;
   border-top: 1px solid var(--border);
@@ -867,6 +892,11 @@ footer a.pick:hover { border-color: var(--link); background: var(--bg-subtle); t
 body.app {
   height: 100vh;
   height: 100dvh;
+  /* And then whatever the visual viewport actually is, which is the only one of
+     the three that moves when a soft keyboard opens or an address bar slides
+     away. Script sets `--vh` to a hundredth of it; the fallback is `1vh`, so a
+     window where the script never ran computes exactly the line above. */
+  height: calc(var(--vh, 1vh) * 100);
   min-height: 0;
   overflow: hidden;
 }

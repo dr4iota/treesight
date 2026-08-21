@@ -41,6 +41,64 @@ const RECENT_MAX: usize = 8;
 /// only ever navigates — the same thing a click does.
 mod usage;
 
+/// The two things about a phone's window that CSS cannot ask for itself, set as
+/// custom properties for `app.css` to use.
+///
+/// **How tall the window is.** `100vh` is the window before a soft keyboard, and
+/// `100dvh` is the window before this WebView existed on a device that has not
+/// heard of `dvh`. `visualViewport.height` is the only one that is the window
+/// *now* — keyboard up, address bar gone, both. It goes in as `--vh`, a hundredth
+/// of it, which is the shape `calc(var(--vh, 1vh) * 100)` wants and which falls
+/// back to exactly `100vh` when nothing set it.
+///
+/// **Whether `env(safe-area-inset-*)` can be believed.** Android WebViews before
+/// Chromium 140 answer zero for all four in a full-screen WebView, and are wrong:
+/// there is a status bar up there. For those, a measured floor — the numbers are
+/// from a device, they differ between portrait and landscape, and the sides stay
+/// zero because which edge a cutout is on is not knowable from here. `app.css`
+/// takes `max(env, floor)`, so a WebView that reports properly is never overruled.
+///
+/// Injected on every navigation ahead of whatever else the shell or an embedder
+/// asks for, because a window drawn under the clock is not a preference.
+pub const VIEWPORT: &str = r#"
+(function () {
+  var root = document.documentElement;
+  var vv = window.visualViewport;
+  var ua = navigator.userAgent;
+  var chrome = /Chrome\/(\d+)/.exec(ua);
+  var legacy = /Android/.test(ua) && (!chrome || +chrome[1] < 140);
+
+  function height() {
+    root.style.setProperty('--vh', ((vv && vv.height) || window.innerHeight) * 0.01 + 'px');
+  }
+  function floor() {
+    if (!legacy) { return; }
+    var o = window.screen && window.screen.orientation;
+    var landscape = o ? /^landscape/.test(o.type)
+                      : window.matchMedia('(orientation: landscape)').matches;
+    root.style.setProperty('--safe-floor-top', landscape ? '24px' : '36px');
+    root.style.setProperty('--safe-floor-bottom', '18px');
+  }
+  function both() { height(); floor(); }
+  // A rotation resolves in stages: the size changes, then the insets, and on a
+  // slow device the second one lands a frame or several after the event. Once
+  // now and once after it has settled.
+  function rotated() { both(); setTimeout(both, 300); }
+
+  both();
+  addEventListener('resize', both);
+  addEventListener('orientationchange', rotated);
+  var o = window.screen && window.screen.orientation;
+  if (o && o.addEventListener) { o.addEventListener('change', rotated); }
+  if (vv) {
+    // `resize` is the keyboard; `scroll` is the address bar being dragged away,
+    // which fires no resize of the window at all.
+    vv.addEventListener('resize', both);
+    vv.addEventListener('scroll', height);
+  }
+})();
+"#;
+
 const SHORTCUTS: &str = r#"
 addEventListener('keydown', function (e) {
   if (e.altKey && !e.ctrlKey && e.key === 'ArrowLeft') { history.back(); }
@@ -202,7 +260,13 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         actions: ext.actions,
         extra_places: ext.extra_places,
         extra_sections: ext.extra_sections,
-        init_script: ext.init_script.unwrap_or_else(|| SHORTCUTS.to_string()),
+        // `init_script` replaces the *shortcuts*. The platform script goes in
+        // either way: an embedder swapping key bindings is not asking for a
+        // window that draws behind the status bar.
+        init_script: format!(
+            "{VIEWPORT}\n{}",
+            ext.init_script.unwrap_or_else(|| SHORTCUTS.to_string())
+        ),
         picker: ext.picker,
         intro: ext.intro,
         allowed_origins: ext.allowed_origins,
