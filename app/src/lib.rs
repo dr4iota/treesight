@@ -760,6 +760,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
         )))
         .collect();
     cfg.set_recent(recent(app));
+    cfg.set_pinned(pinned(app));
     cfg.set_sections(ext.extra_sections.iter().flat_map(|f| f(app)).collect());
 
     let state = treeserve::state_for(cfg);
@@ -1175,6 +1176,33 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // A Recent row's own button. Nothing to open and nothing to wait for, so
         // unlike its neighbours this one answers here and reloads: the pane is
         // part of the page, and the row has to leave it.
+        // The header's own control, which acts on whatever is open — so unlike its
+        // neighbours it needs no path, and a reload is what puts the new state on
+        // screen: the flag is part of the page and has to change with it.
+        "/.ts/pin" => {
+            if let Some(serving) = app.try_state::<Serving>()
+                && let Some(root) = serving.state().cfg.root()
+            {
+                let label = serving.state().cfg.root_name();
+                pin_root_id(app, &root.id, label);
+                eval(app, "location.reload()");
+            }
+        }
+        // Two callers: the same control once the root is pinned, with nothing to
+        // say, and a row in the list, which names the one it means.
+        "/.ts/unpin" => {
+            let id = match url.query_pairs().find(|(k, _)| k == "path") {
+                Some((_, path)) => Some(path.trim().to_string()),
+                None => app
+                    .try_state::<Serving>()
+                    .and_then(|s| s.state().cfg.root())
+                    .map(|root| root.id.clone()),
+            };
+            if let Some(id) = id {
+                unpin_root_id(app, &id);
+                eval(app, "location.reload()");
+            }
+        }
         "/.ts/forget" => match url.query_pairs().find(|(k, _)| k == "path") {
             Some((_, path)) => {
                 forget_root_id(app, path.trim());
@@ -1541,6 +1569,94 @@ pub fn forget_root_id(app: &AppHandle, id: &str) {
     save_recent(app, list);
 }
 
+fn pinned_file(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("pinned.txt"))
+}
+
+/// The pinned list as it was left. Order is the order they were pinned in, and
+/// there is no cap: a list the reader built by hand is not one to truncate
+/// behind their back.
+fn pinned(app: &AppHandle) -> Vec<treeserve::Pin> {
+    let Some(file) = pinned_file(app) else {
+        return Vec::new();
+    };
+    let Ok(text) = fs::read_to_string(file) else {
+        return Vec::new();
+    };
+    pinned_entries(&text)
+}
+
+/// `<label>\t<id>` per line, and a line with no tab is an id nobody named.
+///
+/// The label goes first on purpose. A RootId may legally contain a tab — a Unix
+/// file may be called anything but `/` and NUL — and splitting at the *first* tab
+/// then hands the whole of the rest back as the id, whatever is in it. The other
+/// way round, an id with a tab in it would take the label's place and the entry
+/// would come back as a different root. Labels are ours to write, so the one
+/// character that cannot appear in one is a tab.
+fn pinned_entries(text: &str) -> Vec<treeserve::Pin> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| match line.split_once('\t') {
+            Some((label, id)) => treeserve::Pin {
+                id: id.to_string(),
+                label: Some(label.to_string()),
+            },
+            None => treeserve::Pin {
+                id: line.trim().to_string(),
+                label: None,
+            },
+        })
+        .collect()
+}
+
+/// Pins the root that is open, under the name the window is calling it.
+///
+/// Public for the same reason `remember_root_id` is: a downstream app that serves
+/// its own backend pins it the same way, and the name matters more there — a
+/// grant or a bookmark has an id nothing would want to read.
+pub fn pin_root_id(app: &AppHandle, id: &str, label: Option<String>) {
+    let mut list = pinned(app);
+    if list.iter().any(|p| p.id == id) {
+        return;
+    }
+    list.push(treeserve::Pin {
+        id: id.to_string(),
+        label: label.map(|l| l.replace('\t', " ")),
+    });
+    save_pinned(app, list);
+}
+
+/// Drops a root from the pinned list — the header's own control, and each row's.
+/// Only the list: the folder is not this shell's to delete.
+pub fn unpin_root_id(app: &AppHandle, id: &str) {
+    let mut list = pinned(app);
+    let before = list.len();
+    list.retain(|p| p.id != id);
+    if list.len() == before {
+        return;
+    }
+    save_pinned(app, list);
+}
+
+fn save_pinned(app: &AppHandle, list: Vec<treeserve::Pin>) {
+    let text: String = list
+        .iter()
+        .map(|p| match &p.label {
+            Some(label) => format!("{label}\t{}\n", p.id),
+            None => format!("{}\n", p.id),
+        })
+        .collect();
+    if let Some(serving) = app.try_state::<Serving>() {
+        serving.state().cfg.set_pinned(list);
+    }
+    let Some(file) = pinned_file(app) else { return };
+    if let Some(dir) = file.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(file, text);
+}
+
 /// The list, in the running server and on disk. Both are the same order, and the
 /// pane reads the first of them on the next render.
 fn save_recent(app: &AppHandle, list: Vec<String>) {
@@ -1770,4 +1886,24 @@ mod tests {
         assert!(!treeserve::root_id_is_local("ssh:prod-web:/var/www"));
         assert!(!treeserve::root_id_is_local("s3:bucket:/data"));
     }
+
+    /// A RootId may contain a tab, so the label goes first and the split is the
+    /// first one: whatever follows is the id, verbatim.
+    #[test]
+    fn a_pinned_line_hands_the_id_back_whole() {
+        let list = pinned_entries("Home of it all\t/home/x\n/home/y\nOdd\t/tmp/a\tb\n\n");
+        let seen: Vec<(Option<&str>, &str)> = list
+            .iter()
+            .map(|p| (p.label.as_deref(), p.id.as_str()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (Some("Home of it all"), "/home/x"),
+                (None, "/home/y"),
+                (Some("Odd"), "/tmp/a\tb"),
+            ]
+        );
+    }
+
 }

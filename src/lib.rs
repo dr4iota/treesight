@@ -89,6 +89,18 @@ impl RootStatus {
     }
 }
 
+/// A root the reader pinned: the RootId, and a name for it when the id is not
+/// one. Where Recent collects what was opened, this list is only ever added to
+/// on purpose — which is why it is separate from Places, whose rows the platform
+/// decides, and separate from Recent, whose rows nobody chose.
+pub struct Pin {
+    pub id: String,
+    /// What to call it. `None` draws the id as a path, the way a Recent row is
+    /// drawn; a root whose id is not readable — a scheme, a hash, a grant —
+    /// carries the name it was pinned under instead.
+    pub label: Option<String>,
+}
+
 /// The served root: a RootId naming it, and the backend that answers for it.
 ///
 /// A RootId is a scheme-aware string. A local root's id is the bare
@@ -202,6 +214,10 @@ pub struct Config {
     /// Recently served roots as RootIds, newest first. Behind a lock like
     /// `root`, since it grows while the server runs.
     recent: RwLock<Arc<Vec<String>>>,
+    /// Roots the reader pinned, in the order they were pinned. Behind a lock for
+    /// the reason `recent` is: pinning happens while the server runs, and the
+    /// next page render is where it shows up.
+    pinned: RwLock<Arc<Vec<Pin>>>,
     /// What to call the current root in a title. Behind a lock like `root`,
     /// because it is set when the root is, from whatever re-rooted.
     root_name: RwLock<Option<String>>,
@@ -253,6 +269,7 @@ impl Config {
             intro: None,
             places: Vec::new(),
             recent: RwLock::new(Arc::new(Vec::new())),
+            pinned: RwLock::new(Arc::new(Vec::new())),
             root_name: RwLock::new(None),
             sections: RwLock::new(Arc::new(Vec::new())),
             status: RwLock::new(HashMap::new()),
@@ -298,6 +315,22 @@ impl Config {
     /// it re-roots, so the next page render shows the new order.
     pub fn set_recent(&self, recent: Vec<String>) {
         *self.recent.write().expect("recent lock") = Arc::new(recent);
+    }
+
+    pub fn pinned(&self) -> Arc<Vec<Pin>> {
+        Arc::clone(&self.pinned.read().expect("pinned lock"))
+    }
+
+    /// Replaces the pinned list. Called by the embedder at start and again
+    /// whenever it pins or unpins something.
+    pub fn set_pinned(&self, pinned: Vec<Pin>) {
+        *self.pinned.write().expect("pinned lock") = Arc::new(pinned);
+    }
+
+    /// Whether `id` is pinned — what the header's own control reads to know
+    /// which way round it is.
+    pub fn is_pinned(&self, id: &str) -> bool {
+        self.pinned().iter().any(|p| p.id == id)
     }
 
     pub fn sections(&self) -> Arc<Vec<PaneSection>> {

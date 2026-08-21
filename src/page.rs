@@ -171,6 +171,12 @@ pub const ICON_PLUS: &str = "<path d=\"M8 3.6v8.8M3.6 8h8.8\"/>";
 /// lists had rows. Drawn to `ICON_PLUS`'s measurements, which is what puts it on
 /// the same optical weight as the one action a heading can carry.
 const ICON_CROSS: &str = "<path d=\"M4.5 4.5l7 7M11.5 4.5l-7 7\"/>";
+// A ribbon, outlined for a root that is not pinned and filled for one that is.
+// Two states of one shape rather than two shapes: the control stays in the same
+// place and says which way round it is, which a second icon would not.
+const ICON_PIN: &str = "<path d=\"M4.2 2.6h7.6v10.8L8 10.6l-3.8 2.8z\"/>";
+const ICON_PINNED: &str =
+    "<path fill=\"currentColor\" d=\"M4.2 2.6h7.6v10.8L8 10.6l-3.8 2.8z\"/>";
 
 /// "Serve this folder as the root": an arrow going in through the side of a frame.
 const ICON_AS_ROOT: &str = "<path d=\"M9.8 3.4h2.8v9.2H9.8\"/><path d=\"M3.4 8h5.8\"/>\
@@ -373,6 +379,17 @@ fn head_and_header(
             "Refresh",
             "Reload this page (F5)",
         ));
+        // Pinning is an action on the root that is open, so it lives with the
+        // controls for the window rather than on a list: a list with nothing in
+        // it draws no heading, and a reader with nothing pinned is exactly the
+        // one who needs the control.
+        if let Some(root) = state.cfg.root() {
+            let (href, icon, label, title) = match state.cfg.is_pinned(&root.id) {
+                true => ("/.ts/unpin", ICON_PINNED, "Pinned", "Pinned — click to remove"),
+                false => ("/.ts/pin", ICON_PIN, "Pin", "Pin this folder"),
+            };
+            controls.push_str(&flag("", href, &svg_icon(icon), label, title));
+        }
     }
     controls.push_str(extra_controls);
     if show_ln_toggle {
@@ -734,6 +751,33 @@ fn pane_html(
                 id: p,
                 action: "/.ts/place",
                 aside: &[],
+            }),
+        );
+        // What the reader chose to keep, between the list the platform decides and the
+        // one that collects itself. Each row carries its own way out, in the aside slot
+        // Recent and an embedder's sections already use.
+        let pinned = state.cfg.pinned();
+        let unpin: Vec<[(String, String, String); 1]> = pinned
+            .iter()
+            .map(|p| {
+                [(
+                    format!("/.ts/unpin?path={}", percent_encode(&p.id)),
+                    ICON_CROSS.to_string(),
+                    "Unpin this folder".to_string(),
+                )]
+            })
+            .collect();
+        root_list(
+            &mut out,
+            state,
+            "pinned",
+            "Pinned",
+            None,
+            pinned.iter().zip(&unpin).map(|(p, aside)| Row {
+                label: p.label.as_deref(),
+                id: &p.id,
+                action: "/.ts/place",
+                aside,
             }),
         );
         // Whatever the embedder brought, between the fixed list and the
@@ -1297,6 +1341,33 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             aside: &[],
         }),
     );
+    // What the reader chose to keep, between the list the platform decides and the
+    // one that collects itself. Each row carries its own way out, in the aside slot
+    // Recent and an embedder's sections already use.
+    let pinned = state.cfg.pinned();
+    let unpin: Vec<[(String, String, String); 1]> = pinned
+        .iter()
+        .map(|p| {
+            [(
+                format!("/.ts/unpin?path={}", percent_encode(&p.id)),
+                ICON_CROSS.to_string(),
+                "Unpin this folder".to_string(),
+            )]
+        })
+        .collect();
+    root_list(
+        &mut lists,
+        state,
+        "pinned",
+        "Pinned",
+        None,
+        pinned.iter().zip(&unpin).map(|(p, aside)| Row {
+            label: p.label.as_deref(),
+            id: &p.id,
+            action: "/.ts/place",
+            aside,
+        }),
+    );
     for sec in state.cfg.sections().iter() {
         root_list(
             &mut lists,
@@ -1583,6 +1654,55 @@ mod tests {
             html.contains("<div class=\"crumbs\"><span class=\"tag\">iota</span><a href=\"/\">"),
             "{html}"
         );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The pinned list is the reader's own, so its rows unpin and the control in
+    /// the header says which way round the open root is.
+    #[test]
+    fn pinning_is_a_header_control_and_the_rows_undo_it() {
+        let dir = tmp_dir("pinned");
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let prefs = Prefs { sidebar: true, ..prefs() };
+        let page = |state: &State| {
+            let root = state.cfg.root().expect("these tests always serve one");
+            listing_page(state, &root, prefs, &[], &VfsPath::root(), &[], "/")
+        };
+
+        // Nothing pinned: the control offers to, and no list is drawn.
+        let html = page(&state);
+        assert!(html.contains("href=\"/.ts/pin\""), "{html}");
+        assert!(!html.contains("/.ts/unpin"), "{html}");
+        assert!(!html.contains(">Pinned<"), "{html}");
+
+        // The open root, pinned: the same control now takes it back.
+        let id = state.cfg.root().expect("served").id.clone();
+        state.cfg.set_pinned(vec![crate::Pin {
+            id: id.clone(),
+            label: Some("Home of it all".to_string()),
+        }]);
+        let html = page(&state);
+        assert!(html.contains("href=\"/.ts/unpin\""), "{html}");
+        assert!(!html.contains("href=\"/.ts/pin\""), "{html}");
+        // Under the name it was pinned with, and with a row of its own to undo.
+        assert!(html.contains(">Home of it all</a>"), "{html}");
+        assert!(
+            html.contains(&format!(
+                "<a class=\"aside\" href=\"/.ts/unpin?path={}\" title=\"Unpin this folder\">",
+                percent_encode(&id)
+            )),
+            "{html}"
+        );
+
+        // Something else pinned: the control is back to offering.
+        state.cfg.set_pinned(vec![crate::Pin {
+            id: "ssh:iota:/var/www".to_string(),
+            label: None,
+        }]);
+        let html = page(&state);
+        assert!(html.contains("href=\"/.ts/pin\""), "{html}");
 
         fs::remove_dir_all(&dir).unwrap();
     }
