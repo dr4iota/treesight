@@ -135,13 +135,14 @@ pub struct PaneSection {
     /// `recent`.
     pub class: String,
     pub heading: String,
-    /// An action on the heading bar itself — "add a server". Drawn as a plus,
-    /// because a bar that narrow has room for one thing and adding one more of
-    /// what the section lists is that thing: (href, title).
-    /// A control on the heading: where it goes, the mark it draws, and what it
-    /// says. The mark is the embedder's because the action is — a list of servers
-    /// is *managed*, and a plus promises adding one.
-    pub heading_action: Option<(String, String, String)>,
+    /// Controls on the heading bar itself, in the order they are drawn: where each
+    /// goes, the mark it draws, and what it says — (href, icon paths, title).
+    ///
+    /// The marks are the embedder's because the actions are: a list of servers is
+    /// *managed*, and a plus promises adding one, and only the side that knows
+    /// which it means can pick between them. Empty for a section with nothing to
+    /// do to it, which is how Places and Recent are drawn.
+    pub heading_acts: Vec<(String, String, String)>,
     pub entries: Vec<PaneEntry>,
 }
 

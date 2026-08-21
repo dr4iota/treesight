@@ -694,7 +694,7 @@ fn pane_html(
     // another one, and none. They go together in a group so the bar stays a line
     // with two ends — a heading at one and its controls at the other — rather than
     // spreading three children evenly across it.
-    let mut acts = String::new();
+    let mut acts: Vec<(String, String, String)> = Vec::new();
     // Pinning acts on the *root*, and this is the heading of the root — which is
     // why it moved here from the window's controls. There it sat among Back,
     // Reload and Print, every one of which acts on the page you are looking at,
@@ -709,27 +709,22 @@ fn pane_html(
             true => ("/.ts/unpin", ICON_PINNED, "Pinned — click to remove"),
             false => ("/.ts/pin", ICON_PIN, "Pin this folder"),
         };
-        acts.push_str(&format!(
-            "<a class=\"secact\" href=\"{href}\" title=\"{title}\">{}</a>",
-            svg_icon(icon)
-        ));
+        acts.push((href.to_string(), icon.to_string(), title.to_string()));
     }
     // The picker is not here any more: it is in the status line, which is always
     // on screen, and closing this folder puts the start page in front of you with
     // every way in on it. Two of the same button on one screen, and this was the
     // one that could be spared.
     if state.cfg.app_ui {
-        acts.push_str(&format!(
-            "<a class=\"secact\" href=\"/.ts/close\" title=\"Close this folder\">{}</a>",
-            svg_icon(ICON_CROSS)
+        acts.push((
+            "/.ts/close".to_string(),
+            ICON_CROSS.to_string(),
+            "Close this folder".to_string(),
         ));
     }
     out.push_str(&format!(
         "<section class=\"files\"><h2>Files{}</h2>",
-        match acts.is_empty() {
-            true => String::new(),
-            false => format!("<span class=\"acts\">{acts}</span>"),
-        }
+        heading_acts(&acts)
     ));
     tree_dir(
         state,
@@ -751,7 +746,7 @@ fn pane_html(
             state,
             "places",
             "Places",
-            None,
+            &[],
             state.cfg.places.iter().map(|(l, p)| Row {
                 label: Some(l),
                 id: p,
@@ -778,7 +773,7 @@ fn pane_html(
             state,
             "pinned",
             "Pinned",
-            None,
+            &[],
             pinned.iter().zip(&unpin).map(|(p, aside)| Row {
                 label: p.label.as_deref(),
                 id: &p.id,
@@ -795,7 +790,7 @@ fn pane_html(
                 state,
                 &sec.class,
                 &sec.heading,
-                sec.heading_action.as_ref(),
+                &sec.heading_acts,
                 sec.entries.iter().map(|e| Row {
                     label: e.label.as_deref(),
                     id: &e.id,
@@ -828,7 +823,7 @@ fn pane_html(
             state,
             "recent",
             "Recent",
-            None,
+            &[],
             recent.iter().zip(&forget).map(|(p, aside)| Row {
                 label: None,
                 id: p,
@@ -862,12 +857,37 @@ struct Row<'a> {
 /// was not ready can be ready now, and the only way to find out is to ask for
 /// it. Clicking one costs whatever the wait costs, which is the same wait the
 /// list used to charge everybody up front.
+/// The controls on a section heading, grouped at the far end of the bar.
+///
+/// One renderer for every heading that has any: a section the embedder brought,
+/// and the Files heading, which carries Pin and Close. The wrapper goes on even
+/// for a single control — `h2:has(a.secact)` is what turns the bar into a line
+/// with two ends, and `.acts` is what keeps several of them together at one of
+/// them.
+fn heading_acts(acts: &[(String, String, String)]) -> String {
+    if acts.is_empty() {
+        return String::new();
+    }
+    let links: String = acts
+        .iter()
+        .map(|(href, icon, title)| {
+            format!(
+                "<a class=\"secact\" href=\"{}\" title=\"{}\">{}</a>",
+                html_escape(href),
+                html_escape(title),
+                svg_icon(icon)
+            )
+        })
+        .collect();
+    format!("<span class=\"acts\">{links}</span>")
+}
+
 fn root_list<'a, I: Iterator<Item = Row<'a>>>(
     out: &mut String,
     state: &State,
     class: &str,
     heading: &str,
-    heading_action: Option<&(String, String, String)>,
+    acts: &[(String, String, String)],
     items: I,
 ) {
     let links: String = items
@@ -921,15 +941,7 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
         "<section class=\"{}\"><h2>{}{}</h2><ul>{}</ul></section>",
         html_escape(class),
         html_escape(heading),
-        match heading_action {
-            Some((href, icon, title)) => format!(
-                "<a class=\"secact\" href=\"{}\" title=\"{}\">{}</a>",
-                html_escape(href),
-                html_escape(title),
-                svg_icon(icon)
-            ),
-            None => String::new(),
-        },
+        heading_acts(acts),
         links
     ));
 }
@@ -1339,7 +1351,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         state,
         "places",
         "Places",
-        None,
+        &[],
         state.cfg.places.iter().map(|(l, p)| Row {
             label: Some(l),
             id: p,
@@ -1366,7 +1378,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         state,
         "pinned",
         "Pinned",
-        None,
+        &[],
         pinned.iter().zip(&unpin).map(|(p, aside)| Row {
             label: p.label.as_deref(),
             id: &p.id,
@@ -1380,7 +1392,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             state,
             &sec.class,
             &sec.heading,
-            sec.heading_action.as_ref(),
+            &sec.heading_acts,
             sec.entries.iter().map(|e| Row {
                 label: e.label.as_deref(),
                 id: &e.id,
@@ -1405,7 +1417,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         state,
         "recent",
         "Recent",
-        None,
+        &[],
         recent.iter().zip(&forget).map(|(p, aside)| Row {
             label: None,
             id: p,
@@ -1552,11 +1564,11 @@ mod tests {
         state.cfg.set_sections(vec![PaneSection {
             class: "servers".to_string(),
             heading: "Servers".to_string(),
-            heading_action: Some((
+            heading_acts: vec![(
                 "/x/manage".to_string(),
                 ICON_PLUS.to_string(),
                 "Manage".to_string(),
-            )),
+            )],
             entries: vec![PaneEntry {
                 label: Some("Iota".to_string()),
                 id: "ssh:iota:~".to_string(),
@@ -1769,11 +1781,21 @@ mod tests {
         state.cfg.set_sections(vec![PaneSection {
             class: "servers".to_string(),
             heading: "Servers".to_string(),
-            heading_action: Some((
-                "/x/add".to_string(),
-                ICON_PLUS.to_string(),
-                "Add a server".to_string(),
-            )),
+            // Two, in the order given: a heading bar takes as many as the
+            // embedder has, which is what lets a list be both added to and
+            // managed without one mark standing for both.
+            heading_acts: vec![
+                (
+                    "/x/add".to_string(),
+                    ICON_PLUS.to_string(),
+                    "Add a server".to_string(),
+                ),
+                (
+                    "/x/manage".to_string(),
+                    ICON_CROSS.to_string(),
+                    "Manage servers".to_string(),
+                ),
+            ],
             entries: vec![PaneEntry {
                 label: Some("prod-web".to_string()),
                 id: id.to_string(),
@@ -1801,9 +1823,17 @@ mod tests {
         state.cfg.app_ui = true;
         let html = page(&state);
         assert!(
-            html.contains("<section class=\"servers\"><h2>Servers<a class=\"secact\" \
-                 href=\"/x/add\" title=\"Add a server\">"),
+            html.contains("<section class=\"servers\"><h2>Servers<span class=\"acts\">\
+                 <a class=\"secact\" href=\"/x/add\" title=\"Add a server\">"),
             "{html}"
+        );
+        assert!(
+            html.contains("title=\"Add a server\"><svg"),
+            "the first act keeps its mark: {html}"
+        );
+        assert!(
+            html.contains("</a><a class=\"secact\" href=\"/x/manage\" title=\"Manage servers\">"),
+            "and the second follows it inside the one wrapper: {html}"
         );
         assert!(
             html.contains(
@@ -1828,7 +1858,7 @@ mod tests {
         state.cfg.set_sections(vec![PaneSection {
             class: "servers".to_string(),
             heading: "Servers".to_string(),
-            heading_action: None,
+            heading_acts: Vec::new(),
             entries: Vec::new(),
         }]);
         let empty = page(&state);
