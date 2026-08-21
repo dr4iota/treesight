@@ -3,6 +3,7 @@
 //! The binary in `main.rs` is a thin CLI over this library; embedders (the
 //! Tauri app in `app/`) call [`spawn`] and drive the server themselves.
 
+pub mod embed;
 pub mod hl;
 #[cfg(feature = "http")]
 pub mod http;
