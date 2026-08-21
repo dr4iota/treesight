@@ -779,13 +779,12 @@ footer {
    of one path that has to read as one. */
 footer .where { min-width: 0; }
 footer .where .app { flex: 0 0 auto; margin-right: .35rem; }
-/* The picker is on the Files heading, where the tree it opens a folder into is —
-   but that heading is in the pane, and the pane is the first thing to go when the
-   window narrows. So the status line keeps one for exactly the widths where the
-   pane cannot be reached, and no width shows two. */
-@media (min-width: 50.01rem) {
-  footer a.pick { display: none; }
-}
+/* The status line holds the only picker, at every width. It used to hide above
+   50rem because the Files heading carried one there — but that heading now carries
+   Pin instead, which is an act on the root it names, and dropping the picker from
+   it left a wide window with no way to open a folder except a keystroke. Here it
+   is reachable whatever the width, and the pane going away takes nothing with it
+   that this line does not still have. */
 footer a.pick {
   margin-left: auto;
   flex: 0 0 auto;
