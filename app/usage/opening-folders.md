@@ -20,10 +20,15 @@ is the row you get, and it is the one row that is always readable.
 
 ## Pinned
 
-What you chose to keep. The header of any folder you have open carries a **Pin**
-control; press it and the folder gets a row of its own, kept across launches, and
-the control fills in to say so. Press it again, or use the cross on the row, and
-the row goes.
+What you chose to keep. The **Files** heading — the one over the tree, naming the
+folder you have open — carries a **Pin** control; press it and that folder gets a
+row of its own, kept across launches, and the control fills in to say so. Press it
+again, or use the cross on the row, and the row goes.
+
+It pins the folder that is *open*, not the one you have walked into: the control
+sits on the heading of the root for exactly that reason. To pin something further
+down, make it the root first — every directory row in the tree has the button for
+that — and then pin it.
 
 Pinning is the only list here you write yourself, which is why it is separate from
 the two you do not: Places is the platform's, and Recent writes itself. A pinned

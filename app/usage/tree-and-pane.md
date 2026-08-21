@@ -14,6 +14,11 @@ Each directory row also carries a button that makes it the served root. It is th
 one move you cannot otherwise make without the folder dialog and a path you
 already have on screen.
 
+The heading over the tree names the open folder and carries two acts on it: **Pin**
+to keep it in the Pinned list, and **Close** to serve nothing and go back to the
+start page. Opening a different folder is in the status line, which is always on
+screen.
+
 ## The pane
 
 On the start page it holds the lists — Places, Pinned, Recent, and any list the

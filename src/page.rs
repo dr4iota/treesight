@@ -379,17 +379,6 @@ fn head_and_header(
             "Refresh",
             "Reload this page (F5)",
         ));
-        // Pinning is an action on the root that is open, so it lives with the
-        // controls for the window rather than on a list: a list with nothing in
-        // it draws no heading, and a reader with nothing pinned is exactly the
-        // one who needs the control.
-        if let Some(root) = state.cfg.root() {
-            let (href, icon, label, title) = match state.cfg.is_pinned(&root.id) {
-                true => ("/.ts/unpin", ICON_PINNED, "Pinned", "Pinned — click to remove"),
-                false => ("/.ts/pin", ICON_PIN, "Pin", "Pin this folder"),
-            };
-            controls.push_str(&flag("", href, &svg_icon(icon), label, title));
-        }
     }
     controls.push_str(extra_controls);
     if show_ln_toggle {
@@ -706,12 +695,29 @@ fn pane_html(
     // with two ends — a heading at one and its controls at the other — rather than
     // spreading three children evenly across it.
     let mut acts = String::new();
-    if state.cfg.picker {
+    // Pinning acts on the *root*, and this is the heading of the root — which is
+    // why it moved here from the window's controls. There it sat among Back,
+    // Reload and Print, every one of which acts on the page you are looking at,
+    // and read as though it pinned that: walk three directories in and the
+    // control still meant the folder you opened. On the heading of what is open
+    // it cannot mean anything else.
+    //
+    // To pin a folder further down, make it the root first — every directory row
+    // in the tree carries the button for that.
+    if state.cfg.app_ui {
+        let (href, icon, title) = match state.cfg.is_pinned(&root.id) {
+            true => ("/.ts/unpin", ICON_PINNED, "Pinned — click to remove"),
+            false => ("/.ts/pin", ICON_PIN, "Pin this folder"),
+        };
         acts.push_str(&format!(
-            "<a class=\"secact\" href=\"/.ts/open\" title=\"Open Folder… (Ctrl+O)\">{}</a>",
-            svg_icon(ICON_FOLDER)
+            "<a class=\"secact\" href=\"{href}\" title=\"{title}\">{}</a>",
+            svg_icon(icon)
         ));
     }
+    // The picker is not here any more: it is in the status line, which is always
+    // on screen, and closing this folder puts the start page in front of you with
+    // every way in on it. Two of the same button on one screen, and this was the
+    // one that could be spared.
     if state.cfg.app_ui {
         acts.push_str(&format!(
             "<a class=\"secact\" href=\"/.ts/close\" title=\"Close this folder\">{}</a>",
@@ -1592,11 +1598,12 @@ mod tests {
         assert!(html.contains("Open one of the places below"), "{html}");
     }
 
-    /// Both ends of having a folder open, on the heading of what is open: another
-    /// folder, and none. The picker is a platform question and closing is not, so
-    /// the way out is there even where there is no way in.
+    /// What the heading of the open root offers: pinning it, and closing it. The
+    /// way *in* is not here — the picker is in the status line, which survives the
+    /// pane being switched off, and having it in both places was one button too
+    /// many on a narrow window.
     #[test]
-    fn the_files_heading_offers_a_way_in_and_a_way_out() {
+    fn the_files_heading_offers_a_pin_and_a_way_out() {
         let dir = tmp_dir("files-acts");
         let mut state = state_at(dir.clone());
         let prefs = Prefs { sidebar: true, ..prefs() };
@@ -1614,13 +1621,17 @@ mod tests {
         state.cfg.app_ui = true;
         let html = page(&state);
         assert!(html.contains("href=\"/.ts/close\""), "a way out without a picker");
+        assert!(html.contains("href=\"/.ts/pin\""), "and a way to keep it");
         assert!(!html.contains("href=\"/.ts/open\""), "no picker on this platform");
 
+        // With a picker, it is a flag in the status line and not an act on this
+        // heading — the same link, drawn once.
         state.cfg.picker = true;
         let html = page(&state);
+        assert!(html.contains("class=\"pick\" href=\"/.ts/open\""), "{html}");
         assert!(
-            html.contains("<span class=\"acts\"><a class=\"secact\" href=\"/.ts/open\""),
-            "{html}"
+            !html.contains("class=\"secact\" href=\"/.ts/open\""),
+            "the picker left the heading: {html}"
         );
         assert!(html.contains("href=\"/.ts/close\""), "{html}");
 
@@ -1658,10 +1669,12 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The pinned list is the reader's own, so its rows unpin and the control in
-    /// the header says which way round the open root is.
+    /// The pinned list is the reader's own, so its rows unpin — and the control
+    /// that puts a root in it sits on the heading of that root, saying which way
+    /// round it is. Not in the window's controls: there it read as though it
+    /// pinned the page, which is not what it does.
     #[test]
-    fn pinning_is_a_header_control_and_the_rows_undo_it() {
+    fn pinning_is_an_act_on_the_files_heading_and_the_rows_undo_it() {
         let dir = tmp_dir("pinned");
         let mut state = state_at(dir.clone());
         state.cfg.app_ui = true;
@@ -1671,9 +1684,13 @@ mod tests {
             listing_page(state, &root, prefs, &[], &VfsPath::root(), &[], "/")
         };
 
-        // Nothing pinned: the control offers to, and no list is drawn.
+        // Nothing pinned: the control offers to, from the heading of what is
+        // open, and no list is drawn.
         let html = page(&state);
-        assert!(html.contains("href=\"/.ts/pin\""), "{html}");
+        assert!(
+            html.contains("<span class=\"acts\"><a class=\"secact\" href=\"/.ts/pin\""),
+            "{html}"
+        );
         assert!(!html.contains("/.ts/unpin"), "{html}");
         assert!(!html.contains(">Pinned<"), "{html}");
 
@@ -1684,7 +1701,10 @@ mod tests {
             label: Some("Home of it all".to_string()),
         }]);
         let html = page(&state);
-        assert!(html.contains("href=\"/.ts/unpin\""), "{html}");
+        assert!(
+            html.contains("<span class=\"acts\"><a class=\"secact\" href=\"/.ts/unpin\""),
+            "{html}"
+        );
         assert!(!html.contains("href=\"/.ts/pin\""), "{html}");
         // Under the name it was pinned with, and with a row of its own to undo.
         assert!(html.contains(">Home of it all</a>"), "{html}");
