@@ -83,3 +83,21 @@ pub fn open(app: &AppHandle) {
         show(&win);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A duplicate path inside one set would shadow silently — the later entry
+    /// wins, exactly as an embedder's page is meant to, and the page nobody meant
+    /// to lose is simply gone. Cheap to assert, and the table is hand-written.
+    #[test]
+    fn every_page_is_registered_once() {
+        let mut paths: Vec<&str> = PAGES.iter().map(|(path, _)| *path).collect();
+        let count = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(paths.len(), count, "a page is registered twice");
+        assert!(paths.contains(&"index.md"), "the set needs an index");
+    }
+}
