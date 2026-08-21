@@ -16,8 +16,8 @@ already have on screen.
 
 ## The pane
 
-On the start page it holds the lists — Places, Recent, and any list the program
-embedding this one adds. Once a folder is open it is the tree.
+On the start page it holds the lists — Places, Pinned, Recent, and any list the
+program embedding this one adds. Once a folder is open it is the tree.
 
 ## The header
 

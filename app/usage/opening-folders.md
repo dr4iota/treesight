@@ -18,6 +18,18 @@ it, and clicking one costs whatever that wait costs.
 Where a platform has no folders to browse outside the program's own storage, that
 is the row you get, and it is the one row that is always readable.
 
+## Pinned
+
+What you chose to keep. The header of any folder you have open carries a **Pin**
+control; press it and the folder gets a row of its own, kept across launches, and
+the control fills in to say so. Press it again, or use the cross on the row, and
+the row goes.
+
+Pinning is the only list here you write yourself, which is why it is separate from
+the two you do not: Places is the platform's, and Recent writes itself. A pinned
+row that has gone missing greys and says so like any other, but it is never
+dropped for you — you put it there, so it stays until you take it away.
+
 ## Recent
 
 What you have opened, newest first, kept across launches. This one grows on its
