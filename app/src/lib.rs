@@ -915,11 +915,13 @@ fn check_roots(app: &AppHandle) {
         // Remote ids are skipped: probing one would mean a network handshake,
         // and this loop exists precisely because a probe can hang. Whatever
         // supplied a remote entry owns saying how it is doing.
+        let pinned = state.cfg.pinned();
         let ids: Vec<String> = state
             .cfg
             .places
             .iter()
             .map(|(_, id)| id.clone())
+            .chain(pinned.iter().map(|p| p.id.clone()))
             .chain(recent.iter().cloned())
             .filter(|id| treeserve::root_id_is_local(id))
             .collect();
@@ -944,6 +946,9 @@ fn check_roots(app: &AppHandle) {
         let answers: Vec<(String, RootStatus)> =
             checks.into_iter().filter_map(|h| h.join().ok()).collect();
 
+        // Recent only. A pinned row is one the reader put there, and a folder on a
+        // drive that is not plugged in today is not a mistake to tidy up; it greys
+        // and says why, and stays until they say otherwise.
         let gone: Vec<String> = answers
             .iter()
             .filter(|(id, status)| *status != RootStatus::Ok && recent.contains(id))
