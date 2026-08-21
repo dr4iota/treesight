@@ -876,6 +876,97 @@ body.app .shell { overflow: hidden; }
 body.app nav.tree { overflow-y: auto; }
 body.app main { overflow-y: auto; }
 
+/* Scrollbars, in the two shapes an engine gives us and neither of them kind to a
+   pane whose buttons live at its right edge.
+   A classic bar takes layout width, so a list that grows past the pane's height
+   takes the width away from the rows — the pane reflows and every name shortens
+   by however wide the engine's bar happens to be. `scrollbar-gutter: stable`
+   reserves that width whether or not a bar is showing, so the reflow stops
+   happening: on `html` for the document scroll, and on both panes of the app
+   shell, which scroll on their own.
+   An overlay bar takes no width at all and floats over the last few pixels
+   instead, which is worse here rather than better: that strip is exactly where
+   `a.aside` and `a.asroot` sit, every one of them pushed to the pane's right edge.
+   `scrollbar-gutter` does nothing for an overlay bar by definition, so the pane
+   pays for the strip itself in padding — the only fix that does not depend on the
+   engine having a feature. */
+html { scrollbar-gutter: stable; }
+html, body.app nav.tree, body.app main,
+body:has(main > .fit) nav.tree, body:has(main > .fit) main { scrollbar-width: thin; }
+body.app nav.tree, body.app main,
+body:has(main > .fit) nav.tree, body:has(main > .fit) main { scrollbar-gutter: stable; }
+/* Room for a bar that reserves none. Only where the pane is the thing scrolling:
+   where the document scrolls, the bar is at the window's edge and nowhere near
+   these buttons. */
+body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
+
+/* A finger, not a pointer. `pointer: coarse` asks the question this is actually
+   about — 14px of glyph is a fine target for a mouse and a poor one for a
+   fingertip — and it asks it of the input rather than of the window's width,
+   which is the mistake a breakpoint would make: a touchscreen laptop is wide and
+   still has no mouse.
+   What grows is the target, not the drawing. Apple asks for 44pt and Material for
+   48dp, against the 19x14 these marks had; a 14px mark centred in a 2.75rem box
+   looks exactly as it did and can be hit. The pane cannot afford bigger icons —
+   it is 17rem holding rows of file names — but it can afford bigger boxes around
+   the same ones, which is the trade the twisty already made above.
+   The rows grow by padding rather than by becoming flex containers: every ellipsis
+   in this pane is the work of an `inline-block` link inside an `overflow: hidden`
+   row, and a display change there is a rewrite of behaviour this sheet spends
+   several comments getting right. */
+@media (pointer: coarse) {
+  /* The tree, which is a column of targets before it is anything else. Padding
+     and not a minimum height, because these links are `inline-block` and their
+     ellipsis is the block layout's: a flex container puts its text in an
+     anonymous item, where `text-overflow` stops being reliable. */
+  nav.tree { font-size: .95rem; }
+  nav.tree .files a { padding-top: .7rem; padding-bottom: .7rem; }
+  nav.tree li .row { min-height: 2.75rem; }
+  /* The chooser's lists and the start page's are the other shape: those links are
+     already flex — the head-and-leaf shrinking above depends on it — so they take
+     a minimum height directly, and the line needs centring inside it because the
+     default is to stretch. */
+  nav.tree .chooser a,
+  body.nothing .start li > a,
+  body.nothing .start .row > a:first-child {
+    min-height: 2.75rem;
+    align-items: center;
+  }
+  /* Wider, and it already stretches to the row's full height. */
+  nav.tree .row > .twisty { width: 2.5rem; }
+  /* Every mark that is its own control: a box big enough to hit, the mark
+     centred in it, and the drawing untouched. */
+  nav.tree a.asroot,
+  nav.tree .chooser a.aside,
+  nav.tree section h2 a.secact,
+  body.nothing .start .row > a.aside,
+  body.nothing .start h2 a.secact,
+  .back, .controls a, .controls span.ctl, footer a.pick {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    padding: 0;
+  }
+  /* A heading bar is taller than a row and can carry a larger mark, which is
+     also the one place in the pane where a mark is the only thing to look at. */
+  nav.tree section h2 a.secact svg, body.nothing .start h2 a.secact svg {
+    width: 18px;
+    height: 18px;
+  }
+  /* Eight pixels between targets, which is what Material asks for and what stops
+     two marks at the end of a bar reading as one wide button. */
+  nav.tree section h2 .acts, body.nothing .start h2 .acts { gap: .5rem; }
+  /* The heading bar has to hold what is now in it. */
+  nav.tree section h2:has(a.secact) { padding-top: 0; padding-bottom: 0; }
+  /* Opacity is a pointer's affordance: there is no hover on a finger, so a
+     control that waits to be hovered is a control that is never found. */
+  nav.tree a.asroot, nav.tree .chooser a.aside, body.nothing .start .row > a.aside {
+    opacity: .75;
+  }
+}
+
 /* On paper. Every rule here says the same thing twice: what a screen is, paper
    is not. Nothing in the header or the status line can be clicked on paper and
    the pane names files nobody can open from there, so what prints is the
