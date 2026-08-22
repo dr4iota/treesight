@@ -136,15 +136,47 @@ pub const VIEWPORT: &str = r#"
 /// the one thing a button must not do. Only the page can answer this: the Rust
 /// side hands the webview a URL and never learns what the webview did with it.
 ///
+/// What it counts is how deep *this entry* is, which is not `history.length`:
+/// that is the size of the whole session, forward entries included, so walking
+/// back to the first page left the button lit with nothing behind it. The depth
+/// is stamped into the entry's own `history.state` the first time it is seen and
+/// read back on every later visit, with the last depth carried across pages in
+/// session storage. `history.length` still has the last word as a ceiling — a
+/// page that replaced its predecessor did not get any deeper.
+///
+/// Both stores can refuse: `replaceState` and `sessionStorage` are not always
+/// there on a custom scheme. Each is caught, and what is left is the old rule —
+/// depth becomes `history.length`, and only a window of one page greys.
+///
 /// Injected on every navigation like the rest, so the answer is recomputed for
 /// each page rather than decided once at startup.
 pub const BACK_STATE: &str = r#"
 (function () {
   try {
+    var st = history.state;
+    var depth;
+    if (st && typeof st.tsDepth === 'number') {
+      // An entry we have stood on before: a traversal, not a new page.
+      depth = st.tsDepth;
+    } else {
+      var last;
+      try {
+        last = parseInt(sessionStorage.getItem('tsDepth'), 10) || 0;
+      } catch (e) {
+        last = history.length - 1;
+      }
+      // One deeper than the page we came from, but no deeper than the session
+      // is long: a page that replaced the one before it is at the same depth.
+      depth = Math.min(last + 1, history.length);
+      try {
+        history.replaceState(Object.assign({}, st, { tsDepth: depth }), '');
+      } catch (e) { /* the ceiling above still holds it in range */ }
+    }
+    try { sessionStorage.setItem('tsDepth', String(depth)); } catch (e) {}
+    // Counted on every page, applied where there is a button: the start page
+    // carries none, and skipping it would leave the next page a depth short.
     var back = document.querySelector('.back');
-    if (!back) { return; }
-    // `length` counts this page too, so one entry means this is the only one.
-    if (history.length <= 1) {
+    if (back && depth <= 1) {
       back.classList.add('nowhere');
       back.setAttribute('aria-disabled', 'true');
     }
