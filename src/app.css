@@ -311,11 +311,19 @@ nav.tree {
      the names instead of out of the layout, which is the pane being too narrow
      to read rather than the pane being where it always was. */
   --pane-left: max(.5rem, var(--safe-left));
+  /* Where a scrollbar goes, on the engines that float one over the content
+     instead of taking width for it. Nothing is reserved for a bar any more —
+     see the scrollbar note further down — so this is what keeps it off the
+     marks at the ends of the rows: a few pixels on top of the pane's own
+     padding, which is enough to clear a resting overlay bar. Grabbing one makes
+     it fatter and it will reach the marks then — but that is a hand already on
+     the scrollbar, not a hand reaching for the button behind it. */
+  --bar-strip: 6px;
   flex: 0 0 calc(17rem + var(--pane-left) - .5rem);
   max-width: calc(17rem + var(--pane-left) - .5rem);
   border-right: 1px solid var(--border);
   background: var(--bg-subtle);
-  padding: .75rem .5rem .8rem var(--pane-left);
+  padding: .75rem calc(.5rem + var(--bar-strip)) .8rem var(--pane-left);
   overflow-x: hidden;
   overflow-y: auto;
   font-size: .85rem;
@@ -333,8 +341,11 @@ nav.tree section h2 {
   text-transform: uppercase;
   color: var(--muted);
   background: var(--border);
-  margin: .5rem -.5rem .35rem;
-  padding: .25rem .6rem;
+  /* Out through the pane's padding on both sides, the scrollbar strip included:
+     the bar reaches the pane's edges whether or not a scrollbar is over it, and
+     an overlay one lands on colour rather than on the heading's own action. */
+  margin: .5rem calc(-.5rem - var(--bar-strip)) .35rem -.5rem;
+  padding: .25rem calc(.6rem + var(--bar-strip)) .25rem .6rem;
 }
 /* A section the embedder brought can hang one action off its heading — "add a
    server". The bar becomes a line with two ends only when there is something to
@@ -1072,23 +1083,21 @@ html[data-touch] nav.tree {
   }
 }
 
-/* Scrollbars, in the two shapes an engine gives us.
-   A classic bar takes layout width, so a list that grows past the pane's height
-   takes the width away from the rows — the pane reflows and every name shortens
-   by however wide the engine's bar happens to be. `scrollbar-gutter: stable`
-   reserves that width whether or not a bar is showing, so the reflow stops
-   happening. On both panes, which are the only things that scroll now that
-   every page is one screen. The gutter sits outside the pane's own padding, and
-   reserving it is the whole of what the right edge needs.
-   An overlay bar reserves nothing and floats over the last few pixels while it
-   is in use — the strip where `a.aside` and `a.asroot` sit. The pane used to buy
-   that strip back with a right padding of its own, and every engine with a
-   classic bar then paid for the scrollbar twice: a dead band down the right of
-   the pane, with the section bars stopping short of the edge they are drawn to
-   span. A moment of overlap where the bar is an overlay is the cheaper of the
-   two, and the marks under it are their own targets, not the row's. */
-html, nav.tree, main { scrollbar-width: thin; }
-nav.tree, main { scrollbar-gutter: stable; }
+/* Scrollbars: as narrow as the engine will make them, and nothing reserved.
+   `scrollbar-gutter: stable` was here and is not the answer. It only ever
+   applies to a bar that takes layout width, so the engines that overlay — GTK,
+   and macOS unless the reader has asked for bars that stay — got nothing from
+   it and had the bar sitting on top of the marks at the pane's right edge,
+   while Chromium got a reserved band the section bars could not be drawn
+   across. Two engines, two different panes, and the gutter cannot be painted
+   into by anything inside the box: it is outside the padding edge, which is
+   also where `overflow` clips.
+   So neither engine reserves now, and the pane buys the strip itself, in
+   `--bar-strip` below. It costs every engine the same few pixels, the bar lands
+   on padding rather than on a button wherever it overlays, and where it takes
+   width instead the rows give up those pixels once and the section bars still
+   span the pane. */
+nav.tree, main { scrollbar-width: thin; }
 
   /* The tree, which is a column of targets before it is anything else. Padding
      and not a minimum height, because these links are `inline-block` and their
