@@ -1777,6 +1777,64 @@ mod tests {
         }
     }
 
+    /// A backend that will not hand a big file over says so on the page, rather
+    /// than drawing a picture at bytes it is about to refuse — which is a broken
+    /// box with nothing to read in it, and a 404 for a file that is right there
+    /// in the listing.
+    #[test]
+    fn a_file_past_the_backends_limit_says_so() {
+        /// Whatever it wraps, with a ceiling. Everything else is the wrapped
+        /// backend's answer, which is the point: only `open_limit` differs.
+        use std::sync::Arc;
+        struct Capped(Arc<dyn Vfs>, u64);
+        impl Vfs for Capped {
+            fn resolve(&self, p: &VfsPath) -> Result<VfsPath, crate::vfs::ResolveError> {
+                self.0.resolve(p)
+            }
+            fn metadata(&self, p: &VfsPath) -> std::io::Result<crate::vfs::Meta> {
+                self.0.metadata(p)
+            }
+            fn read_dir(&self, p: &VfsPath) -> std::io::Result<Vec<crate::vfs::Entry>> {
+                self.0.read_dir(p)
+            }
+            fn read(&self, p: &VfsPath) -> std::io::Result<Vec<u8>> {
+                self.0.read(p)
+            }
+            fn open(&self, p: &VfsPath) -> std::io::Result<Box<dyn crate::vfs::ReadSeek>> {
+                self.0.open(p)
+            }
+            fn root_id_at(&self, p: &VfsPath) -> String {
+                self.0.root_id_at(p)
+            }
+            fn open_limit(&self) -> Option<u64> {
+                Some(self.1)
+            }
+        }
+
+        let dir = tmp_dir("openlimit");
+        fs::write(dir.join("big.png"), vec![0u8; 64]).unwrap();
+        let state = state_at(dir.clone());
+        let plain = state.cfg.root().expect("these tests always serve one");
+        let rel = vec!["big.png".to_string()];
+        let page = |vfs: Arc<dyn Vfs>| {
+            let root = Root { id: plain.id.clone(), vfs };
+            crate::view::file_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), &[], "/")
+        };
+
+        // Under any ceiling, the picture is drawn at the bytes as ever.
+        let html = page(Arc::clone(&plain.vfs));
+        assert!(html.contains("class=\"preview-img\""), "{html}");
+
+        // Over one, words instead — and no Raw or Download either, since both
+        // would go the way this just did.
+        let html = page(Arc::new(Capped(Arc::clone(&plain.vfs), 16)));
+        assert!(html.contains("too large to show here"), "{html}");
+        assert!(!html.contains("class=\"preview-img\""), "{html}");
+        assert!(!html.contains("?raw=1"), "{html}");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A control an embedder added sits with Refresh, at the head of the flags,
     /// and is drawn exactly like one of ours — same box, same stroke, same word
     /// that goes when the header is tight. Empty is the default, which is why

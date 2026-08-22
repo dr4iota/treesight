@@ -122,6 +122,20 @@ pub fn file_page(
     let size = meta.as_ref().map(|m| m.len).unwrap_or(0);
     let mtime = meta.and_then(|m| m.mtime);
 
+    // Past what this backend will hand over whole, nothing below can be drawn:
+    // every branch there points an element or a reader at the bytes, and an
+    // element pointed at a refusal is a broken box with nothing to read in it.
+    // No controls either — Raw and Download go the same way this would have.
+    if vfs.open_limit().is_some_and(|limit| size > limit) {
+        let content = format!(
+            "{}<div class=\"bigmsg\"><p>File is too large to show here ({}).</p>\
+             <p>Open it in an app on this device that reads them.</p></div>",
+            meta_line(size, mtime, "large file"),
+            human_size(size)
+        );
+        return layout(state, root, prefs, rel, url_now, "", false, &content);
+    }
+
     if IMAGE_EXTS.contains(&ext.as_str()) {
         let content = format!(
             "{}<div class=\"fit\"><a href=\"{1}\"><img class=\"preview-img\" src=\"{1}\" alt=\"{2}\"></a></div>",

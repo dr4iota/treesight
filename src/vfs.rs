@@ -108,6 +108,19 @@ pub trait Vfs: Send + Sync {
 
     fn open(&self, path: &VfsPath) -> io::Result<Box<dyn ReadSeek>>;
 
+    /// The most this backend will hand over in one piece, where it has a limit
+    /// at all. `None` — the answer for anything reading a filesystem or a
+    /// stream it can seek — means whatever it can reach, it can serve.
+    ///
+    /// A backend that copies a whole file to answer [`Self::open`] has one, and
+    /// the page needs it *before* it draws: every branch that shows a picture, a
+    /// video or a PDF points an element at the bytes, and an element pointed at
+    /// a refusal is a broken box with nothing to read in it. Past this, the page
+    /// says so in words instead.
+    fn open_limit(&self) -> Option<u64> {
+        None
+    }
+
     /// The RootId that would serve `path` as a root of its own — what the
     /// tree's per-directory re-root link carries. For a local root that is
     /// the display-form host path, which is also what a RootId *is* for a

@@ -113,11 +113,14 @@ Still open:
   `save_asked` when it lands. `set_directory(download_dir())` is wrong there
   too — on Android that resolves to the app's own folder wearing the user's
   name for it.
-- **`serve_raw` turns every `open()` error into a bare 404.** A `Vfs` that
-  refuses a file for a reason worth reading — a grant-backed backend declining
-  to buffer a 300 MB video into a JNI round trip, say — has nowhere to put the
-  sentence, so the reader gets "not found" for a file they can see in the
-  listing. Carrying the error through wants a shape for it first.
+- **A backend that will not hand a file over whole now says so** —
+  `Vfs::open_limit`, read by `file_page` before it draws and by `serve_raw`
+  before it opens. Past it the page is words rather than a media element
+  pointed at bytes that are about to be refused, and a typed URL gets a 413
+  saying why instead of a 404 for a file that is right there in the listing.
+  What is *not* carried through is an arbitrary `open()` failure: those are
+  still a bare 404. A shape for an error with a sentence in it would fix the
+  rest, and nothing needs one yet.
 - **The safe-area floors are one device's numbers.** The 36/24px top and 18px
   bottom in `VIEWPORT` stand in for WebViews before Chromium 140, which report
   zero insets; left and right are still 0, so a landscape cutout on such a

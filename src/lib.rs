@@ -1051,6 +1051,16 @@ fn etag_matches(given: &str, tag: &str) -> bool {
 }
 
 fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: bool) -> Reply {
+    // A backend that will not hand this over whole says why, rather than saying
+    // the file is not there — it is there, it is in the listing, and "not found"
+    // for something you can see is the kind of answer that sends someone looking
+    // for a bug. Reached by typing the URL or following Raw; the page itself
+    // does not draw either past the limit.
+    if let Some(limit) = vfs.open_limit()
+        && vfs.metadata(path).is_ok_and(|m| m.len > limit)
+    {
+        return Reply::plain(413, "this file is too large for this app to open");
+    }
     let Ok(mut file) = vfs.open(path) else {
         return Reply::plain(404, "not found");
     };
