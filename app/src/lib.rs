@@ -1367,7 +1367,25 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
 }
 
 /// Stores what a preference route asked for and puts the page back on screen.
+///
+/// On a thread of its own, for the reason `open_root` is: this runs from
+/// `on_navigation`, and on Android that callback is the Java UI thread. The
+/// `w.url()` below is not a local read there — it posts to wry's pipe and waits
+/// ten seconds for an answer only that same thread can give, so tapping the
+/// theme flag froze the window until Android offered to kill the app. From a
+/// thread of our own every call completes, because the looper is free.
+///
+/// The getter could have gone instead of moving: the toggle is always clicked on
+/// the page it applies to, so the comparison below has one answer today. It is
+/// kept because the `back=` it exists for is a link somebody may yet draw, and a
+/// thread costs a click.
 fn set_pref(app: &AppHandle, url: &tauri::Url) {
+    let app = app.clone();
+    let url = url.clone();
+    thread::spawn(move || set_pref_now(&app, &url));
+}
+
+fn set_pref_now(app: &AppHandle, url: &tauri::Url) {
     let Some(serving) = app.try_state::<Serving>() else {
         return;
     };
