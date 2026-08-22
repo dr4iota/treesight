@@ -360,6 +360,7 @@ calls `run_with(ctx, ext)`.
 | `init_script` | Replaces `SHORTCUTS` wholesale (needed so a terminal page can keep Alt+arrows). |
 | `allowed_origins` | Extra origins the webview may load (plugin scheme pages). |
 | `configure` | One shot at the Tauri `Builder` (plugins). Runs after dialog/opener; single-instance stays first. |
+| `openers` | `RootOpener`s for roots that are not paths. `claims` picks one, `label` names it on the wait page, `open` runs on a thread of ours and returns `Opened { id, vfs, name }` or `None` — `None` meaning the opener has already said why, or that nothing needed saying. `probe` answers for a row that is only being listed and **must not connect**. |
 
 Public helpers the embedder is meant to call:
 
@@ -373,9 +374,13 @@ Public helpers the embedder is meant to call:
   you are on, and Back or Android's swipe then appears to do nothing. A link
   somebody followed is the exception and should navigate.
 
-`RootOpener` is **not** in this repo yet. Downstream copies the
-`open_root` / `serve_root` choreography for remote ids until that seam is
-upstreamed.
+`RootOpener` is the seam for a root this crate cannot open. The choreography
+around one is here and happens once — wait page off the callback, opener on a
+thread, `set_root_vfs`, `set_root_name`, Recent, replace the page, show the
+window; and on `None`, the page that was on screen comes back. `check_roots`
+routes a non-path id to its opener's `probe` rather than skipping it, which is
+what lets a revoked grant or a server that is not answering be grey before it is
+clicked.
 
 `PaneEntry` links are always `{action}?path={percent_encode(id)}`. Aside
 links on a row are raw hrefs (e.g. a terminal URL). A heading action is

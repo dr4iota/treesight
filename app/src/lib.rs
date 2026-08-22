@@ -271,6 +271,61 @@ pub struct ShellExt {
     #[allow(clippy::type_complexity)]
     pub configure:
         Option<Box<dyn FnOnce(tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> + Send>>,
+    /// Roots this crate cannot open by itself: a machine with a login, a folder
+    /// the platform granted, anything whose RootId is not a path. See
+    /// [`RootOpener`] — the choreography around one is this crate's, and only
+    /// the opening is the embedder's.
+    pub openers: Vec<Arc<dyn RootOpener>>,
+}
+
+/// A root that opened: what to serve, what to call it, and the RootId it
+/// settled on — which is not always the one that was asked for. `~` becomes a
+/// real path once a session can resolve it.
+pub struct Opened {
+    pub id: String,
+    pub vfs: Arc<dyn treeserve::vfs::Vfs>,
+    /// A name for the window's title, where the thing has one a person chose.
+    /// The header shows the folder and the id; a title has room for a name.
+    pub name: Option<String>,
+}
+
+/// Opens a kind of root this crate has never heard of.
+///
+/// Everything around the opening is the same whatever the root is — say what is
+/// being opened, get off the thread that answers clicks, serve it, remember it,
+/// put the page back if it did not happen — and that part stays here, once,
+/// where its several sharp edges are already documented. What an embedder
+/// supplies is the middle: given an id, a `Vfs`.
+pub trait RootOpener: Send + Sync {
+    /// Whether this opener owns the id. Asked in order; the first yes wins.
+    fn claims(&self, id: &str) -> bool;
+
+    /// What the wait page calls it while it opens. A name a person would
+    /// recognise where there is one, and the id where there is not.
+    fn label(&self, id: &str) -> String {
+        id.to_string()
+    }
+
+    /// The opening itself, on a thread of this crate's making — so it may take
+    /// as long as a network does, and may put a dialog up and wait for it.
+    ///
+    /// `None` did not open, and says nothing further: the opener has already
+    /// told the reader why, or has decided there is nothing to tell them. A
+    /// dismissed password box is the second kind, and the reason this is not a
+    /// `Result<_, String>` — an error with a message is not the only way to
+    /// fail, and a dialog saying "cancelled" after you cancelled something is
+    /// the app arguing with you.
+    fn open(&self, app: &AppHandle, id: &str) -> Option<Opened>;
+
+    /// How a root of this kind is doing, for the greying of a row that is only
+    /// being *listed*. Called for every remembered id at launch.
+    ///
+    /// **Must not connect.** Cached status, live session state, a list the
+    /// platform already holds — nothing that can block, and nothing that costs
+    /// a handshake. Answer [`RootStatus::Ok`] when there is no cheap way to
+    /// know: a row that is wrong about being fine costs a click, and a launch
+    /// that hangs costs the app.
+    fn probe(&self, id: &str) -> RootStatus;
 }
 
 /// The extensions after defaults are resolved, in Tauri's managed state so
@@ -286,6 +341,7 @@ struct Ext {
     intro: Option<String>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
+    openers: Vec<Arc<dyn RootOpener>>,
 }
 
 struct SharedExt(Arc<Ext>);
@@ -311,6 +367,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         intro: ext.intro,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
+        openers: ext.openers,
     });
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
@@ -535,6 +592,62 @@ fn open_root(app: &AppHandle, dir: PathBuf, remember: bool) {
     });
 }
 
+/// The first opener that owns this id, if any. Asked in the order the embedder
+/// listed them.
+fn opener_for(app: &AppHandle, id: &str) -> Option<Arc<dyn RootOpener>> {
+    let ext = app.try_state::<SharedExt>()?;
+    ext.0
+        .openers
+        .iter()
+        .find(|o| o.claims(id))
+        .map(Arc::clone)
+}
+
+/// Serves a root an embedder opened. The same choreography `open_root` gives a
+/// folder, around an opening this crate could not have done.
+///
+/// `remember` for the same reason it is there: a Place is already in the pane
+/// and would only be duplicating itself in Recent.
+fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: bool) {
+    let app = app.clone();
+    thread::spawn(move || {
+        // From this thread and not from the callback that asked, for the reason
+        // written on `show_opening`: the wait page reads the window's URL, and
+        // on Android that read waits on the thread the callback is holding. The
+        // opener is about to do something slow on this thread, which is the
+        // other half of why it is here.
+        let previous = show_waiting(&app, &opener.label(&id));
+        let opened = opener.open(&app, &id);
+        let back = app.clone();
+        // Windows and server state are the main thread's to touch.
+        let _ = app.run_on_main_thread(move || match opened {
+            Some(opened) => serve_opened(&back, opened, remember),
+            // The opener has said whatever needed saying, including nothing.
+            // All that is left is the page that was on screen before.
+            None => open_failed(&back, previous),
+        });
+    });
+}
+
+/// Points the window at a root that is already open. Main thread only.
+fn serve_opened(app: &AppHandle, opened: Opened, remember: bool) {
+    let Some(serving) = app.try_state::<Serving>() else {
+        return;
+    };
+    serving.state().cfg.set_root_vfs(treeserve::Root {
+        id: opened.id.clone(),
+        vfs: opened.vfs,
+    });
+    serving.state().cfg.set_root_name(opened.name);
+    if remember {
+        remember_root_id(app, &opened.id);
+    }
+    replace_page(app, serving.entry());
+    if let Some(win) = app.get_webview_window(WINDOW) {
+        show(&win);
+    }
+}
+
 /// Why a folder did not open, in the words the pane uses for the same thing — so
 /// that a drive which the list calls "not available" is not called "missing" here.
 fn cannot_open(dir: &Path, status: RootStatus) -> String {
@@ -607,6 +720,11 @@ fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
 /// answers false whatever the window is doing, which read as "never show the wait
 /// page" — and there the window cannot be hidden while a row can be tapped.
 fn show_opening(app: &AppHandle, dir: &Path) -> Option<tauri::Url> {
+    show_waiting(app, &treeserve::util::display_path(dir))
+}
+
+/// The same, for a root that is not a path and has a name of its own.
+fn show_waiting(app: &AppHandle, label: &str) -> Option<tauri::Url> {
     let serving = app.try_state::<Serving>()?;
     let win = app.get_webview_window(WINDOW)?;
     if cfg!(desktop) && !win.is_visible().unwrap_or(false) {
@@ -616,7 +734,7 @@ fn show_opening(app: &AppHandle, dir: &Path) -> Option<tauri::Url> {
     let url = format!(
         "{}/.ts/wait?path={}",
         serving.origin,
-        treeserve::util::percent_encode(&treeserve::util::display_path(dir))
+        treeserve::util::percent_encode(label)
     );
     replace_page(app, &url);
     previous
@@ -1084,17 +1202,27 @@ fn check_roots(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || {
         let recent = state.cfg.recent();
-        // Remote ids are skipped: probing one would mean a network handshake,
-        // and this loop exists precisely because a probe can hang. Whatever
-        // supplied a remote entry owns saying how it is doing.
         let pinned = state.cfg.pinned();
-        let ids: Vec<String> = state
+        let all: Vec<String> = state
             .cfg
             .places
             .iter()
             .map(|(_, id)| id.clone())
             .chain(pinned.iter().map(|p| p.id.clone()))
             .chain(recent.iter().cloned())
+            .collect();
+        // A root that is not a path is asked of whoever owns that kind, and only
+        // ever for what it already knows: `probe` is forbidden from connecting,
+        // because this loop exists precisely because a probe can hang. An id
+        // nobody claims is left alone rather than called missing — the embedder
+        // that wrote it may simply not be listening yet.
+        for id in all.iter().filter(|id| !treeserve::root_id_is_local(id)) {
+            if let Some(opener) = opener_for(&app, id) {
+                state.cfg.set_root_status(id.clone(), opener.probe(id));
+            }
+        }
+        let ids: Vec<String> = all
+            .into_iter()
             .filter(|id| treeserve::root_id_is_local(id))
             .collect();
 
@@ -1436,12 +1564,17 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
             // Ours, and already in memory: no canonicalizing, no thread, and no
             // status to record afterwards.
             Some((_, path)) if usage::claims(path.trim()) => usage::open(app),
-            // A remote id reaching this arm means no extension action claimed
-            // it. Coercing it into a PathBuf would "open" a folder named
+            // Not a path: an embedder's kind of root, if one of its openers
+            // owns it. Coercing it into a PathBuf would "open" a folder named
             // `ssh:…`, fail, and grey a healthy entry with a status nothing
-            // ever corrects — so say what actually happened instead.
+            // ever corrects — so where nobody claims it, say what actually
+            // happened instead.
             Some((_, path)) if !treeserve::root_id_is_local(path.trim()) => {
-                fail(app, &format!("Nothing here can open {}.", path.trim()), false);
+                let id = path.trim().to_string();
+                match opener_for(app, &id) {
+                    Some(opener) => open_by(app, opener, id, url.path() == "/.ts/root"),
+                    None => fail(app, &format!("Nothing here can open {id}."), false),
+                }
             }
             Some((_, path)) => {
                 let dir = PathBuf::from(path.trim());
