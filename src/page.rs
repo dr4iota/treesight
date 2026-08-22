@@ -582,8 +582,11 @@ pub fn layout(
 ) -> String {
     // The picker lives in the status line, which is always on screen — the pane
     // that used to hold it is the first thing to go when the window narrows. Only
-    // where there is a picker to open, though: a phone has none, and a button that
-    // cannot do the one thing it says is worse than no button.
+    // where there is one to open, though, and that is the embedder's answer
+    // rather than the platform's: a phone that has wired a per-directory grant to
+    // `/.ts/open` sets the flag and gets the button, and one that has not does
+    // not, because a button that cannot do the one thing it says is worse than
+    // no button.
     let pick = if state.cfg.app_ui && state.cfg.picker {
         flag(
             "pick",
