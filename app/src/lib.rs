@@ -969,8 +969,16 @@ fn start(app: &AppHandle) -> Result<(), String> {
             if origin_allowed(&ext.allowed_origins, url) {
                 return true;
             }
-            // Links out of the served tree belong in the user's browser.
-            let _ = app.opener().open_url(url.as_str(), None::<&str>);
+            // Links out of the served tree belong in the user's browser. From a
+            // thread, because on mobile the opener is a plugin round trip with
+            // no timeout on it, dispatched to the very thread this callback runs
+            // on — a tapped link in a rendered README hung the app for good.
+            // The answer was already thrown away, so nothing waits for this.
+            let app = app.clone();
+            let url = url.clone();
+            thread::spawn(move || {
+                let _ = app.opener().open_url(url.as_str(), None::<&str>);
+            });
             false
         }
     })
