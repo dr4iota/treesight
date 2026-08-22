@@ -1193,7 +1193,7 @@ fn listing_readme(state: &State, vfs: &dyn Vfs, dir: &VfsPath) -> String {
         let text = String::from_utf8_lossy(&bytes);
         return format!(
             "<section class=\"listing-readme\"><div class=\"md\">{}</div></section>",
-            render_markdown(&state.hl, &text)
+            render_markdown(&state.hl, &text, !state.cfg.app_ui)
         );
     }
     String::new()

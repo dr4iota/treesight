@@ -188,7 +188,7 @@ pub fn file_page(
 
     if !want_source {
         let body = if MARKDOWN_EXTS.contains(&ext.as_str()) {
-            Some(render_markdown(&state.hl, &text))
+            Some(render_markdown(&state.hl, &text, !state.cfg.app_ui))
         } else if MERMAID_EXTS.contains(&ext.as_str()) {
             Some(render_mermaid_figure(&text))
         } else {

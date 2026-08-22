@@ -536,7 +536,15 @@ fn md_options() -> Options<'static> {
     options
 }
 
-pub fn render_markdown(hl: &Hl, src: &str) -> String {
+/// `tabs` asks for `target="_blank"` on the links that leave the tree, which is
+/// what a browser needs to keep this page while opening one somewhere else.
+///
+/// Off in the shell, and not as a preference: a webview offers a request for a
+/// window of its own down a different path from a navigation, and the shell
+/// already answers the navigation by handing the URL to the system browser. The
+/// attribute there swaps a road that works for one that has to be met at the
+/// other end, which is a trade with nothing on our side of it.
+pub fn render_markdown(hl: &Hl, src: &str, tabs: bool) -> String {
     let options = md_options();
 
     let adapter = CodeAdapter { hl };
@@ -551,8 +559,8 @@ pub fn render_markdown(hl: &Hl, src: &str) -> String {
     render_mermaid_nodes(root);
 
     let mut out = String::with_capacity(src.len() * 3 / 2);
-    match Links::format_document_with_plugins(root, &options, &mut out, &plugins) {
-        Ok(()) => out,
+    match Links::format_document_with_plugins(root, &options, &mut out, &plugins, tabs) {
+        Ok(_) => out,
         Err(_) => format!("<pre>{}</pre>", html_escape(&src)),
     }
 }
@@ -586,7 +594,7 @@ fn leaves_the_tree(url: &str) -> bool {
         && scheme.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-create_formatter!(Links, {
+create_formatter!(Links<bool>, {
     // comrak's own, plus the two attributes: a link out of the tree opens in a
     // tab of its own in a browser, and the shell turns that request into the
     // system browser rather than a second window. `noopener noreferrer` because
@@ -619,7 +627,7 @@ create_formatter!(Links, {
             context.escape(&nl.title)?;
             context.write_str("\"")?;
         }
-        if leaves_the_tree(&nl.url) {
+        if context.user && leaves_the_tree(&nl.url) {
             context.write_str(" target=\"_blank\" rel=\"noopener noreferrer\"")?;
         }
         context.write_str(">")?;
@@ -631,8 +639,9 @@ mod tests {
     use super::*;
     use crate::hl::Hl;
 
+    /// As a browser gets it: the tabs are the half that only exists there.
     fn html(src: &str) -> String {
-        render_markdown(&Hl::for_tests(), src)
+        render_markdown(&Hl::for_tests(), src, true)
     }
 
     #[test]
@@ -718,12 +727,19 @@ mod tests {
 
     #[test]
     fn an_external_link_opens_in_a_tab_of_its_own() {
-        let out = html("[docs](https://example.com/x) and <https://example.com/bare>\n");
+        let src = "[docs](https://example.com/x) and <https://example.com/bare>\n";
+        let out = html(src);
         assert_eq!(
             out.matches("target=\"_blank\" rel=\"noopener noreferrer\"").count(),
             2,
             "the written link and the autolink both leave: {out}"
         );
+        // And not in the shell, which has no tabs and its own way out: a webview
+        // hands a request for a window of its own down a different path from a
+        // navigation, and the navigation is the one the shell already answers.
+        let shell = render_markdown(&Hl::for_tests(), src, false);
+        assert!(!shell.contains("_blank"), "{shell}");
+        assert!(shell.contains("<a href=\"https://example.com/x\">docs</a>"), "{shell}");
     }
 
     /// The other half, and the one a snapshot would catch: a link that stays
