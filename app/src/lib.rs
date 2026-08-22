@@ -129,61 +129,6 @@ pub const VIEWPORT: &str = r#"
 })();
 "#;
 
-/// Marks Back as leading nowhere, when it does.
-///
-/// The shell's Back is `history.back()`, and on the first page of a window there
-/// is no history to go back to — the button was there, and did nothing, which is
-/// the one thing a button must not do. Only the page can answer this: the Rust
-/// side hands the webview a URL and never learns what the webview did with it.
-///
-/// What it counts is how deep *this entry* is, which is not `history.length`:
-/// that is the size of the whole session, forward entries included, so walking
-/// back to the first page left the button lit with nothing behind it. The depth
-/// is stamped into the entry's own `history.state` the first time it is seen and
-/// read back on every later visit, with the last depth carried across pages in
-/// session storage. `history.length` still has the last word as a ceiling — a
-/// page that replaced its predecessor did not get any deeper.
-///
-/// Both stores can refuse: `replaceState` and `sessionStorage` are not always
-/// there on a custom scheme. Each is caught, and what is left is the old rule —
-/// depth becomes `history.length`, and only a window of one page greys.
-///
-/// Injected on every navigation like the rest, so the answer is recomputed for
-/// each page rather than decided once at startup.
-pub const BACK_STATE: &str = r#"
-(function () {
-  try {
-    var st = history.state;
-    var depth;
-    if (st && typeof st.tsDepth === 'number') {
-      // An entry we have stood on before: a traversal, not a new page.
-      depth = st.tsDepth;
-    } else {
-      var last;
-      try {
-        last = parseInt(sessionStorage.getItem('tsDepth'), 10) || 0;
-      } catch (e) {
-        last = history.length - 1;
-      }
-      // One deeper than the page we came from, but no deeper than the session
-      // is long: a page that replaced the one before it is at the same depth.
-      depth = Math.min(last + 1, history.length);
-      try {
-        history.replaceState(Object.assign({}, st, { tsDepth: depth }), '');
-      } catch (e) { /* the ceiling above still holds it in range */ }
-    }
-    try { sessionStorage.setItem('tsDepth', String(depth)); } catch (e) {}
-    // Counted on every page, applied where there is a button: the start page
-    // carries none, and skipping it would leave the next page a depth short.
-    var back = document.querySelector('.back');
-    if (back && depth <= 1) {
-      back.classList.add('nowhere');
-      back.setAttribute('aria-disabled', 'true');
-    }
-  } catch (e) { /* a live Back is the safe answer */ }
-})();
-"#;
-
 const SHORTCUTS: &str = r#"
 addEventListener('keydown', function (e) {
   if (e.altKey && !e.ctrlKey && e.key === 'ArrowLeft') { history.back(); }
@@ -359,7 +304,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         // either way: an embedder swapping key bindings is not asking for a
         // window that draws behind the status bar.
         init_script: format!(
-            "{VIEWPORT}\n{BACK_STATE}\n{}",
+            "{VIEWPORT}\n{}",
             ext.init_script.unwrap_or_else(|| SHORTCUTS.to_string())
         ),
         picker: ext.picker,
@@ -1434,7 +1379,6 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // there is nothing to confirm; and a session an embedder opened for it is
         // not this server's to close — the row that opened it will open it again.
         "/.ts/close" => close_folder(app),
-        "/.ts/back" => eval(app, "history.back()"),
         // The Refresh flag. A link to the page it is on would have done the same
         // work on the server and cost the reader their place in it: a navigation
         // starts at the top of the document and leaves the old page behind in the

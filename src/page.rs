@@ -92,7 +92,7 @@ pub const ICON_RENDERED: &str =
     "<path d=\"M3.4 3h9.2v10H3.4z\"/><path d=\"M5.4 6h5.2M5.4 8.4h5.2M5.4 10.8h3.4\"/>";
 /// Refresh: the page as the disk has it now. Three quarters of a circle with the
 /// gap and the arrowhead at the top right, so the drawing is the turn itself. The
-/// head is the chevron `ICON_UP` and `ICON_BACK` use, rather than the square hook
+/// head is the chevron `ICON_UP` uses, rather than the square hook
 /// most icon sets put on this one — an arrow is already spelled a particular way
 /// here and a second spelling of it would only be a second spelling.
 const ICON_REFRESH: &str =
@@ -110,12 +110,10 @@ pub const ICON_PRINT: &str = "<path d=\"M4.8 6.2V2.8h6.4v3.4\"/>\
 /// fill is the whole of the difference between them.
 const ICON_MENU: &str = "<path d=\"M3.6 5h8.8M3.6 8h8.8M3.6 11h8.8\"/>";
 
-/// The way out of a directory, on the `..` row.
+/// The way out of a directory: the `..` row, and the header's Up. Drawn like the
+/// rest rather than typed as an arrow character, which has an advance width and
+/// a baseline of its own and so never lined up with the icons beside it.
 const ICON_UP: &str = "<path d=\"M8 12.8V3.8\"/><path d=\"M4.3 7.5L8 3.8l3.7 3.7\"/>";
-/// The shell's Back button. Drawn like the rest rather than typed as `←`, which
-/// is a character with its own advance width and its own idea of the baseline,
-/// and so never lined up with the icons beside it.
-const ICON_BACK: &str = "<path d=\"M13 8H3\"/><path d=\"M7.2 3.8L3 8l4.2 4.2\"/>";
 /// The theme flag says which setting is chosen rather than which one is next: a
 /// sun for light, a moon for dark, and half of each for following the system.
 /// Three settings, three drawings — resolving `auto` to the sun or the moon the
@@ -442,17 +440,34 @@ fn head_and_header(
         why,
     ));
 
-    // The shell's own chrome, and all of it: one button on the line the path and
-    // the flags already had, rather than a browser-style row of its own. Both
-    // links are inert here — the shell intercepts them, and this server has no
-    // route for either.
-    let back = if state.cfg.app_ui {
-        format!(
-            "\n  {}",
-            flag("back", "/.ts/back", &svg_icon(ICON_BACK), "Back", "Back (Alt+Left)")
-        )
-    } else {
-        String::new()
+    // Up, the way a file manager means it: the folder that contains this one.
+    //
+    // Not Back. Back is history, and history is the one thing this side cannot
+    // see — the page had to be asked, and every engine answered differently, so
+    // the button spent its life lit with nowhere to go. The parent is sitting in
+    // `rel`, which makes both the link and its absence exact, and the same
+    // answer on a phone, in the shell and in a browser.
+    //
+    // Going *back* is still there and is the platform's: Alt+Left in the shell's
+    // own script, and on Android the system gesture, which the webview already
+    // answers with its own history.
+    let up = match rel.split_last() {
+        Some((_, parent)) => {
+            let href = format!("{}/", href_path(parent).trim_end_matches('/'));
+            let title = match parent.last() {
+                Some(name) => format!("Up to {name}"),
+                None => format!("Up to {site_title}"),
+            };
+            format!("\n  {}", flag("up", &href, &svg_icon(ICON_UP), "Up", &title))
+        }
+        // The top of what is served. Dimmed and inert rather than gone, and not
+        // a link at all — an `<a>` with no `href` is not focusable, so nothing
+        // has to be told to leave it alone.
+        None => format!(
+            "\n  <a class=\"up nowhere\" aria-disabled=\"true\" title=\"Nothing above this folder\">\
+             <span class=\"ico\">{}</span><span class=\"lbl\">Up</span></a>",
+            svg_icon(ICON_UP)
+        ),
     };
     // The pane at a width where there is no room for it: the same markup,
     // slid over the listing by a checkbox nothing but CSS reads. It rides with
@@ -510,7 +525,7 @@ fn head_and_header(
 {syntax_css}
 </head>
 <body{classes}>
-{drawer_toggle}<header>{back}{drawer_btn}{pane_flag}{tag}
+{drawer_toggle}<header>{up}{drawer_btn}{pane_flag}{tag}
   <div class="crumbs">{crumbs}</div>
   <div class="controls">{controls}</div>
 </header>"#,
@@ -519,7 +534,7 @@ fn head_and_header(
         syntax_css = syntax_css,
         classes = classes,
         drawer_toggle = drawer_toggle,
-        back = back,
+        up = up,
         drawer_btn = drawer_btn,
         pane_flag = pane_flag,
         tag = tag,
@@ -1741,6 +1756,39 @@ mod tests {
                 assert!(rule.contains(decl), "{width}rem: no {decl}");
             }
         }
+    }
+
+    /// Up is the folder that contains this one, which the server knows — so the
+    /// link and its absence are both exact, and the same on every engine. The
+    /// button it replaced asked the page about its history and was told
+    /// something different by each one.
+    #[test]
+    fn up_is_the_parent_and_nothing_at_the_top() {
+        let dir = tmp_dir("upbutton");
+        let state = state_at(dir.clone());
+        let root = state.cfg.root().expect("these tests always serve one");
+        let page = |rel: &[String]| {
+            let canon = VfsPath::new(rel.to_vec());
+            listing_page(&state, &root, prefs(), rel, &canon, &[], "/")
+        };
+        let seg = |s: &str| s.to_string();
+
+        // Two deep: up is one segment shorter, and named.
+        let html = page(&[seg("sub"), seg("deep")]);
+        assert!(
+            html.contains("<a class=\"up\" href=\"/sub/\" title=\"Up to sub\">"),
+            "{html}"
+        );
+        // One deep: up is the served root, under the name the site wears.
+        let html = page(&[seg("sub")]);
+        assert!(html.contains("<a class=\"up\" href=\"/\" title=\"Up to "), "{html}");
+        // At the top there is nowhere to go, and it is not a link: no href at
+        // all, so nothing has to be told not to follow it.
+        let html = page(&[]);
+        assert!(html.contains("class=\"up nowhere\" aria-disabled=\"true\""), "{html}");
+        assert!(!html.contains("class=\"up\" href"), "{html}");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The pane switch and the drawer button are one control in one place: the
