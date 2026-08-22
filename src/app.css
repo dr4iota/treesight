@@ -92,8 +92,8 @@ header {
   /* The inset goes on the padding rather than above the element: the header is
      sticky and paints its own background, so growing it upward is what puts a
      backplate under the status bar instead of leaving a stripe of page there. */
-  padding: calc(.5rem + var(--safe-top)) calc(1rem + var(--safe-right)) .5rem
-    calc(1rem + var(--safe-left));
+  padding: max(.5rem, var(--safe-top)) max(1rem, var(--safe-right)) .5rem
+    max(1rem, var(--safe-left));
   border-bottom: 1px solid var(--border);
   background: var(--bg-subtle);
   position: sticky;
@@ -149,6 +149,25 @@ header {
    cannot hold them. */
 @media (max-width: 46rem) {
   .lbl { display: none; }
+  /* The path gets its own line, under the buttons rather than squeezed between
+     them. At this width there is room for the controls or for the path, and
+     `overflow-wrap: anywhere` — which is what keeps a long path inside the pane
+     everywhere else — spent the difference breaking it mid-word across two rows
+     and running it under the buttons at the far end.
+     One line, and it scrolls: an ellipsis here would cut off the leaf, which is
+     the half of a path that says where you are, and there is no way to clip the
+     head instead without reversing the order of the crumbs themselves. */
+  header .crumbs {
+    order: 3;
+    flex: 1 1 100%;
+    min-width: 0;
+    font-size: .85rem;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  header .crumbs::-webkit-scrollbar { display: none; }
   /* Once a pill holds a drawing instead of a word, centre it as a box rather
      than sitting it on a text baseline: `vertical-align` and side padding line
      up glyphs, and a glyph is exactly what these are not. A fixed square makes
@@ -188,11 +207,17 @@ header {
 
 .shell { display: flex; align-items: stretch; flex: 1; min-height: 0; }
 nav.tree {
-  flex: 0 0 17rem;
-  max-width: 17rem;
+  /* Seventeen rems of *tree*, whatever the screen keeps on that side. In
+     landscape the cutout is on one of the long edges — 51px of it on the phone
+     this was drawn against — and with a fixed 17rem box the inset came out of
+     the names instead of out of the layout, which is the pane being too narrow
+     to read rather than the pane being where it always was. */
+  --pane-left: max(.5rem, var(--safe-left));
+  flex: 0 0 calc(17rem + var(--pane-left) - .5rem);
+  max-width: calc(17rem + var(--pane-left) - .5rem);
   border-right: 1px solid var(--border);
   background: var(--bg-subtle);
-  padding: .75rem .5rem .8rem calc(.5rem + var(--safe-left));
+  padding: .75rem .5rem .8rem var(--pane-left);
   overflow-x: hidden;
   font-size: .85rem;
 }
@@ -522,7 +547,7 @@ nav.tree .chooser .why {
 
 /* The listing keeps clear of a cutout on its own side. Not the left: the pane is
    there, and where the pane is gone the drawer's own padding answers for it. */
-main { flex: 1; min-width: 0; padding: 1rem calc(1.25rem + var(--safe-right)) 3rem; }
+main { flex: 1; min-width: 0; padding: 1rem max(1.25rem, var(--safe-right)) 3rem; }
 
 table.listing { border-collapse: collapse; width: 100%; max-width: 60rem; }
 table.listing th {
@@ -795,8 +820,8 @@ iframe.raw { flex: 1; min-height: 0; display: block; width: 100%; border: 0; bac
 
 footer {
   /* The other end: a gesture strip, or a navigation bar. */
-  padding: .6rem calc(1.25rem + var(--safe-right)) calc(.6rem + var(--safe-bottom))
-    calc(1.25rem + var(--safe-left));
+  padding: .6rem max(1.25rem, var(--safe-right)) max(.6rem, var(--safe-bottom))
+    max(1.25rem, var(--safe-left));
   color: var(--muted);
   font-size: .75rem;
   border-top: 1px solid var(--border);
@@ -830,7 +855,24 @@ footer a.pick:hover { border-color: var(--link); background: var(--bg-subtle); t
 /* The pane narrows before it goes, then goes: past a point the listing needs
    every column it can get, and in the shell `Ctrl+O` still opens a folder. */
 @media (max-width: 64rem) {
-  nav.tree { flex-basis: 12rem; max-width: 12rem; }
+  /* Narrower where the window is, and still 12rem of *tree*: the inset comes out
+     of the layout here too, or a phone in landscape — 57rem, so it lands in this
+     band — spends a fifth of the pane on the cutout and leaves a column too
+     narrow to read a filename in. */
+  nav.tree {
+    flex-basis: calc(12rem + var(--pane-left) - .5rem);
+    max-width: calc(12rem + var(--pane-left) - .5rem);
+  }
+}
+/* Except on a finger, where this band *is* the phone in landscape rather than a
+   half-width desktop window: the whole reason the pane narrows is that a smaller
+   window has a listing to feed as well, and a phone turned sideways has room for
+   both at full width. Rows are taller here and names no shorter. */
+@media (pointer: coarse) {
+  nav.tree {
+    flex-basis: calc(17rem + var(--pane-left) - .5rem);
+    max-width: calc(17rem + var(--pane-left) - .5rem);
+  }
 }
 /* Past this width the pane is gone from the layout — and used to be gone full
    stop, which on a phone meant the tree, Places, Recent and anything an
@@ -869,6 +911,11 @@ footer a.pick:hover { border-color: var(--link); background: var(--bg-subtle); t
     top: 0;
     bottom: 0;
     left: 0;
+    /* Over the window rather than inside the layout, so nothing above it has
+       already kept clear of the status bar or the gesture strip on its behalf:
+       here the drawer is the thing at the screen's edge and pays for all of it. */
+    padding-top: max(.75rem, var(--safe-top));
+    padding-bottom: max(.8rem, var(--safe-bottom));
     width: min(17rem, 85vw);
     max-width: none;
     z-index: 30;
@@ -949,9 +996,11 @@ body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
      and not a minimum height, because these links are `inline-block` and their
      ellipsis is the block layout's: a flex container puts its text in an
      anonymous item, where `text-overflow` stops being reliable. */
-  nav.tree { font-size: .95rem; }
-  nav.tree .files a { padding-top: .7rem; padding-bottom: .7rem; }
-  nav.tree li .row { min-height: 2.75rem; }
+  nav.tree { font-size: 1rem; }
+  nav.tree .files a { padding-top: .5rem; padding-bottom: .5rem; }
+  nav.tree li .row { min-height: 2.5rem; }
+  /* Something between the name and the buttons at the end of its row. */
+  nav.tree li .row, nav.tree .chooser .row, body.nothing .start .row { gap: .3rem; }
   /* The chooser's lists and the start page's are the other shape: those links are
      already flex — the head-and-leaf shrinking above depends on it — so they take
      a minimum height directly, and the line needs centring inside it because the
@@ -959,7 +1008,7 @@ body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
   nav.tree .chooser a,
   body.nothing .start li > a,
   body.nothing .start .row > a:first-child {
-    min-height: 2.75rem;
+    min-height: 2.5rem;
     align-items: center;
   }
   /* Wider, and it already stretches to the row's full height. */
@@ -971,13 +1020,26 @@ body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
   nav.tree section h2 a.secact,
   body.nothing .start .row > a.aside,
   body.nothing .start h2 a.secact,
-  .back, .controls a, .controls span.ctl, footer a.pick {
+  .drawer-btn,
+  .back, .controls a, .controls span.ctl, footer a.pick, .drawer-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 2.75rem;
-    min-height: 2.75rem;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    width: auto;
+    height: auto;
     padding: 0;
+  }
+  /* And the mark grows with the box it is in. 14px was drawn for a pointer and
+     a 1.7rem pill; alone in the middle of a 2.5rem one it reads as a mistake,
+     which is what "the buttons are big and the icons are small" is. */
+  .back svg, .controls a svg, .controls span.ctl svg, footer a.pick svg,
+  .drawer-btn svg, nav.tree a.asroot svg, nav.tree .chooser a.aside svg,
+  nav.tree section h2 a.secact svg, body.nothing .start h2 a.secact svg,
+  body.nothing .start .row > a.aside svg {
+    width: 19px;
+    height: 19px;
   }
   /* A heading bar is taller than a row and can carry a larger mark, which is
      also the one place in the pane where a mark is the only thing to look at. */
