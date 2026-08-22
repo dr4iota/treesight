@@ -551,7 +551,17 @@ fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
     }
 
     if let Some(serving) = app.try_state::<Serving>() {
+        let id = treeserve::util::display_path(&dir);
         serving.state().cfg.set_root(dir.clone());
+        // A Place has a name and the folder it points at usually does not — "App
+        // storage" against a path ending in the application id, which is the
+        // program telling the reader its own package name. `set_root` clears the
+        // name, so this goes after it, and only for a path the fixed list knows:
+        // a folder opened from the picker or from Recent is named after itself,
+        // which is all anybody could call it.
+        if let Some((label, _)) = serving.state().cfg.places.iter().find(|(_, p)| *p == id) {
+            serving.state().cfg.set_root_name(Some(label.clone()));
+        }
         // Re-navigate: the root the window was showing has just been replaced.
         // `entry` is the served root, which is all it is now that there is no
         // cookie to collect on the way in. The page-load hook retitles.
