@@ -314,6 +314,36 @@ The window may only stay on:
 
 Anything else opens in the system browser.
 
+### What may run on the navigation callback
+
+`on_navigation` runs on the thread the window answers input on, and on Android
+that is the **Java UI thread** — which is also the thread that services every
+message wry posts to itself. A call that waits for the webview to answer is
+therefore a call waiting for the thread it is running on:
+
+| Call | Waits on | Timeout |
+|---|---|---|
+| `WebviewWindow::url()`, `cookies()`, `webview_version()` | wry's MainPipe | 10 s |
+| anything through `run_mobile_plugin` — **every** `app.path().*_dir()`, `opener().open_url()` | the same pipe | none at all |
+
+The symptom is not a crash: the window stops repainting, `adb logcat` says
+`Input dispatching timed out`, and there is no tombstone and no panic. Nothing
+failed, something waited.
+
+Two rules, both cheap:
+
+- **Spawn.** Anything reached from the callback that is not pure computation
+  goes on a thread — `set_pref`, `save_as`, `open_root` and the external-link
+  opener all do. From a worker thread every one of those calls completes,
+  because the looper is free to answer it, and one thread per click is nothing.
+- **Never decide anything from a tao window getter on Android.** `is_visible()`
+  warns and returns false, `title()` returns `""`, `set_title` and `set_visible`
+  are no-ops. Gate the check with `cfg!(desktop)` instead of believing it.
+
+Safe on the callback: `navigate` and `eval` (posts with no reply channel), every
+tauri-plugin-dialog dialog (its mobile backend wraps each one in a thread of its
+own), and reads of state or files.
+
 ---
 
 ## ShellExt
