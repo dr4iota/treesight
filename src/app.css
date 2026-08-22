@@ -1139,13 +1139,6 @@ html[data-touch] body.nothing .start .row > a.aside svg {
      and it was the smallest mark in the pane while sitting in one of the widest
      boxes. */
 html[data-touch] nav.tree .row > .twisty { font-size: 1.6rem; }
-  /* A heading bar is taller than a row and can carry a larger mark, which is
-     also the one place in the pane where a mark is the only thing to look at. */
-html[data-touch] nav.tree section h2 a.secact svg,
-html[data-touch] body.nothing .start h2 a.secact svg {
-    width: 18px;
-    height: 18px;
-  }
   /* Eight pixels between targets, which is what Material asks for and what stops
      two marks at the end of a bar reading as one wide button. */
 html[data-touch] nav.tree section h2 .acts,
