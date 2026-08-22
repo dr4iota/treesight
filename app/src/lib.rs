@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 // Both serve `picker_start_dir`, which is the desktop picker's alone.
 #[cfg(desktop)]
@@ -201,6 +202,16 @@ pub struct Serving {
     /// The URL the window opens with. Once a plain root: there is no cookie to
     /// collect on the way in any more.
     entry: String,
+    /// Whether a page of ours has finished loading in the window yet.
+    ///
+    /// Re-rooting has to put the new root on screen without leaving the old page
+    /// behind in the history — every page this window shows is the same URL, so
+    /// a pushed entry is a copy of the one you are on, and Back into it renders
+    /// the *new* root under the old page's address. `location.replace` is how a
+    /// page is changed without an entry, and it needs a page to run in: before
+    /// the window's own first load has committed there is none, and a plain
+    /// navigation supersedes that load rather than stacking on it.
+    loaded: AtomicBool,
 }
 
 impl Serving {
@@ -577,12 +588,28 @@ fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
         if let Some((label, _)) = serving.state().cfg.places.iter().find(|(_, p)| *p == id) {
             serving.state().cfg.set_root_name(Some(label.clone()));
         }
-        // Re-navigate: the root the window was showing has just been replaced.
+        // Re-show: the root the window was showing has just been replaced.
         // `entry` is the served root, which is all it is now that there is no
         // cookie to collect on the way in. The page-load hook retitles.
+        //
+        // Replaced rather than navigated to, because a navigation would push:
+        // every page of this window wears the same address, so the entry left
+        // behind is a copy of the page you are on — Back into it re-renders
+        // whatever root is current, and on the first folder of a run it made a
+        // live Back button out of a window with nothing behind it at all.
         if let Some(win) = app.get_webview_window(WINDOW) {
-            if let Ok(url) = serving.entry.parse() {
-                let _ = win.navigate(url);
+            match serving.loaded.load(Ordering::Relaxed) {
+                true => {
+                    let _ = win.eval(&format!("location.replace('{}')", js_quoted(&serving.entry)));
+                }
+                // Nothing loaded yet to run that in — the window is still
+                // fetching its own first page. A navigation supersedes a load
+                // that has not committed, so this leaves one entry too.
+                false => {
+                    if let Ok(url) = serving.entry.parse() {
+                        let _ = win.navigate(url);
+                    }
+                }
             }
             // It may still be hidden: the window is built while the picker is up,
             // and this is the first moment there is a folder to put in it.
@@ -911,6 +938,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
         state,
         origin: origin.clone(),
         entry: entry.clone(),
+        loaded: AtomicBool::new(false),
     });
 
     let win = WebviewWindowBuilder::new(
@@ -940,6 +968,10 @@ fn start(app: &AppHandle) -> Result<(), String> {
                 && origin_allowed(&shell, payload.url())
                 && let Some(serving) = app.try_state::<Serving>()
             {
+                // There is a page here now, and one that can be told to replace
+                // itself — which is how a re-root avoids leaving a copy of the
+                // page behind it in the history. See `Serving::loaded`.
+                serving.loaded.store(true, Ordering::Relaxed);
                 let _ = win.set_title(&window_title(&serving.state().cfg));
             }
         }
@@ -1560,6 +1592,13 @@ fn close_folder(app: &AppHandle) {
     {
         let _ = win.navigate(url);
     }
+}
+
+/// A string as a single-quoted JavaScript literal. Our own URLs only, which is
+/// why this is three characters rather than a JSON encoder — but a scheme base
+/// is configurable, so it is not nothing.
+fn js_quoted(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 fn eval(app: &AppHandle, js: &str) {
