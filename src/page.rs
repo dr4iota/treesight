@@ -448,7 +448,11 @@ fn head_and_header(
     // the whole trick: `#ts-drawer:checked ~ .shell nav.tree` is how a page
     // with no script in it remembers that a button was pressed. The label may
     // sit anywhere, and does — in the header, where the buttons are.
-    let drawer = show_pane_flag && prefs.sidebar;
+    // Not `&& prefs.sidebar`: that switch is a desktop control — the stylesheet
+    // drops it at the width where the pane becomes a drawer — so at drawer widths
+    // it says whatever it last said on a wider window, and letting it decide
+    // meant a phone with no way to reach the tree at all.
+    let drawer = show_pane_flag;
     let drawer_toggle = if drawer {
         "<input type=\"checkbox\" id=\"ts-drawer\" class=\"drawer-toggle\" aria-hidden=\"true\">\n"
     } else {
@@ -463,11 +467,17 @@ fn head_and_header(
         String::new()
     };
 
+    // `nopane` rather than leaving the markup out: see the pane above.
+    let off = match prefs.sidebar {
+        true => "",
+        false => " nopane",
+    };
     let classes = match (state.cfg.app_ui, extra_body_class) {
-        (false, "") => String::new(),
-        (true, "") => " class=\"app\"".to_string(),
-        (false, c) => format!(" class=\"{c}\""),
-        (true, c) => format!(" class=\"app {c}\""),
+        (true, "") => format!(" class=\"app{off}\""),
+        (true, c) => format!(" class=\"app {c}{off}\""),
+        (false, "") if off.is_empty() => String::new(),
+        (false, "") => format!(" class=\"{}\"", off.trim()),
+        (false, c) => format!(" class=\"{c}{off}\""),
     };
 
     format!(
@@ -583,20 +593,15 @@ pub fn layout(
     // not there at all. In the shell that takes Places and Recent with it, which
     // is the honest trade for a full-width listing — the picker they are
     // shortcuts to is in the status line, and that line is always on screen.
-    let sidebar = if prefs.sidebar {
-        pane_html(state, root, rel, prefs, url_now)
-    } else {
-        String::new()
-    };
+    // Rendered whether or not the switch is on, and hidden by a class when it is
+    // off. The drawer needs something to slide in, and only the stylesheet knows
+    // whether this window is wide enough for the switch to have meant anything.
+    let sidebar = pane_html(state, root, rel, prefs, url_now);
 
     // What closes the drawer: the listing, made into the label of the same
     // checkbox for as long as the drawer is over it. Only where the pane is,
     // since it is only ever the pane it closes.
-    let scrim = if prefs.sidebar {
-        "<label for=\"ts-drawer\" class=\"drawer-scrim\" aria-hidden=\"true\"></label>\n"
-    } else {
-        ""
-    };
+    let scrim = "<label for=\"ts-drawer\" class=\"drawer-scrim\" aria-hidden=\"true\"></label>\n";
 
     format!(
         r#"{chrome}
