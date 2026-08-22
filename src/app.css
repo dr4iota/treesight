@@ -1112,12 +1112,15 @@ html[data-touch] nav.tree { font-size: 1rem; }
      so side padding here buys nothing — nobody misses a row by pressing an inch
      to the left of a word — and spends the characters that would have shown the
      end of the name. */
-html[data-touch] nav.tree .files a { padding: .5rem .1rem; }html[data-touch] nav.tree li .row { min-height: 2.5rem; }
+html[data-touch] nav.tree .files a { padding: .5rem .1rem; }
+html[data-touch] nav.tree li .row { min-height: 2.5rem; }
   /* Something between the name and the buttons at the end of its row. */
   /* Room between a name and the buttons at the end of its row — but the arrow
      before it is part of the same row and wants none. */
 html[data-touch] nav.tree .chooser .row,
-html[data-touch] body.nothing .start .row { gap: .3rem; }html[data-touch] nav.tree li .row { gap: 0; }html[data-touch] nav.tree li .row > a.asroot { margin-left: .3rem; }
+html[data-touch] body.nothing .start .row { gap: .3rem; }
+html[data-touch] nav.tree li .row { gap: 0; }
+html[data-touch] nav.tree li .row > a.asroot { margin-left: .3rem; }
   /* The chooser's lists and the start page's are the other shape: those links are
      already flex — the head-and-leaf shrinking above depends on it — so they take
      a minimum height directly, and the line needs centring inside it because the
@@ -1166,7 +1169,8 @@ html[data-touch] footer a.pick svg,
 html[data-touch] .drawer-btn svg {
     width: 24px;
     height: 24px;
-  }html[data-touch] nav.tree a.asroot svg,
+  }
+html[data-touch] nav.tree a.asroot svg,
 html[data-touch] nav.tree .chooser a.aside svg,
 html[data-touch] nav.tree section h2 a.secact svg,
 html[data-touch] body.nothing .start h2 a.secact svg,
