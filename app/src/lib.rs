@@ -62,14 +62,24 @@ mod usage;
 /// asks for, because a window drawn under the clock is not a preference.
 pub const VIEWPORT: &str = r#"
 (function () {
+ try {
+  // A document-start script runs before anything is guaranteed: no root element
+  // on a document that has only just committed, no `screen` in some contexts.
+  // Nothing here is worth a thrown exception in a script the whole window shares,
+  // so the lot is guarded and a failure leaves the CSS on its own defaults.
   var root = document.documentElement;
+  if (!root || !root.style) { return; }
   var vv = window.visualViewport;
-  var ua = navigator.userAgent;
+  var ua = (navigator && navigator.userAgent) || '';
   var chrome = /Chrome\/(\d+)/.exec(ua);
   var legacy = /Android/.test(ua) && (!chrome || +chrome[1] < 140);
 
   function height() {
-    root.style.setProperty('--vh', ((vv && vv.height) || window.innerHeight) * 0.01 + 'px');
+    var h = (vv && vv.height) || window.innerHeight || 0;
+    // Never zero. Asked early enough, a window has no size yet, and
+    // `calc(0px * 100)` is a shell exactly none of the screen tall — which is
+    // not a smaller mistake than being too tall, it is an app with nothing in it.
+    if (h > 0) { root.style.setProperty('--vh', h * 0.01 + 'px'); }
   }
   function floor() {
     if (!legacy) { return; }
@@ -86,6 +96,12 @@ pub const VIEWPORT: &str = r#"
   function rotated() { both(); setTimeout(both, 300); }
 
   both();
+  // And again once there is a laid-out document to measure, because the first
+  // answer was taken before there was one.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', both);
+  }
+  addEventListener('load', both);
   addEventListener('resize', both);
   addEventListener('orientationchange', rotated);
   var o = window.screen && window.screen.orientation;
@@ -96,6 +112,7 @@ pub const VIEWPORT: &str = r#"
     vv.addEventListener('resize', both);
     vv.addEventListener('scroll', height);
   }
+ } catch (e) { /* the defaults are a working window; this only ever improves it */ }
 })();
 "#;
 
