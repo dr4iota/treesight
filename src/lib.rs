@@ -152,6 +152,15 @@ pub struct HeaderFlag {
     pub label: String,
     /// The tooltip, and the whole of what is left once the word goes.
     pub title: String,
+    /// Draw it only while the RootId being served starts with this. `None` draws
+    /// it on every page that has a header.
+    ///
+    /// A prefix and not a predicate, so this crate compares two strings and
+    /// learns nothing: `Some("ssh:")` is the embedder saying *my terminal opens
+    /// a shell on a machine, and a folder is not one*. Without it a control that
+    /// acts on the root would be offered against roots it cannot act on, which
+    /// is the failure a button has no way to explain.
+    pub roots: Option<String>,
 }
 
 pub struct PaneSection {

@@ -389,7 +389,12 @@ fn head_and_header(
     // Raw and Download belong to the file being looked at and stay together
     // after them. Each is one more flag for the count that decides when words
     // become marks, which is exactly what that count is for.
-    for f in state.cfg.flags().iter() {
+    for f in state
+        .cfg
+        .flags()
+        .iter()
+        .filter(|f| f.roots.as_ref().is_none_or(|p| root.id.starts_with(p)))
+    {
         controls.push_str(&flag(
             "",
             &f.href,
@@ -1793,6 +1798,7 @@ mod tests {
             icon: "<path d=\"M3 4l3 3-3 3\"/>".to_string(),
             label: "Terminal".to_string(),
             title: "A shell on this machine".to_string(),
+            roots: None,
         }]);
         let html = page(&state);
         // Right after Refresh, and before whatever the page brought.
@@ -1806,6 +1812,18 @@ mod tests {
         // The word and the mark both, so the header can drop one for the other.
         assert!(html.contains("<span class=\"lbl\">Terminal</span>"), "{html}");
         assert!(html.contains("M3 4l3 3-3 3"), "{html}");
+
+        // And a flag that names the roots it belongs to is drawn against those
+        // and no others — this root is a path, so an `ssh:` control is not for
+        // it. A button offered where it cannot act has no way to explain itself.
+        state.cfg.set_flags(vec![crate::HeaderFlag {
+            href: "/x/term".to_string(),
+            icon: "<path d=\"M3 4l3 3-3 3\"/>".to_string(),
+            label: "Terminal".to_string(),
+            title: "A shell on this machine".to_string(),
+            roots: Some("ssh:".to_string()),
+        }]);
+        assert!(!page(&state).contains("/x/term"), "not on a folder");
 
         fs::remove_dir_all(&dir).unwrap();
     }

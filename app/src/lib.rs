@@ -266,6 +266,15 @@ pub struct ShellExt {
     /// relative; a page whose path is already taken replaces it, which is how
     /// `README.md` comes to name the right program without the rest being copied.
     pub usage_pages: Vec<(&'static str, &'static [u8])>,
+    /// Controls of the embedder's own on the header's flag row, drawn with
+    /// Refresh and ahead of whatever the page brought. Installed when the server
+    /// starts; for anything later — a control that comes and goes — call
+    /// `Config::set_flags` through [`Serving::state`].
+    ///
+    /// A flag that acts on the root should say so with
+    /// [`treeserve::HeaderFlag::roots`], or it will be offered against roots it
+    /// cannot act on.
+    pub flags: Vec<treeserve::HeaderFlag>,
     /// One shot at the builder before the shell finishes it: plugins to
     /// register, mobile-specific setup.
     #[allow(clippy::type_complexity)]
@@ -343,6 +352,7 @@ struct Ext {
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
+    flags: Vec<treeserve::HeaderFlag>,
 }
 
 struct SharedExt(Arc<Ext>);
@@ -369,6 +379,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
+        flags: ext.flags,
     });
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
@@ -1002,6 +1013,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.set_recent(recent(app));
     cfg.set_pinned(pinned(app));
     cfg.set_sections(ext.extra_sections.iter().flat_map(|f| f(app)).collect());
+    cfg.set_flags(ext.flags.iter().map(clone_flag).collect());
 
     let state = treeserve::state_for(cfg);
     // The protocol handler was registered before this ran and has been waiting
@@ -1716,6 +1728,17 @@ pub fn replace_page(app: &AppHandle, url: &str) {
                 let _ = win.navigate(url);
             }
         }
+    }
+}
+
+/// `HeaderFlag` is four strings and an option; the embedder's copy stays theirs.
+fn clone_flag(f: &treeserve::HeaderFlag) -> treeserve::HeaderFlag {
+    treeserve::HeaderFlag {
+        href: f.href.clone(),
+        icon: f.icon.clone(),
+        label: f.label.clone(),
+        title: f.title.clone(),
+        roots: f.roots.clone(),
     }
 }
 
