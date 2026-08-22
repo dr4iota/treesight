@@ -125,6 +125,10 @@ header {
    of its own there is nothing between them to push them apart, and they ended up
    in a row of four buttons with the whole width to their right. */
 header .controls { margin-left: auto; }
+/* Between the two ends, on the row with them. `order: 0` is the default and is
+   written down because the crumbs beside it carry an explicit one: this is the
+   thing that must *not* travel to the second row with the path. */
+header > .tag { order: 0; flex: 0 0 auto; }
 /* A token in a bag: an id, a name a machine is filed under. Small, monospaced and
    fenced off, so it never reads as the first word of the path beside it. Here
    rather than in a page of its own, because the shell that serves pages next to
@@ -922,11 +926,9 @@ html[data-touch] nav.tree {
      early: this one has no words to lose, so there is no width at which it
      would have had any. */
   .drawer-btn {
-    /* Sized here rather than with the other controls: this one is `display: none`
-       everywhere else, and a rule that gives every control a touch-sized box gave
-       this one a box at widths where the pane is already on screen beside it. */
-    min-width: 2.5rem;
-    min-height: 2.5rem;
+    /* Touch sizing is applied below, not here: a narrow *desktop* window has this
+       button too, and giving it a finger's box there left one control half again
+       the size of the three beside it. */
     /* Ahead of Back, which follows it in the markup. The menu opens what you are
        looking at and Back leaves it, so the one that goes further out sits
        further out — and on a touch screen the thumb reaches it first. Not a
@@ -943,7 +945,12 @@ html[data-touch] nav.tree {
     color: var(--muted);
     cursor: pointer;
   }
-  html[data-touch] .drawer-btn { width: auto; height: auto; }
+  html[data-touch] .drawer-btn {
+    width: auto;
+    height: auto;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
   html[data-touch] .drawer-btn svg { width: 24px; height: 24px; }
   .drawer-btn:hover { color: var(--link); border-color: var(--link); }
   /* Fixed rather than absolute, so the drawer is the height of the window and

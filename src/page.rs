@@ -335,10 +335,16 @@ fn head_and_header(
     // Breadcrumbs, behind the id of the machine they are on when they are not on
     // this one: `/home/hanhua` is a path every host in the world has a version of,
     // and the listing should not be the only thing in the window that knows which.
-    let mut crumbs = match crate::root_id_bookmark(&root.id) {
+    //
+    // Its own element beside the crumbs rather than the first thing inside them,
+    // because on a narrow window the crumbs take a row to themselves and the badge
+    // should not go with them: which machine you are on belongs on the line with
+    // the buttons, and the row below is the path's to fill.
+    let tag = match crate::root_id_bookmark(&root.id) {
         Some(id) => format!("<span class=\"tag\">{}</span>", html_escape(id)),
         None => String::new(),
     };
+    let mut crumbs = String::new();
     crumbs.push_str(&format!("<a href=\"/\">{}</a>", html_escape(&site_title)));
     let mut acc: Vec<String> = Vec::new();
     for (i, seg) in rel.iter().enumerate() {
@@ -493,7 +499,7 @@ fn head_and_header(
 {syntax_css}
 </head>
 <body{classes}>
-{drawer_toggle}<header>{back}{drawer_btn}
+{drawer_toggle}<header>{back}{drawer_btn}{tag}
   <div class="crumbs">{crumbs}</div>
   <div class="controls">{controls}</div>
 </header>"#,
@@ -504,6 +510,7 @@ fn head_and_header(
         drawer_toggle = drawer_toggle,
         back = back,
         drawer_btn = drawer_btn,
+        tag = tag,
         crumbs = crumbs,
         controls = controls,
     )
@@ -1678,8 +1685,10 @@ mod tests {
             vfs: std::sync::Arc::clone(&local.vfs),
         });
         let html = page(&state);
+        // Beside the crumbs, not inside them: the badge stays on the row with the
+        // buttons when a narrow window sends the path to a row of its own.
         assert!(
-            html.contains("<div class=\"crumbs\"><span class=\"tag\">iota</span><a href=\"/\">"),
+            html.contains("<span class=\"tag\">iota</span>\n  <div class=\"crumbs\"><a href=\"/\">"),
             "{html}"
         );
 
