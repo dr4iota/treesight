@@ -1237,6 +1237,20 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
         say(app, &format!("{} is not a file to save.", url.path()));
         return;
     }
+    // The save sheet on a phone hands back a `content://` URI, and the copy
+    // below wants a path: `into_path` fails on one, which this code reads as a
+    // cancelled dialog — so the user chose a destination and nothing was
+    // written and nothing was said. Say it before the sheet instead. Writing
+    // through the URI means the dialog plugin's descriptor or the fs plugin,
+    // and neither is wired here yet; docs/todo.md carries it.
+    if cfg!(mobile) {
+        say(
+            app,
+            "Saving a copy is not available on this device yet.\n\nThe file is \
+             already on it — open it from the folder you granted.",
+        );
+        return;
+    }
 
     let app = app.clone();
     let mut dialog = app
