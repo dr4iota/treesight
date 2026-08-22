@@ -163,6 +163,21 @@ header > .tag { order: 0; flex: 0 0 auto; }
 .ico { display: none; }
 /* Late: words are better than symbols, so they stay until the header genuinely
    cannot hold them. */
+/* Words cost width, and how much depends on how many controls a page brought.
+   The bar below is the base rule at 46rem, which is where two to four of them
+   stop fitting. A file view carries seven, and seven labelled flags want half
+   again as much room — so the count decides the threshold rather than one width
+   deciding for every page.
+   `:nth-child(5)` matching means "there is a fifth", which is how a stylesheet
+   counts. Only the right-hand group is counted: the left is Back and the menu,
+   at most two, and always there in the shell — so the total is this plus two. */
+@media (max-width: 56rem) {
+  header:has(.controls > :nth-child(5)) .lbl { display: none; }
+}
+@media (max-width: 68rem) {
+  header:has(.controls > :nth-child(7)) .lbl { display: none; }
+}
+
 @media (max-width: 46rem) {
   .lbl { display: none; }
   /* The path gets its own line, under the buttons rather than squeezed between

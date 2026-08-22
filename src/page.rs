@@ -1695,6 +1695,22 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A bar with seven controls on it needs the words off sooner than a bar with
+    /// three, so the count picks the width rather than one width serving both.
+    #[test]
+    fn a_crowded_header_drops_its_words_sooner() {
+        let sheet = crate::app_css();
+        // The base rule, and the two the count reaches for above it.
+        assert!(sheet.contains("@media (max-width: 46rem) {"), "base threshold");
+        for (width, nth) in [(56, 5), (68, 7)] {
+            let at = format!("@media (max-width: {width}rem) {{");
+            let sel = format!("header:has(.controls > :nth-child({nth})) .lbl");
+            let from = sheet.find(&at).unwrap_or_else(|| panic!("no {at}"));
+            let end = from + sheet[from..].find('}').unwrap_or(0);
+            assert!(sheet[from..end].contains(&sel), "{nth}: {sel} not under {at}");
+        }
+    }
+
     /// The pinned list is the reader's own, so its rows unpin — and the control
     /// that puts a root in it sits on the heading of that root, saying which way
     /// round it is. Not in the window's controls: there it read as though it
