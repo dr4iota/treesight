@@ -102,6 +102,24 @@ Still open:
   relying on offline would evaporate exactly when the phone fills up. On iOS set
   `isExcludedFromBackup` on it, or a mirrored tree inflates the user's iCloud
   backup — which Apple's storage guidelines treat as a review matter.
+- **Save As writes nothing on a phone.** The save sheet returns a `content://`
+  URI and `FilePath::into_path()` fails on one, which `save_asked` used to read
+  as a cancelled dialog. It now says the feature is not there yet; making it
+  real means writing through the descriptor the dialog plugin can hand back, or
+  taking a dependency on the fs plugin. Drop the `cfg!(mobile)` arm in
+  `save_asked` when it lands. `set_directory(download_dir())` is wrong there
+  too — on Android that resolves to the app's own folder wearing the user's
+  name for it.
+- **`serve_raw` turns every `open()` error into a bare 404.** A `Vfs` that
+  refuses a file for a reason worth reading — a grant-backed backend declining
+  to buffer a 300 MB video into a JNI round trip, say — has nowhere to put the
+  sentence, so the reader gets "not found" for a file they can see in the
+  listing. Carrying the error through wants a shape for it first.
+- **The safe-area floors are one device's numbers.** The 36/24px top and 18px
+  bottom in `VIEWPORT` stand in for WebViews before Chromium 140, which report
+  zero insets; left and right are still 0, so a landscape cutout on such a
+  WebView eats the pane's edge. Needs measurements from real hardware, not a
+  better guess.
 - Whatever else the first real mobile build trips over belongs in this item.
   Keep the diff cfg-gated so desktop output is untouched.
 
