@@ -895,6 +895,11 @@ footer a.pick:hover { border-color: var(--link); background: var(--bg-subtle); t
      early: this one has no words to lose, so there is no width at which it
      would have had any. */
   .drawer-btn {
+    /* Ahead of Back, which follows it in the markup. The menu opens what you are
+       looking at and Back leaves it, so the one that goes further out sits
+       further out — and on a touch screen the thumb reaches it first. Not a
+       phone's rule: wherever this button exists, it belongs here. */
+    order: -1;
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
@@ -1020,10 +1025,6 @@ body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
   }
   /* Wider, and it already stretches to the row's full height. */
   nav.tree .row > .twisty { width: 2.5rem; }
-  /* The way out of a folder sits left of the way into its tree: the menu opens
-     what you are looking at, and Back leaves it. Reading order, and the thumb
-     reaches the outer one first. */
-  .drawer-btn { order: -1; }
   /* Every mark that is its own control: a box big enough to hit, the mark
      centred in it, and the drawing untouched. */
   nav.tree a.asroot,
