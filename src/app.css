@@ -82,7 +82,14 @@ body {
   flex-direction: column;
 }
 a { color: var(--link); text-decoration: none; }
-a:hover { text-decoration: underline; }
+/* Every `:hover` in this file is guarded like this one. A tap sets the state
+   and nothing clears it, so a touched control stays lit as though it were
+   still doing something; and the rules that *reveal* a control on hover are
+   unreachable by finger at all, which is why the touch block further down
+   gives those their own standing opacity instead. */
+@media (hover: hover) {
+  a:hover { text-decoration: underline; }
+}
 
 /* Back, when there is nothing behind this page. Dimmed and inert rather than
    gone: a control that disappears takes the two beside it along for the ride, and
@@ -118,7 +125,9 @@ header {
   border-radius: 1rem;
   color: var(--muted);
 }
-.back:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
+@media (hover: hover) {
+  .back:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
+}
 .crumbs { flex: 1; min-width: 8rem; font-weight: 500; overflow-wrap: anywhere; }
 /* The two on the left are the ways *out* — the menu and Back — and everything
    else acts on the page, so it belongs at the other end. With the path on a row
@@ -155,7 +164,9 @@ header > .tag { order: 0; flex: 0 0 auto; }
   color: var(--muted);
   white-space: nowrap;
 }
-.controls a:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
+@media (hover: hover) {
+  .controls a:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
+}
 /* Each flag carries a symbol as well as its words, and drops the words when
    the header runs out of room. Deliberately not emoji: those are colour glyphs
    that some Linux font stacks have nothing for, and a missing-glyph box next to
@@ -314,7 +325,9 @@ nav.tree section h2 a.secact {
   color: var(--muted);
   opacity: .6;
 }
-nav.tree section h2 a.secact:hover { color: var(--link); opacity: 1; background: none; }
+@media (hover: hover) {
+  nav.tree section h2 a.secact:hover { color: var(--link); opacity: 1; background: none; }
+}
 nav.tree section ul { padding-left: .2rem; }
 /* Places, Recent and the picker follow the tree in one scroll, rather than
    holding a strip of the pane the tree could have used. On a tree of any size
@@ -328,7 +341,9 @@ nav.tree ul { list-style: none; margin: 0; padding-left: .9rem; }
 nav.tree > ul { padding-left: .2rem; }
 nav.tree li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 nav.tree a { color: var(--fg); display: inline-block; padding: .05rem .2rem; border-radius: 4px; }
-nav.tree a:hover { background: var(--border); text-decoration: none; }
+@media (hover: hover) {
+  nav.tree a:hover { background: var(--border); text-decoration: none; }
+}
 nav.tree a.dir { color: var(--link); }
 /* A directory row: the name takes the width and gives it back with an ellipsis,
    the re-root button keeps its own. Quiet until the row is under the pointer,
@@ -354,7 +369,9 @@ nav.tree .row > .twisty {
   line-height: 1;
   color: var(--muted);
 }
-nav.tree .row > a.twisty:hover { color: var(--link); }
+@media (hover: hover) {
+  nav.tree .row > a.twisty:hover { color: var(--link); }
+}
 nav.tree li .row > a.dir {
   flex: 1 1 auto;
   min-width: 0;
@@ -370,8 +387,10 @@ nav.tree a.asroot {
   color: var(--muted);
   opacity: .4;
 }
-nav.tree .row:hover a.asroot { opacity: 1; }
-nav.tree a.asroot:hover { color: var(--link); background: none; }
+@media (hover: hover) {
+  nav.tree .row:hover a.asroot { opacity: 1; }
+  nav.tree a.asroot:hover { color: var(--link); background: none; }
+}
 /* The row wrapper sits between the `li` and its link on a directory, so the
    current one is reached through either shape. */
 nav.tree .cur > a, nav.tree .cur > .row > a { font-weight: 700; background: var(--border); }
@@ -405,7 +424,9 @@ body.nothing a.open {
   background: var(--bg-subtle);
   color: var(--fg);
 }
-body.nothing a.open:hover { border-color: var(--link); color: var(--link); text-decoration: none; }
+@media (hover: hover) {
+  body.nothing a.open:hover { border-color: var(--link); color: var(--link); text-decoration: none; }
+}
 /* Flex rather than a grid of equal columns, because these lists are not equal:
    Places and Servers hold names — "Home", "Iota" — and Recent holds paths, which
    are as long as somebody's directory tree. Equal columns spent the same width on
@@ -451,7 +472,9 @@ body.nothing .start h2 a.secact {
   opacity: .7;
 }
 body.nothing .start h2 a.secact svg { display: block; margin-top: -.15em; }
-body.nothing .start h2 a.secact:hover { color: var(--link); opacity: 1; }
+@media (hover: hover) {
+  body.nothing .start h2 a.secact:hover { color: var(--link); opacity: 1; }
+}
 body.nothing .start ul { list-style: none; margin: 0; padding: 0; }
 body.nothing .start li { overflow: hidden; text-overflow: ellipsis; }
 body.nothing .start .row { display: flex; align-items: center; }
@@ -468,10 +491,14 @@ body.nothing .start .row > a.aside {
   color: var(--muted);
   opacity: .4;
 }
-body.nothing .start .row:hover > a.aside { opacity: 1; }
-body.nothing .start .row > a.aside:hover { color: var(--link); background: none; }
+@media (hover: hover) {
+  body.nothing .start .row:hover > a.aside { opacity: 1; }
+  body.nothing .start .row > a.aside:hover { color: var(--link); background: none; }
+}
 body.nothing .start a { padding: .15rem .3rem; border-radius: 4px; color: var(--fg); }
-body.nothing .start a:hover { background: var(--border); text-decoration: none; }
+@media (hover: hover) {
+  body.nothing .start a:hover { background: var(--border); text-decoration: none; }
+}
 body.nothing .start .gone > a, body.nothing .start .gone > .row > a { color: var(--muted); }
 body.nothing .start .why { display: block; font-size: .75rem; color: var(--muted); padding: 0 .3rem; }
 
@@ -591,8 +618,10 @@ nav.tree .chooser a.aside {
   color: var(--muted);
   opacity: .4;
 }
-nav.tree .chooser .row:hover a.aside { opacity: 1; }
-nav.tree .chooser a.aside:hover { color: var(--link); background: none; }
+@media (hover: hover) {
+  nav.tree .chooser .row:hover a.aside { opacity: 1; }
+  nav.tree .chooser a.aside:hover { color: var(--link); background: none; }
+}
 nav.tree .chooser .why {
   flex: 0 0 auto;
   margin-left: auto;
@@ -615,7 +644,9 @@ table.listing th {
   border-bottom: 1px solid var(--border);
 }
 table.listing td { padding: .28rem .75rem; border-bottom: 1px solid var(--border); }
-table.listing tr:hover td { background: var(--bg-subtle); }
+@media (hover: hover) {
+  table.listing tr:hover td { background: var(--bg-subtle); }
+}
 table.listing td.size, table.listing td.time, table.listing th.size, table.listing th.time {
   white-space: nowrap;
   color: var(--muted);
@@ -648,7 +679,9 @@ form.filter button {
   font: inherit;
   cursor: pointer;
 }
-form.filter button:hover { border-color: var(--accent); color: var(--accent); }
+@media (hover: hover) {
+  form.filter button:hover { border-color: var(--accent); color: var(--accent); }
+}
 .matchnote { color: var(--muted); font-size: .85rem; margin: 0 0 .75rem; }
 
 /* Code view: gutter + code panes share metrics so lines align. */
@@ -686,7 +719,9 @@ form.filter button:hover { border-color: var(--accent); color: var(--accent); }
 .md h1 { font-size: 1.7rem; }
 .md h2 { font-size: 1.35rem; }
 .md a { text-decoration: none; }
-.md a:hover { text-decoration: underline; }
+@media (hover: hover) {
+  .md a:hover { text-decoration: underline; }
+}
 .md img { max-width: 100%; }
 .md code {
   background: var(--bg-subtle);
@@ -906,7 +941,9 @@ footer a.pick {
   color: var(--link);
   white-space: nowrap;
 }
-footer a.pick:hover { border-color: var(--link); background: var(--bg-subtle); text-decoration: none; }
+@media (hover: hover) {
+  footer a.pick:hover { border-color: var(--link); background: var(--bg-subtle); text-decoration: none; }
+}
 
 /* The pane narrows before it goes, then goes: past a point the listing needs
    every column it can get, and in the shell `Ctrl+O` still opens a folder. */
@@ -986,7 +1023,9 @@ html[data-touch] nav.tree {
     min-height: 2.5rem;
   }
   html[data-touch] .drawer-btn svg { width: 24px; height: 24px; }
-  .drawer-btn:hover { color: var(--link); border-color: var(--link); }
+  @media (hover: hover) {
+    .drawer-btn:hover { color: var(--link); border-color: var(--link); }
+  }
   /* Fixed rather than absolute, so the drawer is the height of the window and
      not of a listing that may be twenty screens long. `max-width: none` undoes
      the two rules above that narrow the pane as the window does — in here the
