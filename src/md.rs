@@ -1,11 +1,12 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use comrak::adapters::SyntaxHighlighterAdapter;
+use comrak::html::{dangerous_url, render_sourcepos, ChildRendering};
 use comrak::nodes::{Node, NodeValue};
 use comrak::options::Plugins;
-use comrak::{format_html_with_plugins, parse_document, Arena, Options};
+use comrak::{create_formatter, parse_document, Arena, Options};
 use pulldown_latex::config::DisplayMode;
 use pulldown_latex::{push_mathml, Parser as LatexParser, RenderConfig, Storage};
 
@@ -550,11 +551,80 @@ pub fn render_markdown(hl: &Hl, src: &str) -> String {
     render_mermaid_nodes(root);
 
     let mut out = String::with_capacity(src.len() * 3 / 2);
-    match format_html_with_plugins(root, &options, &mut out, &plugins) {
+    match Links::format_document_with_plugins(root, &options, &mut out, &plugins) {
         Ok(()) => out,
         Err(_) => format!("<pre>{}</pre>", html_escape(&src)),
     }
 }
+
+/// A link that leaves the tree: anything carrying a scheme, and anything
+/// carrying a host.
+///
+/// A markdown file has no business knowing what host it is being served from,
+/// so the two shapes that name one are the two that mean "somewhere else":
+/// `https://example.com/x`, and `//example.com/x` borrowing the page's own
+/// scheme. Everything else — `./note.md`, `/src/main.rs`, `?raw=1`, `#heading`
+/// — is a place in this tree, and opens in place.
+///
+/// The grammar is the URL one: a scheme starts with a letter, continues in
+/// letters, digits, `+`, `-` and `.`, and ends at the first `:` — which has to
+/// come before any `/`, `?` or `#`, since each of those means the rest is a
+/// path. `notes:2024.md` is therefore a scheme and not a file, which is how a
+/// browser reads it too; a file named that way is linked as `./notes:2024.md`.
+fn leaves_the_tree(url: &str) -> bool {
+    if let Some(host) = url.strip_prefix("//") {
+        return !host.is_empty();
+    }
+    let Some(colon) = url
+        .find([':', '/', '?', '#'])
+        .filter(|i| url.as_bytes()[*i] == b':')
+    else {
+        return false;
+    };
+    let mut scheme = url[..colon].chars();
+    scheme.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && scheme.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+create_formatter!(Links, {
+    // comrak's own, plus the two attributes: a link out of the tree opens in a
+    // tab of its own in a browser, and the shell turns that request into the
+    // system browser rather than a second window. `noopener noreferrer` because
+    // a page opened this way has no business holding a handle on this one, and
+    // a local path is nobody's referrer.
+    //
+    // Everything before the attributes is what `render_link` writes, kept
+    // byte-for-byte so that a link that stays in the tree renders as it always
+    // has: the tests below pin that, and so do the snapshots.
+    //
+    // Only markdown's own links, written or autolinked. An `<a>` written as raw
+    // HTML in the document passes through as the author typed it, because it
+    // arrives here as text and not as a link — in the shell the navigation
+    // handler still sends it to the browser by origin, and in a plain browser
+    // it opens where the author said it would.
+    NodeValue::Link(ref nl) => |context, node, entering| {
+        if !entering {
+            context.write_str("</a>")?;
+            return Ok(ChildRendering::HTML);
+        }
+        context.write_str("<a")?;
+        render_sourcepos(context, node)?;
+        context.write_str(" href=\"")?;
+        if context.options.render.r#unsafe || !dangerous_url(&nl.url) {
+            context.escape_href(&nl.url)?;
+        }
+        context.write_str("\"")?;
+        if !nl.title.is_empty() {
+            context.write_str(" title=\"")?;
+            context.escape(&nl.title)?;
+            context.write_str("\"")?;
+        }
+        if leaves_the_tree(&nl.url) {
+            context.write_str(" target=\"_blank\" rel=\"noopener noreferrer\"")?;
+        }
+        context.write_str(">")?;
+    },
+});
 
 #[cfg(test)]
 mod tests {
@@ -615,5 +685,57 @@ mod tests {
     fn tex_delimiters_leave_fences_alone() {
         let src = "```\n\\(x\\)\n```\n";
         assert_eq!(expand_tex_delimiters(src).as_ref(), src);
+    }
+
+    /// A scheme or a host means somewhere that is not this tree, and a markdown
+    /// file is not supposed to know which host it is being served from.
+    #[test]
+    fn a_url_that_names_a_host_leaves_the_tree() {
+        for out in [
+            "https://example.com/x",
+            "http://example.com",
+            "//example.com/x",
+            "mailto:a@b.c",
+            "ftp://example.com/f",
+            "notes:2024.md",
+        ] {
+            assert!(leaves_the_tree(out), "{out} names somewhere else");
+        }
+        for here in [
+            "./note.md",
+            "note.md",
+            "/src/main.rs",
+            "sub/c.md",
+            "?raw=1",
+            "#heading",
+            "",
+            "//",
+            "1st:not-a-scheme.md",
+        ] {
+            assert!(!leaves_the_tree(here), "{here} is a place in this tree");
+        }
+    }
+
+    #[test]
+    fn an_external_link_opens_in_a_tab_of_its_own() {
+        let out = html("[docs](https://example.com/x) and <https://example.com/bare>\n");
+        assert_eq!(
+            out.matches("target=\"_blank\" rel=\"noopener noreferrer\"").count(),
+            2,
+            "the written link and the autolink both leave: {out}"
+        );
+    }
+
+    /// The other half, and the one a snapshot would catch: a link that stays
+    /// renders exactly as it always did, attributes and all.
+    #[test]
+    fn a_link_that_stays_is_untouched() {
+        let out = html("[here](./note.md) [titled](/a.rs \"a title\")\n");
+        assert!(out.contains("<a href=\"./note.md\">here</a>"), "{out}");
+        assert!(
+            out.contains("<a href=\"/a.rs\" title=\"a title\">titled</a>"),
+            "{out}"
+        );
+        assert!(!out.contains("_blank"), "{out}");
     }
 }
