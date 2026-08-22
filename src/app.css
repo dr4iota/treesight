@@ -75,12 +75,30 @@ body {
   background: var(--bg);
   color: var(--fg);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-  min-height: 100vh;
+  /* One screen exactly, and the same one everywhere. The status line stays
+     where it is and each pane scrolls on its own — the tree without dragging
+     the listing along, and neither of them taking the header or the footer with
+     it. This was the desktop shell's shape alone, with a browser left scrolling
+     like a document; the same page then behaved differently in the two for no
+     reason a reader could name, and three other page shapes here had already
+     written the app layout out again to get it back. */
+  height: 100vh;
+  height: 100dvh;
+  /* And then whatever the visual viewport actually is, which is the only one of
+     the three that moves when a soft keyboard opens or an address bar slides
+     away. The shell's script sets `--vh` to a hundredth of it. The fallback is
+     `1dvh` and not `1vh`: on the served pages there is no script, and a phone
+     browser should get the viewport it can see rather than the taller one it
+     has when the address bar is away. */
+  height: calc(var(--vh, 1dvh) * 100);
+  min-height: 0;
+  overflow: hidden;
   /* A column so the middle row can claim whatever the header leaves, whatever
      height the header turns out to be. */
   display: flex;
   flex-direction: column;
 }
+body > header, body > footer { flex: 0 0 auto; }
 a { color: var(--link); text-decoration: none; }
 /* Every `:hover` in this file is guarded like this one. A tap sets the state
    and nothing clears it, so a touched control stays lit as though it were
@@ -285,7 +303,7 @@ body.nopane nav.tree { display: none; }
    version of "remember a click" a page with no script in it can have. */
 .drawer-toggle, .drawer-btn, .drawer-scrim { display: none; }
 
-.shell { display: flex; align-items: stretch; flex: 1; min-height: 0; }
+.shell { display: flex; align-items: stretch; flex: 1; min-height: 0; overflow: hidden; }
 nav.tree {
   /* Seventeen rems of *tree*, whatever the screen keeps on that side. In
      landscape the cutout is on one of the long edges — 51px of it on the phone
@@ -299,6 +317,7 @@ nav.tree {
   background: var(--bg-subtle);
   padding: .75rem .5rem .8rem var(--pane-left);
   overflow-x: hidden;
+  overflow-y: auto;
   font-size: .85rem;
 }
 /* PLACES and RECENT are titles, and at .7rem muted with a hairline of margin they
@@ -645,7 +664,8 @@ nav.tree .chooser .why {
 
 /* The listing keeps clear of a cutout on its own side. Not the left: the pane is
    there, and where the pane is gone the drawer's own padding answers for it. */
-main { flex: 1; min-width: 0; padding: 1rem max(1.25rem, var(--safe-right)) 3rem; }
+/* One scroll per pane: the whole sidebar in one, the listing in the other. */
+main { flex: 1; min-width: 0; overflow: auto; padding: 1rem max(1.25rem, var(--safe-right)) 3rem; }
 
 table.listing { border-collapse: collapse; width: 100%; max-width: 60rem; }
 table.listing th {
@@ -862,22 +882,6 @@ embed.pdf { width: 100%; height: calc(100vh - 8rem); border: 1px solid var(--bor
    its own scrollbar inside; for the other two it is the difference between
    seeing the thing and scrolling to see the rest of it. */
 main:has(> .fit) { display: flex; flex-direction: column; }
-/* A page in a browser is a document, and a document grows as long as it likes:
-   the viewport is its floor, not its ceiling, and a pane told to fill what is
-   left of the screen would happily be told there is more screen than there is.
-   A page whose whole point is one thing shown whole is one screen exactly —
-   which is the shape the desktop shell gives every page, and nothing is left
-   below the fold here for the page scroll to have reached anyway. */
-body:has(main > .fit) {
-  height: 100vh;
-  height: 100dvh;
-  min-height: 0;
-  overflow: hidden;
-}
-body:has(main > .fit) header, body:has(main > .fit) footer { flex: 0 0 auto; }
-body:has(main > .fit) .shell { overflow: hidden; }
-body:has(main > .fit) nav.tree { overflow-y: auto; }
-body:has(main > .fit) main { overflow: auto; }
 .fit {
   flex: 1;
   min-height: 0;
@@ -908,8 +912,6 @@ main:has(> .fit > embed.pdf) { padding-bottom: 1rem; }
    inside knows what the file wants better than we do. `color-scheme` is
    inherited, so the frame does hear one thing from us: which way to paint the
    parts that are its own, the text viewer's page and its scrollbars. */
-body.rawview { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
-body.rawview header { flex: 0 0 auto; }
 iframe.raw { flex: 1; min-height: 0; display: block; width: 100%; border: 0; background: var(--bg); }
 
 .filemeta { color: var(--muted); font-size: .85rem; margin: .35rem 0 1rem; }
@@ -1070,36 +1072,14 @@ html[data-touch] nav.tree {
   }
 }
 
-/* Desktop shell: an app layout of exactly one screen, rather than a document
-   that happens to be long. The status line then stays where it is and each pane
-   scrolls on its own — the tree without dragging the listing along, and neither
-   of them taking the header or the footer with it. A page in a browser keeps
-   scrolling like a page, which is what a browser's own chrome expects. */
-body.app {
-  height: 100vh;
-  height: 100dvh;
-  /* And then whatever the visual viewport actually is, which is the only one of
-     the three that moves when a soft keyboard opens or an address bar slides
-     away. Script sets `--vh` to a hundredth of it; the fallback is `1vh`, so a
-     window where the script never ran computes exactly the line above. */
-  height: calc(var(--vh, 1vh) * 100);
-  min-height: 0;
-  overflow: hidden;
-}
-body.app header, body.app footer { flex: 0 0 auto; }
-body.app .shell { overflow: hidden; }
-/* One scroll per pane: the whole sidebar in one, the listing in the other. */
-body.app nav.tree { overflow-y: auto; }
-body.app main { overflow-y: auto; }
-
 /* Scrollbars, in the two shapes an engine gives us.
    A classic bar takes layout width, so a list that grows past the pane's height
    takes the width away from the rows — the pane reflows and every name shortens
    by however wide the engine's bar happens to be. `scrollbar-gutter: stable`
    reserves that width whether or not a bar is showing, so the reflow stops
-   happening: on `html` for the document scroll, and on both panes of the app
-   shell, which scroll on their own. The gutter sits outside the pane's own
-   padding, and reserving it is the whole of what the right edge needs.
+   happening. On both panes, which are the only things that scroll now that
+   every page is one screen. The gutter sits outside the pane's own padding, and
+   reserving it is the whole of what the right edge needs.
    An overlay bar reserves nothing and floats over the last few pixels while it
    is in use — the strip where `a.aside` and `a.asroot` sit. The pane used to buy
    that strip back with a right padding of its own, and every engine with a
@@ -1107,11 +1087,8 @@ body.app main { overflow-y: auto; }
    the pane, with the section bars stopping short of the edge they are drawn to
    span. A moment of overlap where the bar is an overlay is the cheaper of the
    two, and the marks under it are their own targets, not the row's. */
-html { scrollbar-gutter: stable; }
-html, body.app nav.tree, body.app main,
-body:has(main > .fit) nav.tree, body:has(main > .fit) main { scrollbar-width: thin; }
-body.app nav.tree, body.app main,
-body:has(main > .fit) nav.tree, body:has(main > .fit) main { scrollbar-gutter: stable; }
+html, nav.tree, main { scrollbar-width: thin; }
+nav.tree, main { scrollbar-gutter: stable; }
 
   /* The tree, which is a column of targets before it is anything else. Padding
      and not a minimum height, because these links are `inline-block` and their
@@ -1245,14 +1222,14 @@ html[data-touch] body.nothing .start .row > a.aside {
   }
   header, footer, nav.tree, form.filter, .matchnote,
   .drawer-toggle, .drawer-btn, .drawer-scrim { display: none; }
-  body, body.app, body.rawview, body:has(main > .fit) {
+  body {
     display: block;
     height: auto;
     min-height: 0;
     overflow: visible;
   }
-  .shell, body.app .shell, body:has(main > .fit) .shell { display: block; overflow: visible; }
-  main, body.app main, body:has(main > .fit) main { padding: 0; overflow: visible; }
+  .shell { display: block; overflow: visible; }
+  main { padding: 0; overflow: visible; }
   /* A heading is no use at the foot of a page with nothing of its own under it. */
   .md h1, .md h2, .md h3, .md h4 { break-after: avoid; }
   .md .mermaid-light { display: block !important; }
