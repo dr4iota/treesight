@@ -515,9 +515,12 @@ fn app_storage_dir(app: &AppHandle) -> Option<PathBuf> {
 /// need: that list is fixed, and a Place that added itself to Recent would just
 /// be duplicating a shortcut the pane already shows.
 fn open_root(app: &AppHandle, dir: PathBuf, remember: bool) {
-    let previous = show_opening(app, &dir);
     let app = app.clone();
     thread::spawn(move || {
+        // The wait page is drawn from here too, and not from the callback: it
+        // reads the window's URL to have something to go back to, and on Android
+        // that read waits on the thread the callback is holding.
+        let previous = show_opening(&app, &dir);
         let resolved = match dir.canonicalize() {
             Ok(d) if d.is_dir() => Ok(d),
             // There, and not a folder: as good as gone for our purposes.
@@ -607,10 +610,14 @@ fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
 /// Only with a window already on screen. Before that there is nothing to put it
 /// in, and a folder named on the command line is not something anybody is sitting
 /// there watching fail.
+///
+/// Desktop only, that last part: on Android `is_visible` is a stub that warns and
+/// answers false whatever the window is doing, which read as "never show the wait
+/// page" — and there the window cannot be hidden while a row can be tapped.
 fn show_opening(app: &AppHandle, dir: &Path) -> Option<tauri::Url> {
     let serving = app.try_state::<Serving>()?;
     let win = app.get_webview_window(WINDOW)?;
-    if !win.is_visible().unwrap_or(false) {
+    if cfg!(desktop) && !win.is_visible().unwrap_or(false) {
         return None;
     }
     let previous = win.url().ok();
