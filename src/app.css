@@ -1092,29 +1092,26 @@ body.app .shell { overflow: hidden; }
 body.app nav.tree { overflow-y: auto; }
 body.app main { overflow-y: auto; }
 
-/* Scrollbars, in the two shapes an engine gives us and neither of them kind to a
-   pane whose buttons live at its right edge.
+/* Scrollbars, in the two shapes an engine gives us.
    A classic bar takes layout width, so a list that grows past the pane's height
    takes the width away from the rows — the pane reflows and every name shortens
    by however wide the engine's bar happens to be. `scrollbar-gutter: stable`
    reserves that width whether or not a bar is showing, so the reflow stops
    happening: on `html` for the document scroll, and on both panes of the app
-   shell, which scroll on their own.
-   An overlay bar takes no width at all and floats over the last few pixels
-   instead, which is worse here rather than better: that strip is exactly where
-   `a.aside` and `a.asroot` sit, every one of them pushed to the pane's right edge.
-   `scrollbar-gutter` does nothing for an overlay bar by definition, so the pane
-   pays for the strip itself in padding — the only fix that does not depend on the
-   engine having a feature. */
+   shell, which scroll on their own. The gutter sits outside the pane's own
+   padding, and reserving it is the whole of what the right edge needs.
+   An overlay bar reserves nothing and floats over the last few pixels while it
+   is in use — the strip where `a.aside` and `a.asroot` sit. The pane used to buy
+   that strip back with a right padding of its own, and every engine with a
+   classic bar then paid for the scrollbar twice: a dead band down the right of
+   the pane, with the section bars stopping short of the edge they are drawn to
+   span. A moment of overlap where the bar is an overlay is the cheaper of the
+   two, and the marks under it are their own targets, not the row's. */
 html { scrollbar-gutter: stable; }
 html, body.app nav.tree, body.app main,
 body:has(main > .fit) nav.tree, body:has(main > .fit) main { scrollbar-width: thin; }
 body.app nav.tree, body.app main,
 body:has(main > .fit) nav.tree, body:has(main > .fit) main { scrollbar-gutter: stable; }
-/* Room for a bar that reserves none. Only where the pane is the thing scrolling:
-   where the document scrolls, the bar is at the window's edge and nowhere near
-   these buttons. */
-body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
 
   /* The tree, which is a column of targets before it is anything else. Padding
      and not a minimum height, because these links are `inline-block` and their
