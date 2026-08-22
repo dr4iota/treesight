@@ -1397,7 +1397,7 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // The header's own control, which acts on whatever is open — so unlike its
         // neighbours it needs no path, and a reload is what puts the new state on
         // screen: the flag is part of the page and has to change with it.
-        "/.ts/pin" => {
+        "/.ts/pin" => off_the_callback(app, |app| {
             if let Some(serving) = app.try_state::<Serving>()
                 && let Some(root) = serving.state().cfg.root()
             {
@@ -1405,7 +1405,7 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
                 pin_root_id(app, &root.id, label);
                 eval(app, "location.reload()");
             }
-        }
+        }),
         // Two callers: the same control once the root is pinned, with nothing to
         // say, and a row in the list, which names the one it means.
         "/.ts/unpin" => {
@@ -1417,14 +1417,19 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
                     .map(|root| root.id.clone()),
             };
             if let Some(id) = id {
-                unpin_root_id(app, &id);
-                eval(app, "location.reload()");
+                off_the_callback(app, move |app| {
+                    unpin_root_id(app, &id);
+                    eval(app, "location.reload()");
+                });
             }
         }
         "/.ts/forget" => match url.query_pairs().find(|(k, _)| k == "path") {
             Some((_, path)) => {
-                forget_root_id(app, path.trim());
-                eval(app, "location.reload()");
+                let id = path.trim().to_string();
+                off_the_callback(app, move |app| {
+                    forget_root_id(app, &id);
+                    eval(app, "location.reload()");
+                });
             }
             None => fail(app, "No folder in that link.", false),
         },
@@ -1533,6 +1538,18 @@ fn header(reply: &treeserve::Reply, name: &str) -> Option<String> {
 }
 
 /// Puts the window back on the start page.
+/// Runs one of `shell_action`'s answers away from the thread that asked for it.
+///
+/// The pinned and recent lists live in the config directory, and asking where
+/// that is is a platform call on Android — dispatched, with no timeout, to the
+/// Java UI thread that `on_navigation` is already running on. Pinning a folder
+/// there would have hung the app for good. See the threading rules in
+/// `docs/architecture.md`.
+fn off_the_callback(app: &AppHandle, f: impl FnOnce(&AppHandle) + Send + 'static) {
+    let app = app.clone();
+    thread::spawn(move || f(&app));
+}
+
 fn close_folder(app: &AppHandle) {
     let Some(serving) = app.try_state::<Serving>() else {
         return;
