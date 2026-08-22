@@ -989,6 +989,40 @@ fn start(app: &AppHandle) -> Result<(), String> {
             false
         }
     })
+    // A link that asks for a window of its own: `target="_blank"`, or
+    // `window.open`. The navigation handler above never sees one — a webview
+    // offers it as a new-window request instead — so with nothing listening
+    // here the click did nothing at all, which is what an external link in a
+    // rendered document written as raw HTML used to do. This app is one window
+    // by design, so the answer is always `Deny`, and then the same two answers
+    // the navigation handler gives: in the tree, load it here; out of it, hand
+    // it to the browser.
+    //
+    // Desktop only in effect. Android's WebView is left with multiple windows
+    // unsupported, which makes it route `target="_blank"` through the
+    // navigation callback like any other link, and it is already answered
+    // there.
+    .on_new_window({
+        let app = app.clone();
+        let ext = Arc::clone(&ext);
+        let shell = shell_origins();
+        move |url, _features| {
+            match origin_allowed(&shell, &url) || origin_allowed(&ext.allowed_origins, &url) {
+                true => {
+                    if let Some(win) = app.get_webview_window(WINDOW) {
+                        let _ = win.navigate(url);
+                    }
+                }
+                false => {
+                    let app = app.clone();
+                    thread::spawn(move || {
+                        let _ = app.opener().open_url(url.as_str(), None::<&str>);
+                    });
+                }
+            }
+            tauri::webview::NewWindowResponse::Deny
+        }
+    })
     // Backstop for downloads the webview starts by itself — a PDF WKWebView
     // declines to render, say. Without a destination those fail silently.
     .on_download({
