@@ -57,45 +57,31 @@ whether six pixels is enough for it.
 
 ---
 
-## 1. Upstream `RootOpener`
+## 1. `RootOpener` — *done*
 
-**Trigger:** downstream's remote browsing works end to end.
+Landed as `ShellExt::openers`, designed against what downstream actually needed
+rather than the sketch this item carried. The differences are the interesting
+part: the opener owns failure outright and answers `Option<Opened>`, because a
+dismissed password box is a failure with nothing to say and a
+`Result<_, String>` has no way to spell that. `Opened` carries the name the
+window's title wants. `label` names the root on the wait page *before* it opens.
+And `probe` is the non-connecting status this crate used to skip remote ids
+for — a session the death hook buried, or a grant revoked in Settings, greys its
+row at launch now instead of looking healthy until it is clicked.
 
-Downstream's own action currently reimplements `open_root` / `serve_root` for
-remote ids, because `treesight` only knows how to open a path. Once that
-prototype is stable, fold the seam in here so the copy disappears:
+Downstream's two copies of the choreography are gone; what is left there is the
+dial and the grant lookup.
 
-```rust
-pub trait RootOpener: Send + Sync {
-    fn claims(&self, id: &str) -> bool;
-    /// Off the UI thread. Returns the backend and the RootId it settled on.
-    fn open(&self, app: &AppHandle, id: &str) -> Result<(Arc<dyn Vfs>, String), String>;
-    /// MUST be non-connecting: cached status or live-session state only.
-    /// `check_roots` calls this for every entry at launch.
-    fn probe(&self, id: &str) -> RootStatus;
-}
-// ShellExt gains: pub openers: Vec<Arc<dyn RootOpener>>
-```
+## 2. Embedder controls in the header — *done, and not as `show_term`*
 
-`open_root` then consults `openers` for a non-local id — wait page, opener on a
-thread, `set_root_vfs`, handshake navigation, which is the choreography the
-prototype will have proved — and `check_roots` routes remote ids to `probe`
-instead of skipping them.
-
-Design against what the prototype actually needed, not against this sketch.
-Snapshot: **IDENTICAL**.
-
-## 2. `show_term` header flag
-
-**Trigger:** downstream has a terminal.
-
-`Config` gains `pub show_term: bool` (default false). Set together with
-`app_ui`, `head_and_header` renders one more flag — icon plus "Terminal", href
-`/.ts/term`, immediately after Refresh — through the existing `flag()` helper
-and a new `ICON_TERM` (a `>_` prompt drawn as paths, like every other icon
-here). The shell intercepts the link; this server never serves it.
-
-Off by default, so snapshot: **IDENTICAL**; add a page test with the bit set.
+Landed as `treeserve::HeaderFlag` plus `ShellExt::flags` and
+`Config::set_flags`, rather than the `show_term: bool` this item asked for. A
+boolean would have made this crate learn the word "terminal"; a list of
+(href, icon, label, title, roots) makes it learn nothing, and the next thing a
+downstream shell mounts — WebDAV, FTP, whatever — brings its own button on the
+same seam. `roots` is a RootId prefix, which is how a control that acts on the
+root stays off the roots it cannot act on, without this side knowing what any
+of them are.
 
 ## 3. Mobile-capable `run_with` — *gating done, the rest open*
 
