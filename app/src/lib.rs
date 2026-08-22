@@ -574,20 +574,8 @@ fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
         // behind is a copy of the page you are on — Back into it re-renders
         // whatever root is current, and on the first folder of a run it made a
         // live Back button out of a window with nothing behind it at all.
+        replace_page(app, &serving.entry);
         if let Some(win) = app.get_webview_window(WINDOW) {
-            match serving.loaded.load(Ordering::Relaxed) {
-                true => {
-                    let _ = win.eval(&format!("location.replace('{}')", js_quoted(&serving.entry)));
-                }
-                // Nothing loaded yet to run that in — the window is still
-                // fetching its own first page. A navigation supersedes a load
-                // that has not committed, so this leaves one entry too.
-                false => {
-                    if let Ok(url) = serving.entry.parse() {
-                        let _ = win.navigate(url);
-                    }
-                }
-            }
             // It may still be hidden: the window is built while the picker is up,
             // and this is the first moment there is a folder to put in it.
             // Idempotent for every later re-root.
@@ -630,9 +618,7 @@ fn show_opening(app: &AppHandle, dir: &Path) -> Option<tauri::Url> {
         serving.origin,
         treeserve::util::percent_encode(&treeserve::util::display_path(dir))
     );
-    if let Ok(url) = url.parse() {
-        let _ = win.navigate(url);
-    }
+    replace_page(app, &url);
     previous
 }
 
@@ -642,9 +628,7 @@ fn show_opening(app: &AppHandle, dir: &Path) -> Option<tauri::Url> {
 /// command line — ask for a folder instead of leaving a window that never appears.
 fn open_failed(app: &AppHandle, previous: Option<tauri::Url>) {
     match (app.get_webview_window(WINDOW), previous) {
-        (Some(win), Some(url)) => {
-            let _ = win.navigate(url);
-        }
+        (Some(_), Some(url)) => replace_page(app, url.as_str()),
         _ => ask_for_folder(app.clone(), true),
     }
 }
@@ -1017,6 +1001,10 @@ fn start(app: &AppHandle) -> Result<(), String> {
         let shell = shell_origins();
         move |url, _features| {
             match origin_allowed(&shell, &url) || origin_allowed(&ext.allowed_origins, &url) {
+                // Navigated to and not replaced, unlike everything else this
+                // shell puts on screen: a link somebody followed is a step
+                // forward, and the only reason it came through here rather than
+                // through the navigation handler is the window it asked for.
                 true => {
                     if let Some(win) = app.get_webview_window(WINDOW) {
                         let _ = win.navigate(url);
@@ -1519,13 +1507,7 @@ fn set_pref_now(app: &AppHandle, url: &tauri::Url) {
     // somewhere else, which nothing draws today.
     match here.as_deref() == Some(back.as_str()) {
         true => eval(app, "location.reload()"),
-        false => {
-            if let Some(win) = app.get_webview_window(WINDOW)
-                && let Ok(u) = format!("{}{}", serving.origin, back).parse()
-            {
-                let _ = win.navigate(u);
-            }
-        }
+        false => replace_page(app, &format!("{}{}", serving.origin, back)),
     }
 }
 
@@ -1563,10 +1545,43 @@ fn close_folder(app: &AppHandle) {
         return;
     };
     serving.state().cfg.close_root();
-    if let Some(win) = app.get_webview_window(WINDOW)
-        && let Ok(url) = serving.entry.parse()
-    {
-        let _ = win.navigate(url);
+    replace_page(app, &serving.entry);
+}
+
+/// Puts a URL on screen in place of the page that is there, rather than on top
+/// of it.
+///
+/// Every navigation this shell makes for itself is a change of what is being
+/// shown, not a step forward through anything: re-rooting, a wait page, putting
+/// back the page a cancelled dial came from. A `navigate` would push an entry
+/// for each, and since every page of this window wears the same address, that
+/// entry is a copy of the page you are already on — Back into it re-renders
+/// whatever root is current now. `location.replace` changes the page and leaves
+/// the history alone, which is what all of them want.
+///
+/// Public because a downstream shell navigates the same window for the same
+/// reasons, and getting this wrong is invisible until someone presses Back —
+/// or, on Android, swipes and finds the gesture doing nothing several times
+/// before it leaves.
+pub fn replace_page(app: &AppHandle, url: &str) {
+    let Some(win) = app.get_webview_window(WINDOW) else {
+        return;
+    };
+    let loaded = app
+        .try_state::<Serving>()
+        .is_some_and(|s| s.loaded.load(Ordering::Relaxed));
+    match loaded {
+        true => {
+            let _ = win.eval(&format!("location.replace('{}')", js_quoted(url)));
+        }
+        // Nothing loaded yet to run that in — the window is still fetching its
+        // own first page. A navigation supersedes a load that has not committed,
+        // so this leaves one entry too.
+        false => {
+            if let Ok(url) = url.parse() {
+                let _ = win.navigate(url);
+            }
+        }
     }
 }
 

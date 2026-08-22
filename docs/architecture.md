@@ -366,6 +366,12 @@ Public helpers the embedder is meant to call:
 - `Serving::state` / `origin` / `entry`, `WINDOW`
 - `remember_root_id(app, id)` — Recent, disk, status Ok
 - `Config::set_root_vfs`, `set_sections`, `set_root_status`
+- `replace_page(app, url)` — **use this rather than `WebviewWindow::navigate`**
+  for anything the shell puts on screen itself: a re-root, a wait page, putting
+  back the page a cancelled action came from. Every page of this window wears
+  the same address, so a navigation pushes an entry that is a copy of the page
+  you are on, and Back or Android's swipe then appears to do nothing. A link
+  somebody followed is the exception and should navigate.
 
 `RootOpener` is **not** in this repo yet. Downstream copies the
 `open_root` / `serve_root` choreography for remote ids until that seam is
