@@ -1196,24 +1196,46 @@ fn download_name(url: &tauri::Url) -> String {
         .unwrap_or_else(|| "download".to_string())
 }
 
-/// Saves the file behind a download link through a native Save dialog.
+/// Claims a download link, and answers it on a thread.
+///
+/// Everything the answer needs can wait: resolving the URL and asking for its
+/// metadata are network round trips on a remote root, and finding the downloads
+/// folder is a platform call with no timeout on it on mobile. This is called
+/// from `on_navigation` — the thread the window answers clicks on, and on
+/// Android the one every platform call is dispatched to, where waiting for one
+/// is waiting for yourself.
+///
+/// So the link is always claimed. It is only ever drawn for a file; one made by
+/// hand that names something else says so from the thread rather than falling
+/// through to a navigation, which would arrive back here.
+fn save_as(app: &AppHandle, url: &tauri::Url) -> bool {
+    let app = app.clone();
+    let url = url.clone();
+    thread::spawn(move || save_asked(&app, &url));
+    true
+}
+
+/// The other half of [`save_as`], off the callback.
 ///
 /// The URL is resolved back to its path with the server's own checks, so the
 /// bytes are copied straight from the served tree — no second HTTP round trip,
-/// and nothing outside the root can be reached. Returns false when the link
-/// does not name a file, leaving the navigation to proceed as before.
-fn save_as(app: &AppHandle, url: &tauri::Url) -> bool {
+/// and nothing outside the root can be reached.
+fn save_asked(app: &AppHandle, url: &tauri::Url) {
+    // No window state at all: nothing was clicked in a served page, so there is
+    // nobody to tell.
     let Some(serving) = app.try_state::<Serving>() else {
-        return false;
+        return;
     };
     let Some(root) = serving.state().cfg.root() else {
-        return false;
+        return;
     };
     let Ok(target) = treeserve::resolve_in_root(root.vfs.as_ref(), url.path()) else {
-        return false;
+        say(app, &format!("{} is not in this folder.", url.path()));
+        return;
     };
     if !root.vfs.metadata(&target.path).map(|m| m.is_file).unwrap_or(false) {
-        return false;
+        say(app, &format!("{} is not a file to save.", url.path()));
+        return;
     }
 
     let app = app.clone();
@@ -1247,11 +1269,7 @@ fn save_as(app: &AppHandle, url: &tauri::Url) -> bool {
                 fs::File::create(&dest).and_then(|mut to| io::copy(&mut from, &mut to))
             });
             match copied {
-                Err(e) => {
-                    let msg = format!("Could not save {}: {e}", dest.display());
-                    let back = app.clone();
-                    let _ = app.run_on_main_thread(move || fail(&back, &msg, false));
-                }
+                Err(e) => say(&app, &format!("Could not save {}: {e}", dest.display())),
                 Ok(_) => {
                     #[cfg(unix)]
                     if let Some(mode) = mode {
@@ -1264,7 +1282,13 @@ fn save_as(app: &AppHandle, url: &tauri::Url) -> bool {
             }
         });
     });
-    true
+}
+
+/// A dialog from a thread: the window's own is the main thread's to open.
+fn say(app: &AppHandle, msg: &str) {
+    let back = app.clone();
+    let msg = msg.to_string();
+    let _ = app.run_on_main_thread(move || fail(&back, &msg, false));
 }
 
 /// Minimal percent-decoding for a single URL path segment.
