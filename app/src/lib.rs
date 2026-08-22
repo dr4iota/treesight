@@ -116,6 +116,29 @@ pub const VIEWPORT: &str = r#"
 })();
 "#;
 
+/// Marks Back as leading nowhere, when it does.
+///
+/// The shell's Back is `history.back()`, and on the first page of a window there
+/// is no history to go back to — the button was there, and did nothing, which is
+/// the one thing a button must not do. Only the page can answer this: the Rust
+/// side hands the webview a URL and never learns what the webview did with it.
+///
+/// Injected on every navigation like the rest, so the answer is recomputed for
+/// each page rather than decided once at startup.
+pub const BACK_STATE: &str = r#"
+(function () {
+  try {
+    var back = document.querySelector('.back');
+    if (!back) { return; }
+    // `length` counts this page too, so one entry means this is the only one.
+    if (history.length <= 1) {
+      back.classList.add('nowhere');
+      back.setAttribute('aria-disabled', 'true');
+    }
+  } catch (e) { /* a live Back is the safe answer */ }
+})();
+"#;
+
 const SHORTCUTS: &str = r#"
 addEventListener('keydown', function (e) {
   if (e.altKey && !e.ctrlKey && e.key === 'ArrowLeft') { history.back(); }
@@ -281,7 +304,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         // either way: an embedder swapping key bindings is not asking for a
         // window that draws behind the status bar.
         init_script: format!(
-            "{VIEWPORT}\n{}",
+            "{VIEWPORT}\n{BACK_STATE}\n{}",
             ext.init_script.unwrap_or_else(|| SHORTCUTS.to_string())
         ),
         picker: ext.picker,

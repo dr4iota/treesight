@@ -84,6 +84,13 @@ body {
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* Back, when there is nothing behind this page. Dimmed and inert rather than
+   gone: a control that disappears takes the two beside it along for the ride, and
+   a header whose buttons move as you browse is harder to hit than one with a grey
+   button in it. The class is set by the shell's own script, which is the only
+   thing that can see the history. */
+.back.nowhere { opacity: .3; pointer-events: none; }
+
 header {
   display: flex;
   flex-wrap: wrap;
@@ -1013,6 +1020,10 @@ body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
   }
   /* Wider, and it already stretches to the row's full height. */
   nav.tree .row > .twisty { width: 2.5rem; }
+  /* The way out of a folder sits left of the way into its tree: the menu opens
+     what you are looking at, and Back leaves it. Reading order, and the thumb
+     reaches the outer one first. */
+  .drawer-btn { order: -1; }
   /* Every mark that is its own control: a box big enough to hit, the mark
      centred in it, and the drawing untouched. */
   nav.tree a.asroot,
@@ -1031,16 +1042,27 @@ body.app nav.tree, body:has(main > .fit) nav.tree { padding-right: 1.1rem; }
     height: auto;
     padding: 0;
   }
-  /* And the mark grows with the box it is in. 14px was drawn for a pointer and
-     a 1.7rem pill; alone in the middle of a 2.5rem one it reads as a mistake,
-     which is what "the buttons are big and the icons are small" is. */
+  /* And the mark grows with the box it is in. 14px was drawn for a pointer and a
+     1.7rem pill; alone in the middle of a 2.5rem one it reads as a mistake, which
+     is what "the buttons are big and the icons are small" is.
+     Inside a border, 24 of 40 — three fifths, which is where a drawn mark stops
+     looking lost in its own button and stops crowding the ring. Bare marks can
+     take a little less: nothing around them says how much room they were given. */
   .back svg, .controls a svg, .controls span.ctl svg, footer a.pick svg,
-  .drawer-btn svg, nav.tree a.asroot svg, nav.tree .chooser a.aside svg,
+  .drawer-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+  nav.tree a.asroot svg, nav.tree .chooser a.aside svg,
   nav.tree section h2 a.secact svg, body.nothing .start h2 a.secact svg,
   body.nothing .start .row > a.aside svg {
-    width: 19px;
-    height: 19px;
+    width: 22px;
+    height: 22px;
   }
+  /* The disclosure arrow is a glyph, not a drawing, so it grows by type size —
+     and it was the smallest mark in the pane while sitting in one of the widest
+     boxes. */
+  nav.tree .row > .twisty { font-size: 1.6rem; }
   /* A heading bar is taller than a row and can carry a larger mark, which is
      also the one place in the pane where a mark is the only thing to look at. */
   nav.tree section h2 a.secact svg, body.nothing .start h2 a.secact svg {
