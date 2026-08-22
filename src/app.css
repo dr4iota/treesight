@@ -170,12 +170,36 @@ header > .tag { order: 0; flex: 0 0 auto; }
    deciding for every page.
    `:nth-child(5)` matching means "there is a fifth", which is how a stylesheet
    counts. Only the right-hand group is counted: the left is Back and the menu,
-   at most two, and always there in the shell — so the total is this plus two. */
+   at most two, and always there in the shell — so the total is this plus two.
+   Each band carries the whole swap and not just half of it. `.ico` is
+   `display: none` by default and the mark only appears where something turns it
+   on, so hiding the words without that leaves a row of empty buttons — which is
+   what the first cut of these two rules did. Words off, marks on, pill shape: one
+   change in three declarations, spelled out per band because a media query cannot
+   be handed a condition. */
 @media (max-width: 56rem) {
   header:has(.controls > :nth-child(5)) .lbl { display: none; }
+  header:has(.controls > :nth-child(5)) .ico { display: flex; }
+  header:has(.controls > :nth-child(5)) :is(.back, .controls a, .controls span.ctl) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.7rem;
+    height: 1.7rem;
+    padding: 0;
+  }
 }
 @media (max-width: 68rem) {
   header:has(.controls > :nth-child(7)) .lbl { display: none; }
+  header:has(.controls > :nth-child(7)) .ico { display: flex; }
+  header:has(.controls > :nth-child(7)) :is(.back, .controls a, .controls span.ctl) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.7rem;
+    height: 1.7rem;
+    padding: 0;
+  }
 }
 
 @media (max-width: 46rem) {

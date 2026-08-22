@@ -1707,7 +1707,16 @@ mod tests {
             let sel = format!("header:has(.controls > :nth-child({nth})) .lbl");
             let from = sheet.find(&at).unwrap_or_else(|| panic!("no {at}"));
             let end = from + sheet[from..].find('}').unwrap_or(0);
-            assert!(sheet[from..end].contains(&sel), "{nth}: {sel} not under {at}");
+            // The whole band, not half of it: `.ico` is `display: none` by
+            // default, so a rule that only hides the words leaves empty buttons.
+            let block_end = from + sheet[from..].find("\n}").unwrap_or(0);
+            let block = &sheet[from..block_end];
+            assert!(block.contains(&sel), "{nth}: {sel} not under {at}");
+            assert!(
+                block.contains(&format!("{sel_ico} {{ display: flex; }}", sel_ico = sel.replace(".lbl", ".ico"))),
+                "{nth}: words off without marks on"
+            );
+            let _ = end;
         }
     }
 
