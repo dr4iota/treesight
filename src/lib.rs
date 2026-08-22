@@ -130,6 +130,30 @@ impl Root {
 /// about, and drawing it is all this side does. A section with no entries
 /// renders nothing, so a downstream list can start out empty.
 #[derive(Clone)]
+/// A control of the embedder's own on the header's flag row.
+///
+/// The shell draws it and knows nothing else about it: a terminal, a share, a
+/// second window onto the same tree are all one shape here — a mark, a word, and
+/// a link the embedder claims in `ShellExt::actions`. This server never serves
+/// that href.
+///
+/// Set through [`Config::set_flags`] as the root changes, because most of these
+/// are about the root: a button that opens a shell on the machine you are
+/// browsing has nothing to do on a folder that is a folder.
+pub struct HeaderFlag {
+    /// Where it points. Claimed by the shell on the way out, never routed here.
+    pub href: String,
+    /// SVG path data — the `d` of one or more `<path>` elements, the way every
+    /// icon in this crate is written. Wrapped in the same 16-unit box with the
+    /// same stroke, so an embedder's mark cannot come out a different weight
+    /// from the ones beside it.
+    pub icon: String,
+    /// The word, while the header has room for one.
+    pub label: String,
+    /// The tooltip, and the whole of what is left once the word goes.
+    pub title: String,
+}
+
 pub struct PaneSection {
     /// CSS hook on the `<section>`, alongside the built-in `places` and
     /// `recent`.
@@ -226,6 +250,7 @@ pub struct Config {
     /// for the reason `recent` is: a config UI can add a server while the
     /// server is running, and the next page render is where that shows up.
     sections: RwLock<Arc<Vec<PaneSection>>>,
+    flags: RwLock<Arc<Vec<HeaderFlag>>>,
     /// What the Places and Recent paths turned out to be, for the ones anything
     /// has got round to looking at. Written by the embedder as its answers come
     /// in and read while a page renders, which is the whole point of it being
@@ -273,6 +298,7 @@ impl Config {
             pinned: RwLock::new(Arc::new(Vec::new())),
             root_name: RwLock::new(None),
             sections: RwLock::new(Arc::new(Vec::new())),
+            flags: RwLock::new(Arc::new(Vec::new())),
             status: RwLock::new(HashMap::new()),
         }
     }
@@ -336,6 +362,18 @@ impl Config {
 
     pub fn sections(&self) -> Arc<Vec<PaneSection>> {
         Arc::clone(&self.sections.read().expect("sections lock"))
+    }
+
+    pub fn flags(&self) -> Arc<Vec<HeaderFlag>> {
+        Arc::clone(&self.flags.read().expect("flags lock"))
+    }
+
+    /// Replaces the embedder's header controls. Empty is the default and is what
+    /// this crate's own app runs with; a downstream shell sets them as the root
+    /// changes, since a control that acts on the root has nothing to act on when
+    /// the root is a kind it does not know.
+    pub fn set_flags(&self, flags: Vec<HeaderFlag>) {
+        *self.flags.write().expect("flags lock") = Arc::new(flags);
     }
 
     /// Replaces the extra pane sections. Called by the embedder at start and

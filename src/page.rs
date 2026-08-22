@@ -384,6 +384,20 @@ fn head_and_header(
             "Reload this page (F5)",
         ));
     }
+    // The embedder's own, ahead of the page's. Refresh is this shell's and these
+    // are the shell's extension of itself, so they keep that company; Source,
+    // Raw and Download belong to the file being looked at and stay together
+    // after them. Each is one more flag for the count that decides when words
+    // become marks, which is exactly what that count is for.
+    for f in state.cfg.flags().iter() {
+        controls.push_str(&flag(
+            "",
+            &f.href,
+            &svg_icon(&f.icon),
+            &f.label,
+            &f.title,
+        ));
+    }
     controls.push_str(extra_controls);
     if show_ln_toggle {
         let (label, val) = if prefs.ln { ("Ln: on", "0") } else { ("Ln: off", "1") };
@@ -1756,6 +1770,44 @@ mod tests {
                 assert!(rule.contains(decl), "{width}rem: no {decl}");
             }
         }
+    }
+
+    /// A control an embedder added sits with Refresh, at the head of the flags,
+    /// and is drawn exactly like one of ours — same box, same stroke, same word
+    /// that goes when the header is tight. Empty is the default, which is why
+    /// every other test in this file sees the header it always saw.
+    #[test]
+    fn an_embedders_flag_is_drawn_like_the_shells_own() {
+        let dir = tmp_dir("headerflag");
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let root = state.cfg.root().expect("these tests always serve one");
+        let page = |state: &State| {
+            listing_page(state, &root, prefs(), &[], &VfsPath::root(), &[], "/")
+        };
+
+        assert!(!page(&state).contains("/x/term"), "nothing by default");
+
+        state.cfg.set_flags(vec![crate::HeaderFlag {
+            href: "/x/term".to_string(),
+            icon: "<path d=\"M3 4l3 3-3 3\"/>".to_string(),
+            label: "Terminal".to_string(),
+            title: "A shell on this machine".to_string(),
+        }]);
+        let html = page(&state);
+        // Right after Refresh, and before whatever the page brought.
+        let refresh = html.find("/.ts/reload").expect("the shell's own");
+        let mine = html.find("/x/term").expect("the embedder's");
+        assert!(refresh < mine, "{html}");
+        assert!(
+            html.contains("href=\"/x/term\" title=\"A shell on this machine\">"),
+            "{html}"
+        );
+        // The word and the mark both, so the header can drop one for the other.
+        assert!(html.contains("<span class=\"lbl\">Terminal</span>"), "{html}");
+        assert!(html.contains("M3 4l3 3-3 3"), "{html}");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Up is the folder that contains this one, which the server knows — so the

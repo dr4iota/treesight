@@ -367,6 +367,11 @@ Public helpers the embedder is meant to call:
 - `Serving::state` / `origin` / `entry`, `WINDOW`
 - `remember_root_id(app, id)` — Recent, disk, status Ok
 - `Config::set_root_vfs`, `set_sections`, `set_root_status`
+- `Config::set_flags(Vec<HeaderFlag>)` — controls of the embedder's own on the
+  header's flag row, drawn with Refresh and ahead of the page's own. A mark
+  (SVG path data, wrapped in this crate's own box), a word, a title and an href
+  the shell claims in `actions`. Set as the root changes: a control that acts on
+  the root has nothing to act on when the root is a kind it does not know.
 - `replace_page(app, url)` — **use this rather than `WebviewWindow::navigate`**
   for anything the shell puts on screen itself: a re-root, a wait page, putting
   back the page a cancelled action came from. Every page of this window wears

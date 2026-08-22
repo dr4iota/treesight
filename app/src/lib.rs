@@ -302,7 +302,8 @@ pub trait RootOpener: Send + Sync {
 
     /// What the wait page calls it while it opens. A name a person would
     /// recognise where there is one, and the id where there is not.
-    fn label(&self, id: &str) -> String {
+    fn label(&self, app: &AppHandle, id: &str) -> String {
+        let _ = app;
         id.to_string()
     }
 
@@ -325,7 +326,7 @@ pub trait RootOpener: Send + Sync {
     /// a handshake. Answer [`RootStatus::Ok`] when there is no cheap way to
     /// know: a row that is wrong about being fine costs a click, and a launch
     /// that hangs costs the app.
-    fn probe(&self, id: &str) -> RootStatus;
+    fn probe(&self, app: &AppHandle, id: &str) -> RootStatus;
 }
 
 /// The extensions after defaults are resolved, in Tauri's managed state so
@@ -616,7 +617,7 @@ fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: b
         // on Android that read waits on the thread the callback is holding. The
         // opener is about to do something slow on this thread, which is the
         // other half of why it is here.
-        let previous = show_waiting(&app, &opener.label(&id));
+        let previous = show_waiting(&app, &opener.label(&app, &id));
         let opened = opener.open(&app, &id);
         let back = app.clone();
         // Windows and server state are the main thread's to touch.
@@ -1218,7 +1219,7 @@ fn check_roots(app: &AppHandle) {
         // that wrote it may simply not be listening yet.
         for id in all.iter().filter(|id| !treeserve::root_id_is_local(id)) {
             if let Some(opener) = opener_for(&app, id) {
-                state.cfg.set_root_status(id.clone(), opener.probe(id));
+                state.cfg.set_root_status(id.clone(), opener.probe(&app, id));
             }
         }
         let ids: Vec<String> = all
