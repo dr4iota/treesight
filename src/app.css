@@ -205,24 +205,19 @@ header > .tag { order: 0; flex: 0 0 auto; }
 @media (max-width: 46rem) {
   .lbl { display: none; }
   /* The path gets its own line, under the buttons rather than squeezed between
-     them. At this width there is room for the controls or for the path, and
-     `overflow-wrap: anywhere` — which is what keeps a long path inside the pane
-     everywhere else — spent the difference breaking it mid-word across two rows
-     and running it under the buttons at the far end.
-     One line, and it scrolls: an ellipsis here would cut off the leaf, which is
-     the half of a path that says where you are, and there is no way to clip the
-     head instead without reversing the order of the crumbs themselves. */
+     them: at this width there is room for the controls or for the path, and
+     sharing the row left it three characters and them no room.
+     Wrapping, not scrolling. The row is the path's now, so a path longer than one
+     line of it should take two — the same `overflow-wrap: anywhere` the pane uses
+     to keep a long name inside itself. It scrolled for a while instead, on the
+     grounds that an ellipsis would cut the leaf off; but nothing here is being
+     clipped, so the reason not to wrap went with the squeeze. */
   header .crumbs {
     order: 3;
     flex: 1 1 100%;
     min-width: 0;
     font-size: .85rem;
-    white-space: nowrap;
-    overflow-wrap: normal;
-    overflow-x: auto;
-    scrollbar-width: none;
   }
-  header .crumbs::-webkit-scrollbar { display: none; }
   /* Once a pill holds a drawing instead of a word, centre it as a box rather
      than sitting it on a text baseline: `vertical-align` and side padding line
      up glyphs, and a glyph is exactly what these are not. A fixed square makes
