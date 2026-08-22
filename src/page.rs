@@ -410,19 +410,29 @@ fn head_and_header(
     } else {
         ("Pane: off", "1", "Side pane hidden — click to show")
     };
-    // `paneflag`: the stylesheet drops this one at the width where the pane it
-    // switches is gone, rather than leaving a switch with nothing on the end.
-    // The raw view drops it for the same reason at every width: there is no pane
-    // on that page for it to be the switch of.
-    if show_pane_flag {
-        controls.push_str(&flag(
-            "paneflag",
-            &set_href("sidebar", pane_val, url_now),
-            &svg_icon(&icon_pane(prefs.sidebar)),
-            pane_label,
-            pane_title,
-        ));
-    }
+    // Not with the flags on the right: the switch and the drawer button are one
+    // control in one place, at the left end of the row. Which of the two is on
+    // screen is the stylesheet's to say, and it says it by width — the switch
+    // while the pane is a column beside the listing, the button once it can only
+    // be a drawer over it. Two elements because they are two mechanisms: the
+    // switch is a link that stores a preference, and the drawer is a checkbox
+    // that must not navigate at all, which is what makes it work on a page with
+    // no script in it. See `paneflag` in `app.css`.
+    let pane_flag = match show_pane_flag {
+        true => format!(
+            "\n  {}",
+            flag(
+                "paneflag",
+                &set_href("sidebar", pane_val, url_now),
+                &svg_icon(&icon_pane(prefs.sidebar)),
+                pane_label,
+                pane_title,
+            )
+        ),
+        // The raw view: there is no pane on that page for this to be the switch
+        // of, at any width.
+        false => String::new(),
+    };
     let (mark, why) = theme_icon(prefs.theme);
     controls.push_str(&flag(
         "",
@@ -454,10 +464,11 @@ fn head_and_header(
     // the whole trick: `#ts-drawer:checked ~ .shell nav.tree` is how a page
     // with no script in it remembers that a button was pressed. The label may
     // sit anywhere, and does — in the header, where the buttons are.
-    // Not `&& prefs.sidebar`: that switch is a desktop control — the stylesheet
-    // drops it at the width where the pane becomes a drawer — so at drawer widths
-    // it says whatever it last said on a wider window, and letting it decide
-    // meant a phone with no way to reach the tree at all.
+    // Not `&& prefs.sidebar`: the switch above is a wide-window control — the
+    // stylesheet takes it away at the width where the pane becomes a drawer, and
+    // puts this in its place — so at drawer widths it says whatever it last said
+    // on a wider window, and letting it decide meant a phone with no way to
+    // reach the tree at all.
     let drawer = show_pane_flag;
     let drawer_toggle = if drawer {
         "<input type=\"checkbox\" id=\"ts-drawer\" class=\"drawer-toggle\" aria-hidden=\"true\">\n"
@@ -499,7 +510,7 @@ fn head_and_header(
 {syntax_css}
 </head>
 <body{classes}>
-{drawer_toggle}<header>{back}{drawer_btn}{tag}
+{drawer_toggle}<header>{back}{drawer_btn}{pane_flag}{tag}
   <div class="crumbs">{crumbs}</div>
   <div class="controls">{controls}</div>
 </header>"#,
@@ -510,6 +521,7 @@ fn head_and_header(
         drawer_toggle = drawer_toggle,
         back = back,
         drawer_btn = drawer_btn,
+        pane_flag = pane_flag,
         tag = tag,
         crumbs = crumbs,
         controls = controls,
@@ -1698,29 +1710,67 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A bar with seven controls on it needs the words off sooner than a bar with
+    /// A bar with six controls on it needs the words off sooner than a bar with
     /// three, so the count picks the width rather than one width serving both.
+    ///
+    /// Words or marks is one answer for the whole row: the bands say when it
+    /// flips and set it in one place, and everything wearing a pill reads it
+    /// from there. Half a band — words off without marks on — is a row of empty
+    /// buttons, which is what the first cut of this did.
     #[test]
     fn a_crowded_header_drops_its_words_sooner() {
         let sheet = crate::app_css();
-        // The base rule, and the two the count reaches for above it.
-        assert!(sheet.contains("@media (max-width: 46rem) {"), "base threshold");
-        for (width, nth) in [(56, 5), (68, 7)] {
+        // Who reads the answer. Without these the bands set variables nothing
+        // consults, and every control keeps its words at every width.
+        assert!(sheet.contains(".lbl { display: var(--lbl, inline); }"), "{sheet}");
+        assert!(sheet.contains(".ico { display: var(--ico, none); }"), "{sheet}");
+        // The base band, and the two the count reaches for above it.
+        for (width, selector) in [
+            (46, "body".to_string()),
+            (56, "body:has(header .controls > :nth-child(4))".to_string()),
+            (68, "body:has(header .controls > :nth-child(6))".to_string()),
+        ] {
             let at = format!("@media (max-width: {width}rem) {{");
-            let sel = format!("header:has(.controls > :nth-child({nth})) .lbl");
             let from = sheet.find(&at).unwrap_or_else(|| panic!("no {at}"));
-            let end = from + sheet[from..].find('}').unwrap_or(0);
-            // The whole band, not half of it: `.ico` is `display: none` by
-            // default, so a rule that only hides the words leaves empty buttons.
-            let block_end = from + sheet[from..].find("\n}").unwrap_or(0);
-            let block = &sheet[from..block_end];
-            assert!(block.contains(&sel), "{nth}: {sel} not under {at}");
-            assert!(
-                block.contains(&format!("{sel_ico} {{ display: flex; }}", sel_ico = sel.replace(".lbl", ".ico"))),
-                "{nth}: words off without marks on"
-            );
-            let _ = end;
+            let block = &sheet[from..from + sheet[from..].find("\n}").unwrap_or(0)];
+            let rule = block
+                .find(&format!("{selector} {{"))
+                .map(|i| &block[i..])
+                .unwrap_or_else(|| panic!("{width}rem: no {selector}"));
+            for decl in ["--lbl: none;", "--ico: flex;", "--pill: 1.7rem;"] {
+                assert!(rule.contains(decl), "{width}rem: no {decl}");
+            }
         }
+    }
+
+    /// The pane switch and the drawer button are one control in one place: the
+    /// switch while the pane can be a column, the button once it can only slide
+    /// over the listing. So the switch is not among the flags on the right — it
+    /// sits at the left end with Back, where the button will replace it — and
+    /// the stylesheet is what takes one away at the pane's own width.
+    #[test]
+    fn the_pane_switch_stands_where_the_drawer_button_will() {
+        let dir = tmp_dir("paneswitch");
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let root = state.cfg.root().expect("these tests always serve one");
+        let html = listing_page(&state, &root, prefs(), &[], &VfsPath::root(), &[], "/");
+
+        // On the left, beside the button that stands in for it.
+        assert!(html.contains("class=\"drawer-btn\""), "{html}");
+        let switch = html.find("class=\"paneflag\"").expect("a pane switch");
+        let controls = html.find("<div class=\"controls\">").expect("the flags");
+        assert!(switch < controls, "the switch left the right-hand group: {html}");
+
+        // And the stylesheet swaps the two at the width where the pane goes.
+        let sheet = crate::app_css();
+        let at = sheet
+            .find("@media (max-width: 50rem) {")
+            .expect("the pane's own width");
+        let block = &sheet[at..at + sheet[at..].find("\n}").unwrap_or(0)];
+        assert!(block.contains(".paneflag { display: none; }"), "{block}");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The pinned list is the reader's own, so its rows unpin — and the control

@@ -116,17 +116,28 @@ header {
 }
 /* The shell's one piece of chrome, sharing the line with path and flags rather
    than taking a browser-style row of its own. */
-.back {
+/* The pane's switch keeps the same company: same pill, same end of the row, and
+   the same place as the drawer button that stands in for it once the pane can
+   only be a drawer. One control, one position, two mechanisms — a link that
+   stores the preference, and a checkbox that must not navigate. `order: -1`
+   puts it where that button goes, ahead of Back, and the two are never on
+   screen together: this one goes at the pane's own width, below. */
+.back, .paneflag {
   flex: 0 0 auto;
   font-size: .8rem;
   line-height: 1.4;
-  padding: .15rem .55rem;
+  padding: var(--pill-pad, .15rem .55rem);
   border: 1px solid var(--border);
   border-radius: 1rem;
   color: var(--muted);
 }
+.paneflag { order: -1; white-space: nowrap; }
 @media (hover: hover) {
-  .back:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
+  .back:hover, .paneflag:hover {
+    color: var(--link);
+    border-color: var(--link);
+    text-decoration: none;
+  }
 }
 .crumbs { flex: 1; min-width: 8rem; font-weight: 500; overflow-wrap: anywhere; }
 /* The two on the left are the ways *out* — the menu and Back — and everything
@@ -158,7 +169,7 @@ header > .tag { order: 0; flex: 0 0 auto; }
 .controls { display: flex; gap: .35rem; flex-wrap: wrap; }
 .controls a, .controls span.ctl {
   font-size: .8rem;
-  padding: .15rem .55rem;
+  padding: var(--pill-pad, .15rem .55rem);
   border: 1px solid var(--border);
   border-radius: 1rem;
   color: var(--muted);
@@ -171,50 +182,66 @@ header > .tag { order: 0; flex: 0 0 auto; }
    the header runs out of room. Deliberately not emoji: those are colour glyphs
    that some Linux font stacks have nothing for, and a missing-glyph box next to
    the path is worse than no icon at all. */
-.ico { display: none; }
+/* Words or marks is one answer for the whole row, and these four properties are
+   it. The bands below say *when* it flips; everything that wears a pill reads
+   the answer here and nowhere else, which is what stops one control — the pane
+   switch was it — quietly keeping words the rest had given up.
+   `--pill-pad` is read where each control sets its own padding, since their
+   resting values differ and only the icon form is shared. */
+.lbl { display: var(--lbl, inline); }
+.ico { display: var(--ico, none); }
+.back, .paneflag, .controls a, .controls span.ctl, footer a.pick {
+  display: var(--ctl-display, inline);
+  align-items: center;
+  justify-content: center;
+  width: var(--pill, auto);
+  height: var(--pill, auto);
+}
 /* Late: words are better than symbols, so they stay until the header genuinely
    cannot hold them. */
 /* Words cost width, and how much depends on how many controls a page brought.
    The bar below is the base rule at 46rem, which is where two to four of them
-   stop fitting. A file view carries seven, and seven labelled flags want half
-   again as much room — so the count decides the threshold rather than one width
-   deciding for every page.
-   `:nth-child(5)` matching means "there is a fifth", which is how a stylesheet
-   counts. Only the right-hand group is counted: the left is Back and the menu,
-   at most two, and always there in the shell — so the total is this plus two.
-   Each band carries the whole swap and not just half of it. `.ico` is
-   `display: none` by default and the mark only appears where something turns it
-   on, so hiding the words without that leaves a row of empty buttons — which is
-   what the first cut of these two rules did. Words off, marks on, pill shape: one
-   change in three declarations, spelled out per band because a media query cannot
-   be handed a condition. */
+   stop fitting. A file view carries six of these plus the pane switch, and that
+   many labelled flags want half again as much room — so the count decides the
+   threshold rather than one width deciding for every page.
+   `:nth-child(4)` matching means "there is a fourth", which is how a stylesheet
+   counts. Only the right-hand group is counted: the left is Back and the pane
+   control, at most two, and always there in the shell — so the total is this
+   plus two. Set on `body` rather than on `header` because the footer's picker
+   wears the same pill and has to hear the same answer. */
 @media (max-width: 56rem) {
-  header:has(.controls > :nth-child(5)) .lbl { display: none; }
-  header:has(.controls > :nth-child(5)) .ico { display: flex; }
-  header:has(.controls > :nth-child(5)) :is(.back, .controls a, .controls span.ctl) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.7rem;
-    height: 1.7rem;
-    padding: 0;
+  body:has(header .controls > :nth-child(4)) {
+    --lbl: none;
+    --ico: flex;
+    --ctl-display: inline-flex;
+    --pill: 1.7rem;
+    --pill-pad: 0;
   }
 }
 @media (max-width: 68rem) {
-  header:has(.controls > :nth-child(7)) .lbl { display: none; }
-  header:has(.controls > :nth-child(7)) .ico { display: flex; }
-  header:has(.controls > :nth-child(7)) :is(.back, .controls a, .controls span.ctl) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.7rem;
-    height: 1.7rem;
-    padding: 0;
+  body:has(header .controls > :nth-child(6)) {
+    --lbl: none;
+    --ico: flex;
+    --ctl-display: inline-flex;
+    --pill: 1.7rem;
+    --pill-pad: 0;
   }
 }
 
 @media (max-width: 46rem) {
-  .lbl { display: none; }
+  /* Whatever a page brought, at this width it is marks. Once a pill holds a
+     drawing instead of a word, centre it as a box rather than sitting it on a
+     text baseline: `vertical-align` and side padding line up glyphs, and a
+     glyph is exactly what these are not. A fixed square makes every pill the
+     same circle whatever it contains — including the shell's Back, which as a
+     piece of header chrome keeps its own padding otherwise. */
+  body {
+    --lbl: none;
+    --ico: flex;
+    --ctl-display: inline-flex;
+    --pill: 1.7rem;
+    --pill-pad: 0;
+  }
   /* The path gets its own line, under the buttons rather than squeezed between
      them: at this width there is room for the controls or for the path, and
      sharing the row left it three characters and them no room.
@@ -229,33 +256,19 @@ header > .tag { order: 0; flex: 0 0 auto; }
     min-width: 0;
     font-size: .85rem;
   }
-  /* Once a pill holds a drawing instead of a word, centre it as a box rather
-     than sitting it on a text baseline: `vertical-align` and side padding line
-     up glyphs, and a glyph is exactly what these are not. A fixed square makes
-     every pill the same circle whatever it contains — including the shell's
-     Back, which as a piece of header chrome keeps its own padding otherwise. */
-  .ico { display: flex; }
   /* The status line is down to one line's worth of room, and the served folder
      is worth more of it than our own version number. */
   footer .where .app { display: none; }
-  .back, .controls a, .controls span.ctl, footer a.pick {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.7rem;
-    height: 1.7rem;
-    padding: 0;
-  }
 }
-/* Past the width where the pane itself is gone, its switch has nothing left to
-   switch, so it goes too: a control that visibly does nothing is worse than the
-   header space it costs. Note this is the wider of the two thresholds — the pane
-   goes at 50rem and the words only at 46rem — so the flag is already dead for
-   the 4rem where it still spells itself out, and by the time it shrinks to an
-   icon it has been dead for a while. Hence one rule at the pane's own width,
-   and no icon form of this flag that anyone ever gets to see. */
+/* Past this width the pane can only be a drawer, so the switch hands its place
+   to the button that opens one — the same corner of the row, and never both at
+   once. Which of the two forms the switch itself wears on the way here is not
+   this rule's business: it wears whatever the rest of the header is wearing,
+   which on a crowded page means it is a mark for the stretch between the band
+   that dropped the words and this. On a page with few enough controls that the
+   words last past 50rem, its mark is simply never needed. */
 @media (max-width: 50rem) {
-  .controls a.paneflag { display: none; }
+  .paneflag { display: none; }
 }
 
 /* The switch says off: the pane goes, but its markup stays, because at a width
@@ -935,7 +948,7 @@ footer .where .app { flex: 0 0 auto; margin-right: .35rem; }
 footer a.pick {
   margin-left: auto;
   flex: 0 0 auto;
-  padding: .1rem .6rem;
+  padding: var(--pill-pad, .1rem .6rem);
   border: 1px solid var(--border);
   border-radius: 1rem;
   color: var(--link);
@@ -1144,7 +1157,8 @@ html[data-touch] body.nothing .start .row > a.aside,
 html[data-touch] body.nothing .start h2 a.secact,
 html[data-touch] .drawer-btn,
 html[data-touch] .back,
-html[data-touch] .controls a:not(.paneflag),
+html[data-touch] .paneflag,
+html[data-touch] .controls a,
 html[data-touch] .controls span.ctl,
 html[data-touch] footer a.pick {
     display: inline-flex;
@@ -1163,6 +1177,7 @@ html[data-touch] footer a.pick {
      looking lost in its own button and stops crowding the ring. Bare marks can
      take a little less: nothing around them says how much room they were given. */
 html[data-touch] .back svg,
+html[data-touch] .paneflag svg,
 html[data-touch] .controls a svg,
 html[data-touch] .controls span.ctl svg,
 html[data-touch] footer a.pick svg,
