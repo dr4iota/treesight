@@ -1863,7 +1863,11 @@ mod tests {
             _ => panic!("a listing is text"),
         };
         assert!(after.contains("<html lang=\"en\" data-theme=\"dark\">"), "{after}");
-        assert!(!after.contains("<nav"), "pane should be gone");
+        // The pane's markup stays whichever way the switch went — the drawer
+        // needs something to slide in, and only the stylesheet knows whether
+        // this window is wide enough for the switch to have meant anything — so
+        // the class on the body is where the answer is.
+        assert!(after.contains("class=\"app nopane\""), "{after}");
 
         fs::remove_dir_all(&dir).unwrap();
     }
