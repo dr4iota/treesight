@@ -31,12 +31,29 @@ nobody wanted.
 
 ## Open from the last round
 
-**The `save_as` copy has not been exercised by hand.** The copy moved off the
-dialog thread (`f723d70`); the automated side is covered, but driving a native
-GTK save dialog needs click automation this environment does not have. Someone
-should run the app once, Download a file, and confirm both that the saved copy
-lands (with its permission bits on Unix) and that an unwritable destination
-still raises the error dialog.
+**The `save_as` copy has not been exercised by hand**, and it has since been
+rewritten around it. The whole body is off the navigation callback now — the
+resolve and the metadata call are network round trips on a remote root and
+timeout-less platform calls on Android, all of them on the thread that answers
+clicks — so the link is claimed there and answered on a thread; a `?dl=1` URL
+that names something that is not a file says so instead of falling through to a
+navigation; and on mobile it says the feature is not there rather than opening a
+sheet that writes nothing. Driving a native GTK save dialog needs click
+automation this environment does not have. Someone should run the app once,
+Download a file, and confirm the saved copy lands with its permission bits on
+Unix, that cancelling does nothing quietly, and that an unwritable destination
+still raises the error dialog. A remote root is the other half: that path used
+to stall the click thread on SFTP.
+
+**The header's first button and the pane's right edge are both new.** Up
+replaced Back — the parent comes from the path, so the link and the dimmed state
+at the root are both exact, where history was a question every engine answered
+differently. Going back is the platform's now: `Alt+Left`, and Android's own
+gesture. Every page is one screen with two scrolling panes, in a browser as well
+as in the shell, and nothing is reserved for a scrollbar any more — see
+`--bar-strip` in `app.css`. What wants eyes: an overlay scrollbar on GTK or
+macOS landing on padding rather than on the marks at the ends of the rows, and
+whether six pixels is enough for it.
 
 ---
 
