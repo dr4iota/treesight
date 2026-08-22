@@ -89,12 +89,24 @@ pub const VIEWPORT: &str = r#"
     root.style.setProperty('--safe-floor-top', landscape ? '24px' : '36px');
     root.style.setProperty('--safe-floor-bottom', '18px');
   }
+  // Whether this is a screen people touch. `pointer: coarse` alone answers for
+  // the mouse currently attached rather than for the machine: an emulator driven
+  // by a host mouse says `fine` and gets a phone build at desktop sizes, and a
+  // phone with a Bluetooth mouse would shrink its targets while still being a
+  // phone. Either signal is enough, and neither is undone by the other.
+  function touch() {
+    var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    if (coarse || /Android|iPhone|iPad|iPod/.test(ua)) {
+      root.setAttribute('data-touch', '');
+    }
+  }
   function both() { height(); floor(); }
   // A rotation resolves in stages: the size changes, then the insets, and on a
   // slow device the second one lands a frame or several after the event. Once
   // now and once after it has settled.
   function rotated() { both(); setTimeout(both, 300); }
 
+  touch();
   both();
   // And again once there is a laid-out document to measure, because the first
   // answer was taken before there was one.
