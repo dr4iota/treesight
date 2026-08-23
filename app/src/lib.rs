@@ -552,9 +552,16 @@ fn ask_for_folder(app: AppHandle, exit_if_cancelled: bool) {
 /// permission prompt, no store review, and it survives everything except an
 /// uninstall. Created on first use, because a root that does not exist cannot
 /// be served and an empty one is the honest starting state.
+///
+/// `files`, and not the directory above it. On Android `app_data_dir` and
+/// `app_config_dir` are the same path — the app's private root — so serving that
+/// shows the reader `cache`, `code_cache`, `shared_prefs` and every file the
+/// shell or its embedder keeps, which for one of them is a private key and a
+/// file with passwords in it. Somewhere to *put* things is what this row
+/// promises, and `files` is the framework's own name for exactly that.
 #[cfg(mobile)]
 fn app_storage_dir(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().app_data_dir().ok()?;
+    let dir = app.path().app_data_dir().ok()?.join("files");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
