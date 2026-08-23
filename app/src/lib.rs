@@ -598,8 +598,24 @@ fn app_storage_dir(app: &AppHandle) -> Option<PathBuf> {
 /// `remember` keeps it out of the Recent list, which is what the pane's Places
 /// need: that list is fixed, and a Place that added itself to Recent would just
 /// be duplicating a shortcut the pane already shows.
+/// Which open is the one the reader last asked for. Two taps in quick
+/// succession each spawn a thread that re-roots when it finishes; without this,
+/// the slower one landed *after* the faster, so the window ended on the root
+/// nobody asked for last and both ids went into Recent. Each open takes a
+/// generation on the way in and only acts if it is still the current one.
+static OPEN_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn begin_open() -> u64 {
+    OPEN_GEN.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn open_superseded(open_id: u64) -> bool {
+    OPEN_GEN.load(Ordering::SeqCst) != open_id
+}
+
 fn open_root(app: &AppHandle, dir: PathBuf, remember: bool) {
     let app = app.clone();
+    let open_id = begin_open();
     thread::spawn(move || {
         // The wait page is drawn from here too, and not from the callback: it
         // reads the window's URL to have something to go back to, and on Android
@@ -613,19 +629,27 @@ fn open_root(app: &AppHandle, dir: PathBuf, remember: bool) {
         };
         let back = app.clone();
         // Windows and server state are the main thread's to touch.
-        let _ = app.run_on_main_thread(move || match resolved {
-            Ok(dir) => serve_root(&back, dir, remember),
-            Err(status) => {
-                // The pane said what it knew when it was drawn; this is fresher,
-                // so record it before going back to a page that will show it.
-                if let Some(serving) = back.try_state::<Serving>() {
-                    serving
-                        .state()
-                        .cfg
-                        .set_root_status(treeserve::util::display_path(&dir), status);
+        let _ = app.run_on_main_thread(move || {
+            // A later tap has taken over: do not re-root over it, and do not put
+            // this root in Recent or replace back to this open's wait page.
+            if open_superseded(open_id) {
+                return;
+            }
+            match resolved {
+                Ok(dir) => serve_root(&back, dir, remember),
+                Err(status) => {
+                    // The pane said what it knew when it was drawn; this is
+                    // fresher, so record it before going back to a page that
+                    // will show it.
+                    if let Some(serving) = back.try_state::<Serving>() {
+                        serving
+                            .state()
+                            .cfg
+                            .set_root_status(treeserve::util::display_path(&dir), status);
+                    }
+                    fail(&back, &cannot_open(&dir, status), false);
+                    open_failed(&back, previous);
                 }
-                fail(&back, &cannot_open(&dir, status), false);
-                open_failed(&back, previous);
             }
         });
     });
@@ -649,6 +673,7 @@ fn opener_for(app: &AppHandle, id: &str) -> Option<Arc<dyn RootOpener>> {
 /// and would only be duplicating itself in Recent.
 fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: bool) {
     let app = app.clone();
+    let open_id = begin_open();
     thread::spawn(move || {
         // From this thread and not from the callback that asked, for the reason
         // written on `show_opening`: the wait page reads the window's URL, and
@@ -659,11 +684,17 @@ fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: b
         let opened = opener.open(&app, &id);
         let back = app.clone();
         // Windows and server state are the main thread's to touch.
-        let _ = app.run_on_main_thread(move || match opened {
-            Some(opened) => serve_opened(&back, opened, remember),
-            // The opener has said whatever needed saying, including nothing.
-            // All that is left is the page that was on screen before.
-            None => open_failed(&back, previous),
+        let _ = app.run_on_main_thread(move || {
+            // Superseded by a later tap: leave the window to whoever won.
+            if open_superseded(open_id) {
+                return;
+            }
+            match opened {
+                Some(opened) => serve_opened(&back, opened, remember),
+                // The opener has said whatever needed saying, including nothing.
+                // All that is left is the page that was on screen before.
+                None => open_failed(&back, previous),
+            }
         });
     });
 }
@@ -778,7 +809,10 @@ fn show_waiting(app: &AppHandle, label: &str) -> Option<tauri::Url> {
     if cfg!(desktop) && !win.is_visible().unwrap_or(false) {
         return None;
     }
-    let previous = win.url().ok();
+    // Never a wait page as the thing to return to: with two opens in flight the
+    // second captures the first's wait page here, and restoring to a `/.ts/wait`
+    // URL strands the window on a page nothing leaves. A real page, or nothing.
+    let previous = win.url().ok().filter(|u| !is_wait_url(u));
     let url = format!(
         "{}/.ts/wait?path={}",
         serving.origin,
@@ -788,14 +822,27 @@ fn show_waiting(app: &AppHandle, label: &str) -> Option<tauri::Url> {
     previous
 }
 
+fn is_wait_url(url: &tauri::Url) -> bool {
+    url.path().trim_end_matches('/').ends_with("/.ts/wait")
+}
+
 /// After an open that did not happen: back to the exact page that was on screen,
 /// rather than to the served root — nothing was re-rooted, so nobody should lose
 /// their place over it. With nothing on screen to go back to — a bad path on the
 /// command line — ask for a folder instead of leaving a window that never appears.
 fn open_failed(app: &AppHandle, previous: Option<tauri::Url>) {
-    match (app.get_webview_window(WINDOW), previous) {
-        (Some(_), Some(url)) => replace_page(app, url.as_str()),
-        _ => ask_for_folder(app.clone(), true),
+    if app.get_webview_window(WINDOW).is_some()
+        && let Some(url) = previous
+    {
+        replace_page(app, url.as_str());
+        return;
+    }
+    // Nothing real to go back to — the page before us was itself a wait page, or
+    // the window had none. Re-render whatever root is current rather than strand
+    // on a wait page; only with no state at all is there nothing to do but ask.
+    match app.try_state::<Serving>() {
+        Some(serving) => replace_page(app, serving.entry()),
+        None => ask_for_folder(app.clone(), true),
     }
 }
 
