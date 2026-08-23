@@ -1141,7 +1141,15 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
             .with("Cache-Control", "no-cache");
     }
     if attachment {
-        let safe: String = name.chars().filter(|c| *c != '"' && *c != '\\').collect();
+        // The name is a remote file's, so it does not get to shape the header.
+        // Quotes and backslashes would break out of the quoted-string; CR and LF
+        // would split the header entirely — a header-injection primitive on any
+        // writer that does not validate. Drop the quoting characters and every
+        // control byte, and keep it to the ASCII the `filename=` form allows.
+        let safe: String = name
+            .chars()
+            .filter(|c| *c != '"' && *c != '\\' && !c.is_control())
+            .collect();
         headers.push(hdr(
             "Content-Disposition",
             &format!("attachment; filename=\"{}\"", safe),

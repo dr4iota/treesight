@@ -1390,6 +1390,7 @@ fn unreachable_code(e: &io::Error) -> bool {
 /// Drops paths from the Recent file, leaving everything else as it is — the file
 /// may have been rewritten by `remember_root` while the checks were running.
 fn prune_recent(file: &Path, gone: &[String]) {
+    let _io = places_io();
     let Ok(text) = fs::read_to_string(file) else {
         return;
     };
@@ -1405,7 +1406,7 @@ fn prune_recent(file: &Path, gone: &[String]) {
         })
         .map(|l| format!("{l}\n"))
         .collect();
-    let _ = fs::write(file, kept);
+    write_atomic(file, &kept);
 }
 
 /// `?dl=1`, the query the server's "Download" links carry.
@@ -2096,6 +2097,7 @@ fn with_front(mut list: Vec<String>, id: &str) -> Vec<String> {
 /// the same way local opens are recorded. The id is whatever that backend calls
 /// the root — for a local one, the display-form path.
 pub fn remember_root_id(app: &AppHandle, id: &str) {
+    let _io = places_io();
     let list = with_front(recent(app), id);
     if let Some(serving) = app.try_state::<Serving>() {
         // Whoever got this far has already resolved the root, so this one is
@@ -2146,6 +2148,7 @@ pub fn set_theme<R: tauri::Runtime>(app: &AppHandle<R>, mode: ThemeMode) {
 /// a root written down wrong by a bug since fixed. Only the list: the folder is
 /// not this shell's to delete, and the page says "Forget" for that reason.
 pub fn forget_root_id(app: &AppHandle, id: &str) {
+    let _io = places_io();
     let mut list = recent(app);
     let before = list.len();
     list.retain(|x| x != id);
@@ -2153,6 +2156,29 @@ pub fn forget_root_id(app: &AppHandle, id: &str) {
         return;
     }
     save_recent(app, list);
+}
+
+/// Serializes every read-modify-write of `recent.txt` and `pinned.txt`. Moving
+/// the writes onto `off_the_callback` threads (3d0836b) made these files shared
+/// mutable state with no lock: two overlapping taps each read, each modified,
+/// and the second `write` dropped the first's change. One lock across the whole
+/// span makes `check_roots`' "one writer, no lost updates" actually true.
+static PLACES_IO: Mutex<()> = Mutex::new(());
+
+fn places_io() -> std::sync::MutexGuard<'static, ()> {
+    PLACES_IO.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Write through a temporary and rename, so a crash mid-write cannot leave a
+/// half-written Places file — an empty or truncated list next launch.
+fn write_atomic(file: &Path, text: &str) {
+    if let Some(dir) = file.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let tmp = file.with_extension("tmp");
+    if fs::write(&tmp, text).is_ok() {
+        let _ = fs::rename(&tmp, file);
+    }
 }
 
 fn pinned_file(app: &AppHandle) -> Option<PathBuf> {
@@ -2202,6 +2228,7 @@ fn pinned_entries(text: &str) -> Vec<treeserve::Pin> {
 /// its own backend pins it the same way, and the name matters more there — a
 /// grant or a bookmark has an id nothing would want to read.
 pub fn pin_root_id(app: &AppHandle, id: &str, label: Option<String>) {
+    let _io = places_io();
     let mut list = pinned(app);
     if list.iter().any(|p| p.id == id) {
         return;
@@ -2216,6 +2243,7 @@ pub fn pin_root_id(app: &AppHandle, id: &str, label: Option<String>) {
 /// Drops a root from the pinned list — the header's own control, and each row's.
 /// Only the list: the folder is not this shell's to delete.
 pub fn unpin_root_id(app: &AppHandle, id: &str) {
+    let _io = places_io();
     let mut list = pinned(app);
     let before = list.len();
     list.retain(|p| p.id != id);
@@ -2237,10 +2265,7 @@ fn save_pinned(app: &AppHandle, list: Vec<treeserve::Pin>) {
         serving.state().cfg.set_pinned(list);
     }
     let Some(file) = pinned_file(app) else { return };
-    if let Some(dir) = file.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    let _ = fs::write(file, text);
+    write_atomic(&file, &text);
 }
 
 /// The list, in the running server and on disk. Both are the same order, and the
@@ -2250,13 +2275,10 @@ fn save_recent(app: &AppHandle, list: Vec<String>) {
         serving.state().cfg.set_recent(list.clone());
     }
     let Some(file) = recent_file(app) else { return };
-    if let Some(dir) = file.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
     // One id per line, which is the same string the pane shows and the status
     // map is keyed by, so the three never disagree about which root is which.
     let text: String = list.iter().map(|id| format!("{id}\n")).collect();
-    let _ = fs::write(file, text);
+    write_atomic(&file, &text);
 }
 
 #[cfg(test)]
