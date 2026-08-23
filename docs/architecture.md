@@ -318,7 +318,14 @@ The window may only stay on:
 2. `ShellExt.allowed_origins` — the same two forms, for a downstream scheme
    (`telesight:`, `http://telesight.localhost`).
 
-Anything else opens in the system browser.
+Anything else is handed to the OS through `open_externally` — but only if its
+scheme is `http`, `https`, or `mailto`. The bytes reach that callback from
+served content (a link in a hostile README), so the browser hand-off is an
+allowlist, not a pass-through: `javascript:`, `data:`, `file:`, `intent:`,
+`content:` and the rest are dropped, never forwarded, so a README cannot fire an
+Android Intent or reach a local file through the app's own opener. The CSP on
+`html_reply` stops such a URL from *running*; this stops the app from
+*launching* it. `on_navigation` and `on_new_window` share the one helper.
 
 ### What may run on the navigation callback
 
