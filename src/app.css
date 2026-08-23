@@ -150,6 +150,12 @@ header {
   color: var(--muted);
 }
 .paneflag { order: -1; white-space: nowrap; }
+/* The pane control and Up are a cluster, like the flags at the other end — and
+   the flags sit .35rem apart while these two sat a full region-gap apart. The
+   header's gap is for the row's regions, not for two buttons acting together,
+   so the pane control gives back the difference. On whichever of its two forms
+   is on screen; the hidden one has no box for the margin to ride on. */
+.paneflag, .drawer-btn { margin-right: calc(.35rem - 1rem); }
 @media (hover: hover) {
   .back:hover, .up:hover, .paneflag:hover {
     color: var(--link);
