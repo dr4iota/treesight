@@ -553,15 +553,20 @@ fn ask_for_folder(app: AppHandle, exit_if_cancelled: bool) {
 /// uninstall. Created on first use, because a root that does not exist cannot
 /// be served and an empty one is the honest starting state.
 ///
-/// `files`, and not the directory above it. On Android `app_data_dir` and
-/// `app_config_dir` are the same path — the app's private root — so serving that
-/// shows the reader `cache`, `code_cache`, `shared_prefs` and every file the
-/// shell or its embedder keeps, which for one of them is a private key and a
-/// file with passwords in it. Somewhere to *put* things is what this row
-/// promises, and `files` is the framework's own name for exactly that.
+/// A folder of the reader's own, and not the directory above it. On Android
+/// `app_data_dir` and `app_config_dir` are the same path — the app's private
+/// root — so serving that shows them `cache`, `code_cache`, `shared_prefs` and
+/// every file the shell or its embedder keeps, which for one of them is a
+/// private key and a file with passwords in it.
+///
+/// `user_files` rather than the framework's own `files`: that one is
+/// `getFilesDir()`, which any library in the process may decide to write to, and
+/// this is a folder whose whole promise is that what is in it was put there by
+/// the person looking at it. The spelling matches the neighbours — `code_cache`,
+/// `shared_prefs`, `no_backup` — because it sits among them.
 #[cfg(mobile)]
 fn app_storage_dir(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().app_data_dir().ok()?.join("files");
+    let dir = app.path().app_data_dir().ok()?.join("user_files");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
