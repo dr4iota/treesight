@@ -947,10 +947,14 @@ fn open_from(req: &Req) -> Vec<String> {
 /// what gets *served*; this guards what gets walked to draw the pane.
 fn open_path(raw: &str) -> Option<String> {
     let path = percent_decode(raw.trim()).trim_matches('/').to_string();
+    // A backslash is a path separator on Windows, so `..\..` walks up there —
+    // and `tree_dir` reads this without `resolve_in_root`'s confinement (that
+    // is `resolve`'s job, for what gets served). Split on both separators, and
+    // reject a `..` written either way, so the pane cannot list above the root.
     let sane = !path.is_empty()
         && !path.contains('\0')
         && !path
-            .split('/')
+            .split(['/', '\\'])
             .any(|seg| seg.is_empty() || seg == "." || seg == "..");
     sane.then_some(path)
 }
@@ -1268,6 +1272,9 @@ mod tests {
         assert_eq!(open_path("src/../../etc"), None);
         assert_eq!(open_path("src//bin"), None);
         assert_eq!(open_path("  "), None);
+        // A backslash climbs out on Windows, where it is a separator too.
+        assert_eq!(open_path("..\\.."), None);
+        assert_eq!(open_path("src\\..\\.."), None);
     }
 
     #[test]
