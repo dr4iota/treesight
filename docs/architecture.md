@@ -109,8 +109,13 @@ toggles wrote before this jar existed.
 reading it needs script on the page, which the next paragraph rules out.
 
 There is **no JavaScript on served pages**. Toggles are links to `/.ts/set`.
-The only script in the product is the shell's `initialization_script`
-(keyboard shortcuts), injected by Tauri into the webview, not into HTML.
+The only script in the product is the shell's `initialization_script` —
+`VIEWPORT` plus the keyboard shortcuts, or plus whatever an embedder's
+`init_script` replaces the shortcuts with (telesight's carries its prompt
+overlay too) — injected by Tauri into the webview, not into HTML. Content is
+held to the same rule by the `Content-Security-Policy` every page carries
+(`html_reply`): raw HTML in a rendered document cannot script, whichever
+backend served it.
 
 The one piece of page state that is neither a cookie nor a link is the
 narrow-window drawer (≤50rem, where the pane leaves the layout): a checkbox
@@ -263,8 +268,9 @@ heading carries both ends of having a folder open: the picker, and `/.ts/close`
 open is in Recent, so there is nothing to confirm. The picker also appears in the
 status line, but only below 50rem where the pane has left the layout, so no width
 offers two — and only where `Config::picker` says the platform has one at all. A section's
-`heading_action` is `(href, icon, title)`: the mark is the embedder's, because a
-plus promises adding one thing and a list of servers is *managed*.
+`heading_acts` are `(href, icon paths, title)` triples: the marks are the
+embedder's, because a plus promises adding one thing and a list of servers is
+*managed*.
 
 Every Recent row carries a Forget button — `/.ts/forget?path=`, answered by
 `forget_root_id`, which drops the id from the list and the file and reloads the
@@ -318,8 +324,13 @@ Anything else opens in the system browser.
 
 `on_navigation` runs on the thread the window answers input on, and on Android
 that is the **Java UI thread** — which is also the thread that services every
-message wry posts to itself. A call that waits for the webview to answer is
-therefore a call waiting for the thread it is running on:
+message wry posts to itself. The rule is about that thread, not about the one
+callback: `run_on_main_thread` posts to it too, so a closure handed there is
+under the same restrictions as the callback that scheduled it — which is why
+`serve_opened` and `serve_root` hand Recent's file work to a thread of its own —
+and so is every other webview callback (`on_download` resolves its directory
+once, on a thread, before any download asks). A call that waits for the webview
+to answer is a call waiting for the thread it is running on:
 
 | Call | Waits on | Timeout |
 |---|---|---|
@@ -358,6 +369,9 @@ calls `run_with(ctx, ext)`.
 | `extra_sections` | Whole headed lists between Places and Recent (`PaneSection`). Evaluated at server start; later updates go through `Config::set_sections`. |
 | `intro` | The sentence the start page opens with. A downstream app is a different program; the default sentence is about this one. |
 | `init_script` | Replaces `SHORTCUTS` wholesale (needed so a terminal page can keep Alt+arrows). |
+| `picker` | Whether *this* shell can ask for a folder where the crate cannot — the grant flow on Android, and the only way it is reachable without a desktop dialog. |
+| `usage_pages` | `(path, bytes)` pages of the embedder's own, merged into the Usage root; a path already taken replaces the built-in page. |
+| `flags` | Embedder controls on the header's flag row, installed at server start; anything that comes and goes later uses `Config::set_flags`. |
 | `allowed_origins` | Extra origins the webview may load (plugin scheme pages). |
 | `configure` | One shot at the Tauri `Builder` (plugins). Runs after dialog/opener; single-instance stays first. |
 | `openers` | `RootOpener`s for roots that are not paths. `claims` picks one, `label` names it on the wait page, `open` runs on a thread of ours and returns `Opened { id, vfs, name }` or `None` — `None` meaning the opener has already said why, or that nothing needed saying. `probe` answers for a row that is only being listed and **must not connect**. |
@@ -394,8 +408,9 @@ what lets a revoked grant or a server that is not answering be grey before it is
 clicked.
 
 `PaneEntry` links are always `{action}?path={percent_encode(id)}`. Aside
-links on a row are raw hrefs (e.g. a terminal URL). A heading action is
-`(href, title)` drawn as a plus.
+links on a row are raw hrefs (e.g. a terminal URL). A heading action is one of
+`heading_acts`' `(href, icon paths, title)` triples — the mark is the
+embedder's, not a fixed plus.
 
 ---
 

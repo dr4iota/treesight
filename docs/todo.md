@@ -73,7 +73,7 @@ of them are.
 
 Done: single-instance, `desktop_dir` and the folder picker are `#[cfg(desktop)]`;
 mobile roots at `app_data_dir()` (created on first use, empty to begin with) and
-Places lists **App storage** first. `cargo check --target aarch64-linux-android`
+Places lists **Files** first. `cargo check --target aarch64-linux-android`
 passes for `treesight` and for the downstream shell. Snapshot: **IDENTICAL**.
 
 Still open:
@@ -86,9 +86,12 @@ Still open:
   scoped URL, **not a path**, so the backend is a new `Vfs` — which is the seam
   that already exists — and not a tweak to `LocalFs`. Android needs a small
   Kotlin Tauri plugin; there is no first-class one.
-- An offline cache belongs in `app_data_dir()`, never `app_cache_dir()`: the
-  cache directory is purgeable on both platforms, and a cache the user is
-  relying on offline would evaporate exactly when the phone fills up. On iOS set
+- An offline cache the user *relies on* belongs in `app_data_dir()`: the cache
+  directory is purgeable on both platforms, and a cache someone is counting on
+  offline would evaporate exactly when the phone fills up. Purgeable is right
+  for a copy nobody asked to keep, so the honest layout is two tiers rather
+  than one directory winning — the downstream cache design settled on exactly
+  that split. On iOS set
   `isExcludedFromBackup` on it, or a mirrored tree inflates the user's iCloud
   backup — which Apple's storage guidelines treat as a review matter.
 - **Save As writes nothing on a phone.** The save sheet returns a `content://`
