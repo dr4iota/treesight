@@ -856,7 +856,10 @@ pub fn handle(state: &State, req: &Req) -> Reply {
 
     let name = rel.last().cloned().unwrap_or_default();
     let want_raw = query_get(&query, "raw") == Some("1");
-    let want_dl = query_get(&query, "dl") == Some("1");
+    // Asked for by a URL somebody typed or kept: the page does not draw the link
+    // where the backend has no copy to give. Falling back to the ordinary view is
+    // kinder than an error for a link that was good on another machine.
+    let want_dl = query_get(&query, "dl") == Some("1") && root.vfs.downloadable();
     // A file served as itself arrives with nothing around it: no path, no Back,
     // and in the shell — which has no chrome of its own — no way out at all but a
     // keystroke there is nothing on screen to suggest. So the raw view is the

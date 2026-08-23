@@ -53,6 +53,12 @@ impl EmbeddedFs {
 }
 
 impl Vfs for EmbeddedFs {
+    /// Never. These pages are compiled into the binary the reader is running —
+    /// there is no copy to be had that they do not already have.
+    fn downloadable(&self) -> bool {
+        false
+    }
+
     /// `Outside` cannot happen: there are no links here to lead anywhere, and a
     /// path that names nothing is simply missing.
     fn resolve(&self, path: &VfsPath) -> Result<VfsPath, ResolveError> {

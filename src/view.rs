@@ -1,4 +1,5 @@
 use crate::md::{render_markdown, render_mermaid_figure};
+use crate::vfs::Vfs;
 use crate::page::{
     bare_layout, flag, layout, svg_icon, Prefs, ICON_DOWNLOAD, ICON_PRINT, ICON_RAW, ICON_RENDERED,
     ICON_SOURCE,
@@ -38,7 +39,7 @@ fn print_flag(state: &State) -> String {
     }
 }
 
-fn std_controls(rel: &[String]) -> String {
+fn std_controls(rel: &[String], vfs: &dyn Vfs) -> String {
     let base = href_path(rel);
     format!(
         "{}{}",
@@ -49,14 +50,35 @@ fn std_controls(rel: &[String]) -> String {
             "Raw",
             "The file as it is on disk"
         ),
-        flag(
+        download_flag(&base, vfs)
+    )
+}
+
+/// The same, in a sentence rather than on the flag row: a finished link, or
+/// nothing at all. A page that says "or download" and then does not is worse
+/// than one that says nothing, so the caller composes around what it gets back
+/// rather than pasting fragments either side of it.
+fn download_link(rel: &[String], vfs: &dyn Vfs, words: &str) -> Option<String> {
+    vfs.downloadable().then(|| {
+        format!(
+            "<a href=\"{}?dl=1\">{words}</a>",
+            html_escape(&href_path(rel))
+        )
+    })
+}
+
+/// Download, where a copy is a thing worth having. See [`Vfs::downloadable`].
+fn download_flag(base: &str, vfs: &dyn Vfs) -> String {
+    match vfs.downloadable() {
+        true => flag(
             "",
             &format!("{base}?dl=1"),
             &svg_icon(ICON_DOWNLOAD),
             "Download",
-            "Save a copy"
-        )
-    )
+            "Save a copy",
+        ),
+        false => String::new(),
+    }
 }
 
 fn meta_line(size: u64, mtime: Option<std::time::SystemTime>, extra: &str) -> String {
@@ -143,7 +165,7 @@ pub fn file_page(
             html_escape(&raw_href(rel)),
             html_escape(name)
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
     }
     if VIDEO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -151,7 +173,7 @@ pub fn file_page(
             meta_line(size, mtime, "video"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
     }
     if AUDIO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -159,7 +181,7 @@ pub fn file_page(
             meta_line(size, mtime, "audio"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
     }
     if ext == "pdf" {
         let content = format!(
@@ -167,19 +189,22 @@ pub fn file_page(
             meta_line(size, mtime, "pdf"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
     }
 
     // Text-ish content from here on.
     if size > MAX_HIGHLIGHT_BYTES {
+        let raw = format!("<a href=\"{}?raw=1\">View raw</a>", html_escape(&href_path(rel)));
+        let ways = match download_link(rel, vfs, "download") {
+            Some(dl) => format!("{raw} or {dl}."),
+            None => format!("{raw}."),
+        };
         let content = format!(
-            "{}<div class=\"bigmsg\"><p>File is too large to render ({}).</p>\
-             <p><a href=\"{}?raw=1\">View raw</a> or <a href=\"{2}?dl=1\">download</a>.</p></div>",
+            "{}<div class=\"bigmsg\"><p>File is too large to render ({}).</p><p>{ways}</p></div>",
             meta_line(size, mtime, "large file"),
-            human_size(size),
-            html_escape(&href_path(rel))
+            human_size(size)
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
     }
 
     let Ok(bytes) = vfs.read(canon) else {
@@ -189,12 +214,13 @@ pub fn file_page(
 
     if looks_binary(&bytes[..bytes.len().min(8192)]) {
         let content = format!(
-            "{}<div class=\"bigmsg\"><p>Binary file.</p>\
-             <p><a href=\"{}?dl=1\">Download</a></p></div>",
+            "{}<div class=\"bigmsg\"><p>Binary file.</p>{}</div>",
             meta_line(size, mtime, "binary"),
-            html_escape(&href_path(rel))
+            download_link(rel, vfs, "Download")
+                .map(|dl| format!("<p>{dl}</p>"))
+                .unwrap_or_default()
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
     }
 
     let text = String::from_utf8_lossy(&bytes);
@@ -219,7 +245,7 @@ pub fn file_page(
                     "Source",
                     "Highlighted source instead"
                 ),
-                std_controls(rel)
+                std_controls(rel, vfs)
             );
             let content = format!("<div class=\"md\">{}</div>", body);
             return layout(state, root, prefs, rel, url_now, &controls, false, &content);
@@ -253,7 +279,7 @@ pub fn file_page(
             "Rendered view instead",
         ));
     }
-    controls.push_str(&std_controls(rel));
+    controls.push_str(&std_controls(rel, vfs));
 
     let content = format!(
         "{}<div class=\"codewrap\">{}<pre class=\"hl-code\"><code>{}</code></pre></div>",

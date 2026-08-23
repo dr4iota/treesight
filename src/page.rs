@@ -1777,6 +1777,69 @@ mod tests {
         }
     }
 
+    /// A copy of a file is worth offering where the reader does not have one,
+    /// and the backend is what knows: the same page draws the control or does
+    /// not, and a link that was good on another machine falls back to the
+    /// ordinary view rather than erroring.
+    #[test]
+    fn download_is_offered_only_where_a_copy_is_worth_having() {
+        use std::sync::Arc;
+        struct NoCopies(Arc<dyn Vfs>);
+        impl Vfs for NoCopies {
+            fn resolve(&self, p: &VfsPath) -> Result<VfsPath, crate::vfs::ResolveError> {
+                self.0.resolve(p)
+            }
+            fn metadata(&self, p: &VfsPath) -> std::io::Result<crate::vfs::Meta> {
+                self.0.metadata(p)
+            }
+            fn read_dir(&self, p: &VfsPath) -> std::io::Result<Vec<crate::vfs::Entry>> {
+                self.0.read_dir(p)
+            }
+            fn read(&self, p: &VfsPath) -> std::io::Result<Vec<u8>> {
+                self.0.read(p)
+            }
+            fn open(&self, p: &VfsPath) -> std::io::Result<Box<dyn crate::vfs::ReadSeek>> {
+                self.0.open(p)
+            }
+            fn root_id_at(&self, p: &VfsPath) -> String {
+                self.0.root_id_at(p)
+            }
+            fn downloadable(&self) -> bool {
+                false
+            }
+        }
+
+        let dir = tmp_dir("downloadable");
+        fs::write(dir.join("a.txt"), b"hello").unwrap();
+        fs::write(dir.join("b.bin"), [0u8, 1, 2, 0, 3]).unwrap();
+        let state = state_at(dir.clone());
+        let plain = state.cfg.root().expect("these tests always serve one");
+        let page = |vfs: Arc<dyn Vfs>, name: &str| {
+            let rel = vec![name.to_string()];
+            let root = Root { id: plain.id.clone(), vfs };
+            crate::view::file_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), &[], "/")
+        };
+
+        // A local tree on a desktop: a copy is a copy you did not have, and the
+        // anchor is closed — the panel builds a sentence around the link rather
+        // than pasting text either side of it.
+        assert!(page(Arc::clone(&plain.vfs), "a.txt").contains("?dl=1"), "text");
+        let binary = page(Arc::clone(&plain.vfs), "b.bin");
+        assert!(binary.contains("<p><a href=\"/b.bin?dl=1\">Download</a></p>"), "{binary}");
+
+        // A backend with nowhere to copy to draws none of it — not the flag on
+        // the row, and not the sentence in the panel either. A page that says
+        // "or download" and then does not is worse than one that says nothing.
+        let capped: Arc<dyn Vfs> = Arc::new(NoCopies(Arc::clone(&plain.vfs)));
+        for name in ["a.txt", "b.bin"] {
+            let html = page(Arc::clone(&capped), name);
+            assert!(!html.contains("?dl=1"), "{name}: {html}");
+            assert!(!html.to_lowercase().contains(">download"), "{name}: {html}");
+        }
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A backend that will not hand a big file over says so on the page, rather
     /// than drawing a picture at bytes it is about to refuse — which is a broken
     /// box with nothing to read in it, and a 404 for a file that is right there

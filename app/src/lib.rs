@@ -1422,15 +1422,21 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
     // written and nothing was said. Say it before the sheet instead. Writing
     // through the URI means the dialog plugin's descriptor or the fs plugin,
     // and neither is wired here yet; docs/todo.md carries it.
-    if cfg!(mobile) {
-        say(
-            app,
-            "Saving a copy is not available on this device yet.\n\nThe file is \
-             already on it — open it from the folder you granted.",
-        );
+    // On a phone there is no dialog to ask where: the save sheet hands back a
+    // `content://` destination this cannot write to, and the reader has no
+    // filesystem to point at anyway. So the copy goes to the one folder that is
+    // theirs and browsable — Files, the Place at the top of the pane — under the
+    // file's own name, and the app says where it went. Only a remote root ever
+    // gets here: `Vfs::downloadable` is false for everything local there, so the
+    // button is not drawn.
+    #[cfg(mobile)]
+    {
+        save_into_files(app, &target, &root);
         return;
     }
 
+    #[cfg(desktop)]
+    {
     let app = app.clone();
     let mut dialog = app
         .dialog()
@@ -1475,6 +1481,76 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
             }
         });
     });
+    }
+}
+
+/// The phone's Download: a copy into Files, under the name it already has.
+///
+/// No dialog, because there is nothing to ask — one folder is browsable and it
+/// is the one the reader is offered as a Place. The copy is streamed through the
+/// backend the same way the desktop's is, and for the same reason: this runs
+/// after a click, and a file is as slow as the machine it is on is far away.
+#[cfg(mobile)]
+fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeserve::Root) {
+    let Some(dir) = app_storage_dir(app) else {
+        say(app, "This device gave the app no storage to save into.");
+        return;
+    };
+    let name = target.rel.last().cloned().unwrap_or_else(|| "download".into());
+    let dest = free_name(&dir, &name);
+    let vfs = Arc::clone(&root.vfs);
+    let src = target.path.clone();
+    let app = app.clone();
+    thread::spawn(move || {
+        let copied = vfs.open(&src).and_then(|mut from| {
+            fs::File::create(&dest).and_then(|mut to| io::copy(&mut from, &mut to))
+        });
+        match copied {
+            Ok(_) => say_ok(
+                &app,
+                &format!(
+                    "Saved to Files as {}",
+                    dest.file_name().unwrap_or_default().to_string_lossy()
+                ),
+            ),
+            Err(e) => {
+                let _ = fs::remove_file(&dest);
+                say(&app, &format!("Could not save {name}: {e}"));
+            }
+        }
+    });
+}
+
+/// `name`, or `name (2)` and upwards where that is taken. The extension stays on
+/// the end where there is one — `report (2).pdf`, not `report.pdf (2)` — because
+/// the thing that opens it reads the end of the name and not the middle.
+#[cfg(mobile)]
+fn free_name(dir: &Path, name: &str) -> PathBuf {
+    let taken = dir.join(name);
+    if !taken.exists() {
+        return taken;
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        // A leading dot is the whole name, not an extension: `.bashrc` is not a
+        // file called nothing of type bashrc.
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (name, String::new()),
+    };
+    for n in 2..1000 {
+        let candidate = dir.join(format!("{stem} ({n}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    taken
+}
+
+/// The other half of [`say`], for something that went right.
+#[cfg(mobile)]
+fn say_ok(app: &AppHandle, msg: &str) {
+    let back = app.clone();
+    let msg = msg.to_string();
+    let _ = app.run_on_main_thread(move || notify(&back, &msg));
 }
 
 /// A dialog from a thread: the window's own is the main thread's to open.

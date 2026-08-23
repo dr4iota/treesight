@@ -372,6 +372,12 @@ Public helpers the embedder is meant to call:
   (SVG path data, wrapped in this crate's own box), a word, a title and an href
   the shell claims in `actions`. Set as the root changes: a control that acts on
   the root has nothing to act on when the root is a kind it does not know.
+- `Vfs::downloadable()` — whether a copy of a file in this tree is worth
+  offering, defaulting true. Always the same for a whole tree, which is why the
+  backend answers and not the file: `SftpFs` yes, `EmbeddedFs` no (the Usage
+  pages are inside the binary already), `LocalFs` yes except on Android, where
+  the only local roots are the app's own directories. False draws no control, no
+  sentence in a panel, and turns a typed `?dl=1` back into the ordinary view.
 - `replace_page(app, url)` — **use this rather than `WebviewWindow::navigate`**
   for anything the shell puts on screen itself: a re-root, a wait page, putting
   back the page a cancelled action came from. Every page of this window wears

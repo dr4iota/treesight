@@ -108,6 +108,18 @@ pub trait Vfs: Send + Sync {
 
     fn open(&self, path: &VfsPath) -> io::Result<Box<dyn ReadSeek>>;
 
+    /// Whether a copy of a file here is something to offer.
+    ///
+    /// Always the same for a whole tree, which is why it is asked of the backend
+    /// and not of the file: what varies is where the tree *is*. A copy of a file
+    /// on a machine you are logged into is a copy you did not have; a copy of one
+    /// already on this device is the same bytes under a second name, and on a
+    /// platform with nowhere to put it a Download button is a button that cannot
+    /// do the thing it says.
+    fn downloadable(&self) -> bool {
+        true
+    }
+
     /// The most this backend will hand over in one piece, where it has a limit
     /// at all. `None` — the answer for anything reading a filesystem or a
     /// stream it can seek — means whatever it can reach, it can serve.
@@ -152,6 +164,15 @@ impl LocalFs {
         LocalFs { root }
     }
 
+    /// Downloading a local file means saving a copy of it somewhere else, which
+    /// is a thing a desktop can do and Android cannot: the only local roots
+    /// there are the app's own directories, and "save a copy" would mean copying
+    /// a file the reader already has into a folder they are already looking at.
+    /// A granted folder is not this backend at all.
+    fn copies_are_worth_making() -> bool {
+        !cfg!(target_os = "android")
+    }
+
     fn host(&self, path: &VfsPath) -> PathBuf {
         let mut abs = self.root.clone();
         for seg in path.segments() {
@@ -162,6 +183,10 @@ impl LocalFs {
 }
 
 impl Vfs for LocalFs {
+    fn downloadable(&self) -> bool {
+        Self::copies_are_worth_making()
+    }
+
     fn resolve(&self, path: &VfsPath) -> Result<VfsPath, ResolveError> {
         // canonicalize resolves symlinks; the prefix check keeps everything
         // inside the served root.
