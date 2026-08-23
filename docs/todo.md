@@ -31,29 +31,15 @@ nobody wanted.
 
 ## Open from the last round
 
-**The `save_as` copy has not been exercised by hand**, and it has since been
-rewritten around it. The whole body is off the navigation callback now — the
-resolve and the metadata call are network round trips on a remote root and
-timeout-less platform calls on Android, all of them on the thread that answers
-clicks — so the link is claimed there and answered on a thread; a `?dl=1` URL
-that names something that is not a file says so instead of falling through to a
-navigation; and on mobile it says the feature is not there rather than opening a
-sheet that writes nothing. Driving a native GTK save dialog needs click
-automation this environment does not have. Someone should run the app once,
-Download a file, and confirm the saved copy lands with its permission bits on
-Unix, that cancelling does nothing quietly, and that an unwritable destination
-still raises the error dialog. A remote root is the other half: that path used
-to stall the click thread on SFTP.
+**Tested by hand and working on the desktop:** Download (the Save As copy, which
+this section had been asking about since before it was rewritten around the
+navigation callback), the Up button, and the one-screen layout in a browser.
 
-**The header's first button and the pane's right edge are both new.** Up
-replaced Back — the parent comes from the path, so the link and the dimmed state
-at the root are both exact, where history was a question every engine answered
-differently. Going back is the platform's now: `Alt+Left`, and Android's own
-gesture. Every page is one screen with two scrolling panes, in a browser as well
-as in the shell, and nothing is reserved for a scrollbar any more — see
-`--bar-strip` in `app.css`. What wants eyes: an overlay scrollbar on GTK or
-macOS landing on padding rather than on the marks at the ends of the rows, and
-whether six pixels is enough for it.
+**Still unexercised anywhere.** Everything Android, and one thing that is not:
+an overlay scrollbar — GTK, or macOS unless the reader has asked for bars that
+stay — passes over the last few pixels of the pane while it is in use, and
+`--bar-strip` in `app.css` is six pixels of padding betting that it clears the
+marks at the ends of the rows. One number, one place, if it does not.
 
 ---
 
