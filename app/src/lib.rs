@@ -1852,7 +1852,11 @@ fn places(app: &AppHandle) -> Vec<(String, PathBuf)> {
     // the one a phone has that nobody has to grant.
     #[cfg(mobile)]
     if let Some(dir) = app_storage_dir(app) {
-        out.push(("App storage".to_string(), dir));
+        // "Files", not "App storage": what the row opens is a folder for the
+        // reader's own things — what they downloaded, what another app sent
+        // here — and not a window onto the app's private root, which is where
+        // its config, its keys and whatever secrets it keeps all live.
+        out.push(("Files".to_string(), dir));
     }
 
     // Everywhere but Android, where all three of these name something other than
