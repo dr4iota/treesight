@@ -668,6 +668,24 @@ impl Reply {
 fn html_reply(status: u16, body: String) -> Reply {
     Reply::text(status, "text/html; charset=utf-8", body)
         .with("X-Content-Type-Options", "nosniff")
+        // The header that makes the zero-JS house rule hold for *content* too.
+        // Markdown may embed raw HTML, and the renderer draws a remote
+        // machine's README with the same code as a local one — so script
+        // elements, handler attributes, `javascript:` hrefs and off-origin
+        // fetches all die here, once, whatever the backend. Everything a page
+        // legitimately shows is same-origin, plus data: favicons and inline
+        // styles, and that is the whole grant. The shell's injected scripts
+        // are init scripts and exempt, but their `invoke` rides the webview's
+        // IPC — the `ipc:`/`http://ipc.localhost` pair in connect-src — and
+        // without that grant the prompt drawn over a wait page could not
+        // answer. A plain browser has no such scheme and loses nothing.
+        .with(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; media-src 'self'; object-src 'self'; \
+             frame-src 'self'; connect-src ipc: http://ipc.localhost; \
+             form-action 'self'; base-uri 'none'",
+        )
         // Every page is a snapshot of a directory taken when it was asked for,
         // and none of it is worth keeping: what a listing says is true of a
         // moment, and which listing you get at all depends on cookies and on the
@@ -1095,6 +1113,16 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
             if etag.is_some() { "no-cache" } else { "no-store" },
         ),
     ];
+    // A raw file served under its real type can be a live document, and HTML,
+    // SVG and XML all script. The normal view never lets them (SVG goes
+    // through <img>, HTML falls to escaped source); this face serves the
+    // bytes as themselves, so a document arrives sandboxed — no script, an
+    // opaque origin, no path back to the pages' own. Images, media and PDFs
+    // are not documents and never read the header; PDFs in particular are
+    // left out because Chromium refuses to draw a sandboxed one.
+    if mime.starts_with("text/html") || mime == "image/svg+xml" || mime == "application/xml" {
+        headers.push(hdr("Content-Security-Policy", "sandbox"));
+    }
     if let Some(tag) = &etag {
         headers.push(hdr("ETag", tag));
     }
@@ -1176,6 +1204,49 @@ mod tests {
             .find(|(k, _)| k == "Set-Cookie")
             .map(|(_, v)| v.split(';').next().unwrap_or_default().to_string())
             .expect("a cookie")
+    }
+
+    /// The pages' whole script story is this header: served markup carries no
+    /// script of its own, the shell's init scripts are exempt, and everything
+    /// a remote document could smuggle — a script element, an `onerror`
+    /// attribute, a `javascript:` href — dies against it. Losing it reopens
+    /// remote content into the shell's own origin; losing the ipc pair from
+    /// connect-src silences the prompt drawn over a wait page.
+    #[test]
+    fn every_page_carries_the_policy_that_replaces_trust() {
+        let reply = super::html_reply(200, "<p>hi</p>".to_string());
+        let csp = reply
+            .headers
+            .iter()
+            .find(|(k, _)| k == "Content-Security-Policy")
+            .map(|(_, v)| v.clone())
+            .expect("a policy on every page");
+        assert!(csp.contains("default-src 'none'"), "{csp}");
+        assert!(csp.contains("connect-src ipc: http://ipc.localhost"), "{csp}");
+        assert!(csp.contains("style-src 'self' 'unsafe-inline'"), "{csp}");
+    }
+
+    /// Raw serving hands a file over under its real type, and HTML and SVG
+    /// are live documents there. The sandbox strips their script and their
+    /// origin; a picture never reads the header, and PDFs are left out
+    /// because Chromium refuses to draw a sandboxed one.
+    #[test]
+    fn a_raw_document_arrives_sandboxed_and_a_picture_does_not() {
+        let dir = std::env::temp_dir().join(format!("ts-rawcsp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.html"), "<script>1</script>").unwrap();
+        std::fs::write(dir.join("b.png"), [0u8; 4]).unwrap();
+        let vfs = super::vfs::LocalFs::new(dir.canonicalize().unwrap());
+        let sandboxed = |name: &str| {
+            let path = super::vfs::VfsPath::new(vec![name.to_string()]);
+            super::serve_raw(&req(""), &vfs, &path, name, false)
+                .headers
+                .iter()
+                .any(|(k, v)| k == "Content-Security-Policy" && v == "sandbox")
+        };
+        assert!(sandboxed("a.html"), "an html document sandboxes");
+        assert!(!sandboxed("b.png"), "a picture does not");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// What may be walked to draw the pane. `resolve_in_root` guards what is

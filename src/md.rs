@@ -530,8 +530,13 @@ fn md_options() -> Options<'static> {
     // Math: `$x$` / `$$x$$` and `$`x`$` / ```math fences.
     options.extension.math_dollars = true;
     options.extension.math_code = true;
-    // Local files viewed by their owner: allow embedded raw HTML, minus the
-    // handful of tags GFM's tagfilter neutralizes (script, iframe, style, …).
+    // Embedded raw HTML stays on, minus the tags GFM's tagfilter neutralizes
+    // (script, iframe, style, …). The content is not always local — this
+    // renderer is backend-agnostic and draws what a remote machine serves —
+    // so what actually keeps the markup inert is the pages'
+    // Content-Security-Policy (`html_reply`): no script element runs and no
+    // handler attribute fires, wherever the document came from. Tagfilter
+    // only neutralizes tag *names*; it says nothing about attributes.
     options.render.r#unsafe = true;
     options
 }
@@ -618,7 +623,13 @@ create_formatter!(Links<bool>, {
         context.write_str("<a")?;
         render_sourcepos(context, node)?;
         context.write_str(" href=\"")?;
-        if context.options.render.r#unsafe || !dangerous_url(&nl.url) {
+        // Comrak's own writer skips this gate when `unsafe` is set — right for
+        // a renderer that only ever sees trusted input, and this one is
+        // backend-agnostic: the same code draws a README a remote machine
+        // served. A `javascript:` href is a click away from script in the
+        // pages' own origin, no document has a legitimate one, and so the
+        // gate holds whatever `unsafe` says.
+        if !dangerous_url(&nl.url) {
             context.escape_href(&nl.url)?;
         }
         context.write_str("\"")?;
@@ -642,6 +653,19 @@ mod tests {
     /// As a browser gets it: the tabs are the half that only exists there.
     fn html(src: &str) -> String {
         render_markdown(&Hl::for_tests(), src, true)
+    }
+
+    /// `unsafe` is on for embedded HTML, and it must not carry the href gate
+    /// with it: this renderer draws remote documents too, and a `javascript:`
+    /// link is a click away from script in the pages' own origin.
+    #[test]
+    fn a_dangerous_href_is_dropped_even_with_unsafe_on() {
+        let out = html("[x](javascript:alert(1))");
+        assert!(!out.to_lowercase().contains("javascript:"), "{out}");
+        // The anchor itself survives — an empty href, not a missing link.
+        assert!(out.contains("<a"), "{out}");
+        // And an ordinary link is untouched.
+        assert!(html("[y](/docs/a.md)").contains("href=\"/docs/a.md\""));
     }
 
     #[test]

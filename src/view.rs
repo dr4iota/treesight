@@ -120,8 +120,13 @@ pub fn raw_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], ur
             "Save a copy"
         )
     );
+    // `sandbox` with no allowances: the framed document may be a remote
+    // machine's HTML served as itself, and the parent is a page that can
+    // reach the shell. `serve_raw` sends CSP `sandbox` on such documents
+    // too — attribute and header each cover an engine that misses the other,
+    // and both cost nothing.
     let content = format!(
-        "<iframe class=\"raw\" src=\"{}\" title=\"{}\"></iframe>",
+        "<iframe class=\"raw\" sandbox src=\"{}\" title=\"{}\"></iframe>",
         html_escape(&raw_href(rel)),
         html_escape(name)
     );
