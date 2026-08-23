@@ -1554,10 +1554,12 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
         // including the part of it that would have said what was going on.
         thread::spawn(move || {
             // Streamed through the backend rather than `fs::copy`, which only a
-            // local path could satisfy. `fs::copy` also carried the permission
-            // bits, so a downloaded script stayed runnable — restore them from
-            // the backend's metadata where it knows them.
-            let mode = vfs.metadata(&src).ok().and_then(|m| m.mode);
+            // local path could satisfy. The read/write shape is carried over
+            // from the backend where it knows it — a 0600 stays private — but
+            // never the execute or setuid bits: the file came from a machine the
+            // reader is browsing, and a download that is silently runnable
+            // because the far end said `0755` is a trap a browser would not set.
+            let mode = vfs.metadata(&src).ok().and_then(|m| m.mode).map(|m| m & 0o666);
             let copied = vfs.open(&src).and_then(|mut from| {
                 fs::File::create(&dest).and_then(|mut to| io::copy(&mut from, &mut to))
             });
