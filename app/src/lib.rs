@@ -514,17 +514,32 @@ fn picker_start_dir(app: &AppHandle) -> Option<PathBuf> {
 /// event loop when called from `setup` or from a navigation handler.
 #[cfg(desktop)]
 fn ask_for_folder(app: AppHandle, exit_if_cancelled: bool) {
-    let mut dialog = app.dialog().file().set_title("Choose a folder to browse");
-    if let Some(last) = picker_start_dir(&app) {
-        dialog = dialog.set_directory(last);
-    }
-    dialog.pick_folder(move |picked| match picked {
-        Some(path) => match path.into_path() {
-            Ok(dir) => open_root(&app, dir, true),
-            Err(e) => fail(&app, &format!("Cannot use that folder: {e}"), exit_if_cancelled),
-        },
-        None if exit_if_cancelled => app.exit(0),
-        None => {}
+    // The probe inside `picker_start_dir` is on its own thread, but the wait
+    // for it was on the caller — a navigation callback, frozen for up to half
+    // a second by exactly the case the probe exists for: a dead mapped drive
+    // at the head of Recent. So the whole prelude moves off the callback, and
+    // only the dialog itself is dispatched back to the thread dialogs belong
+    // to.
+    thread::spawn(move || {
+        let start = picker_start_dir(&app);
+        let back = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let mut dialog = back.dialog().file().set_title("Choose a folder to browse");
+            if let Some(last) = start {
+                dialog = dialog.set_directory(last);
+            }
+            let app = back.clone();
+            dialog.pick_folder(move |picked| match picked {
+                Some(path) => match path.into_path() {
+                    Ok(dir) => open_root(&app, dir, true),
+                    Err(e) => {
+                        fail(&app, &format!("Cannot use that folder: {e}"), exit_if_cancelled)
+                    }
+                },
+                None if exit_if_cancelled => app.exit(0),
+                None => {}
+            });
+        });
     });
 }
 
@@ -664,7 +679,13 @@ fn serve_opened(app: &AppHandle, opened: Opened, remember: bool) {
     });
     serving.state().cfg.set_root_name(opened.name);
     if remember {
-        remember_root_id(app, &opened.id);
+        // Off this thread: recording Recent reads and writes the config
+        // directory, and asking where that is is a platform call on Android —
+        // dispatched, with no timeout, to the very thread this closure runs
+        // on. The same rule that put `pin_root_id` behind `off_the_callback`;
+        // the pane simply shows the new row one render later.
+        let id = opened.id.clone();
+        off_the_callback(app, move |app| remember_root_id(app, &id));
     }
     replace_page(app, serving.entry());
     if let Some(win) = app.get_webview_window(WINDOW) {
@@ -687,7 +708,10 @@ fn cannot_open(dir: &Path, status: RootStatus) -> String {
 /// Points the window at a folder that has been resolved. Main thread only.
 fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
     if remember {
-        remember_root_id(app, &treeserve::util::display_path(&dir));
+        // Off this thread — see `serve_opened`: Recent lives in the config
+        // directory, and locating that is a platform call on Android.
+        let id = treeserve::util::display_path(&dir);
+        off_the_callback(app, move |app| remember_root_id(app, &id));
     }
 
     if let Some(serving) = app.try_state::<Serving>() {
@@ -1167,10 +1191,27 @@ fn start(app: &AppHandle) -> Result<(), String> {
     // declines to render, say. Without a destination those fail silently.
     .on_download({
         let app = app.clone();
+        // Resolved once, on a thread, before any download asks. The callback
+        // has to answer with a destination before it returns, so it cannot go
+        // looking — and on Android asking where Downloads is is a platform
+        // call with no timeout, dispatched to the very thread webview
+        // callbacks run on. A download that races the one resolution simply
+        // gets no destination, which is what a missing Downloads dir already
+        // meant.
+        let downloads: Arc<std::sync::OnceLock<PathBuf>> = Arc::new(std::sync::OnceLock::new());
+        {
+            let app = app.clone();
+            let downloads = Arc::clone(&downloads);
+            thread::spawn(move || {
+                if let Ok(dir) = app.path().download_dir() {
+                    let _ = downloads.set(dir);
+                }
+            });
+        }
         move |_webview, event| {
             match event {
                 tauri::webview::DownloadEvent::Requested { url, destination } => {
-                    if let Ok(dir) = app.path().download_dir() {
+                    if let Some(dir) = downloads.get() {
                         *destination = dir.join(download_name(&url));
                     }
                 }
