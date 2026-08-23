@@ -1393,6 +1393,18 @@ fn download_name(url: &tauri::Url) -> String {
 /// hand that names something else says so from the thread rather than falling
 /// through to a navigation, which would arrive back here.
 fn save_as(app: &AppHandle, url: &tauri::Url) -> bool {
+    // The router's own gate, mirrored — where the backend has no copy to give,
+    // the link is not claimed at all, and the navigation proceeds to the
+    // server, whose `?dl=1` handling turns it back into the ordinary view.
+    // Claiming first made that gate unreachable: any link in served content
+    // could write `?dl=1` and start a copy the button would never have offered.
+    let downloadable = app
+        .try_state::<Serving>()
+        .and_then(|serving| serving.state().cfg.root())
+        .is_some_and(|root| root.vfs.downloadable());
+    if !downloadable {
+        return false;
+    }
     let app = app.clone();
     let url = url.clone();
     thread::spawn(move || save_asked(&app, &url));
@@ -1431,9 +1443,10 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
     // `content://` destination this cannot write to, and the reader has no
     // filesystem to point at anyway. So the copy goes to the one folder that is
     // theirs and browsable — Files, the Place at the top of the pane — under the
-    // file's own name, and the app says where it went. Only a remote root ever
-    // gets here: `Vfs::downloadable` is false for everything local there, so the
-    // button is not drawn.
+    // file's own name, and the app says where it went. Only a root whose
+    // backend answers `Vfs::downloadable` gets here — `save_as` checks it
+    // before claiming the link, the same answer that decides whether the
+    // button is drawn at all.
     #[cfg(mobile)]
     {
         save_into_files(app, &target, &root);
