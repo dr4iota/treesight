@@ -1,5 +1,5 @@
 [workspace]
-members = ["app"]
+members = ["app", "stamp"]
 # `cargo build` at the root builds only the server and CLI; the desktop app
 # needs system webview libraries, so it is opt-in via `-p treesight`.
 default-members = ["."]
