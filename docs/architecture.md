@@ -17,6 +17,7 @@ implementation supplied by the embedder.
 |---|---|---|---|
 | `treeserve` | repo root | `treeserve` | HTTP server + CLI. Sync worker threads, `tiny_http`. |
 | `treesight` | `app/` | `treesight` | Tauri window around the same server. `publish = false`. |
+| `treestamp` | `stamp/` | — | What a build says it is. No dependencies: it is a build-dependency *and* a dependency of every consumer. |
 
 `cargo build` at the root builds only `treeserve`, so webview libraries are
 needed only when you ask for the app (`cargo run -p treesight`, `./build.sh`).
@@ -380,6 +381,7 @@ calls `run_with(ctx, ext)`.
 | `usage_pages` | `(path, bytes)` pages of the embedder's own, merged into the Usage root; a path already taken replaces the built-in page. |
 | `flags` | Embedder controls on the header's flag row, installed at server start; anything that comes and goes later uses `Config::set_flags`. |
 | `allowed_origins` | Extra origins the webview may load (plugin scheme pages). |
+| `build` | The downstream binary's own `BuildInfo`, for the footer and its `--version`. `None` means this crate's, which is right only when this crate is what is running. |
 | `configure` | One shot at the Tauri `Builder` (plugins). Runs after dialog/opener; single-instance stays first. |
 | `openers` | `RootOpener`s for roots that are not paths. `claims` picks one, `label` names it on the wait page, `open` runs on a thread of ours and returns `Opened { id, vfs, name }` or `None` — `None` meaning the opener has already said why, or that nothing needed saying. `probe` answers for a row that is only being listed and **must not connect**. |
 
@@ -420,6 +422,35 @@ links on a row are raw hrefs (e.g. a terminal URL). A heading action is one of
 embedder's, not a fixed plus.
 
 ---
+
+## The build stamp
+
+`treestamp::Stamp::emit`, called from `app/build.rs`, hands rustc the version,
+the commit, the branch, the dirty-file count and the build time as
+`rustc-env`; `treestamp::build_info!("TREESIGHT_")` reads them back into the
+`BUILD` constant. It shows up in `treesight --version` and, as
+`Config::app_commit`, in the footer of every page: `treesight v0.1.0
+(a1b2c3d4+2)`. Parentheses because the footer already spends `·` on the gap
+between that label and the path beside it.
+
+Two rules it is built on:
+
+- **A label is never worth a failed build.** No git on the machine, a source
+  tarball with no repository, a checkout that was never initialised — each
+  leaves a value empty, and an empty value prints as `unknown`.
+- **Two version numbers that disagree stop the build**, which is the one
+  deliberate exception. `tauri.conf.json`'s version is the one that ships (an
+  Android `versionCode` is derived from it, and dropping the field does not
+  fall back to Cargo — the CLI writes no version at all and Gradle ships its
+  own default), and Cargo insists on one too. There is no right answer to pick
+  between them, so `Stamp` refuses to pick.
+
+A build script does not rerun because you committed, so `Stamp` watches `HEAD`,
+the ref it names and `packed-refs` — and only where those exist, since cargo
+treats a `rerun-if-changed` on a missing path as *rerun always*. Every value can
+also be overridden by an environment variable of its own name, which is how
+`build.sh` makes two cargo invocations in one run agree about the time;
+`SOURCE_DATE_EPOCH` pins it for a build that has to come out the same twice.
 
 ## Security (local product)
 
