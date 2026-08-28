@@ -30,6 +30,56 @@ cd "$(dirname "$0")"
 # files that a Windows build had left there days earlier, in the one place
 # anybody looks to check what they just got.
 built=""
+# What the summary at the end says this build was cut from; filled by `stamp`.
+stamp_line=""
+
+# What the compile bakes into the binary: which commit, and when. Computed once
+# here and exported, because one run of this script invokes cargo more than
+# once and two artifacts disagreeing about when they were built would be two
+# answers to the one question a stamp exists to answer.
+#
+# **Every value may be empty**, and none of them may stop a build. `stamp/` asks
+# git itself when one is absent — which is the bare `cargo build` path — and
+# prints "unknown" when git has nothing to say either. No git on the machine and
+# a source tarball with no repository both build, and say so rather than
+# claiming a commit.
+say_git() {
+    dir=$1
+    shift
+    [ -d "$dir" ] || return 0
+    (cd "$dir" && git "$@" 2>/dev/null) || true
+}
+
+stamp() {
+    TREESIGHT_COMMIT=$(say_git . rev-parse --short=8 HEAD)
+    # The committer date, not the author date: the author date survives a
+    # rebase, so on a rebased branch it can predate the code in the artifact.
+    TREESIGHT_COMMIT_TIME=$(say_git . log -1 --format=%cI)
+    TREESIGHT_BRANCH=$(say_git . rev-parse --abbrev-ref HEAD)
+    # Tracked files differing from HEAD, as a count — and only where there is a
+    # HEAD to differ from, because `grep -c` on no input says 0, and 0 would
+    # claim a clean tree that was never looked at.
+    TREESIGHT_DIRTY=""
+    [ -z "$TREESIGHT_COMMIT" ] ||
+        TREESIGHT_DIRTY=$(say_git . diff --name-only HEAD | grep -c . || true)
+    # SOURCE_DATE_EPOCH is the reproducible-builds way of saying "pretend it is
+    # this moment", and `stamp/` already knows how to turn one into a timestamp.
+    # Left empty so that it gets the chance: `date -u -d @…` is a GNU spelling,
+    # and this script runs on macOS too.
+    TREESIGHT_BUILD_TIME=""
+    [ -n "${SOURCE_DATE_EPOCH:-}" ] ||
+        TREESIGHT_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    export TREESIGHT_COMMIT TREESIGHT_COMMIT_TIME TREESIGHT_BRANCH \
+        TREESIGHT_DIRTY TREESIGHT_BUILD_TIME
+
+    stamp_line=${TREESIGHT_COMMIT:-no git}
+    case ${TREESIGHT_DIRTY:-0} in
+    0) ;;
+    *) stamp_line="$stamp_line+$TREESIGHT_DIRTY (uncommitted)" ;;
+    esac
+    [ -z "$TREESIGHT_BUILD_TIME" ] ||
+        stamp_line="$stamp_line, $TREESIGHT_BUILD_TIME"
+}
 
 # Copies a freshly built file into dist/ and records that we made it.
 keep() {
@@ -143,6 +193,8 @@ EOF
     keep "$loader" dist/windows
 }
 
+stamp
+
 case $target in
 all)
     build_server
@@ -209,6 +261,10 @@ echo "built:"
 for f in $built; do
     echo "    $f  ($(wc -c <"$f" | tr -d ' ') bytes)"
 done
+# Which commit is inside what was just written. The binaries say the same thing
+# to `--version` and in the page footer; this is so the answer is on screen when
+# the files appear, rather than only once they are installed somewhere.
+[ -z "$built" ] || echo "    from $stamp_line"
 [ "$target" = bundle ] && echo "    target/release/bundle/ (installers)"
 # The .exe files are nobody's business but `$0 windows`, and they sit in dist/
 # looking exactly like the ones we just made. Anyone reading this list is

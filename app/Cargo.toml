@@ -12,6 +12,7 @@ crate-type = ["lib"]
 
 [build-dependencies]
 tauri-build = "2"
+treestamp = { path = "../stamp" }
 
 [dependencies]
 tauri = "2"
@@ -20,6 +21,8 @@ tauri-plugin-opener = "2"
 # No `http`: the shell serves the same router through the webview's own
 # protocol, so tiny_http and the socket it wants are not built at all.
 treeserve = { path = "..", default-features = false, features = ["onig"] }
+# Both halves of the stamp: the build script writes it, the crate reads it.
+treestamp = { path = "../stamp" }
 
 # Desktop only, and it does not build for mobile at all: there is no second
 # launch to fold into the first when the system routes intents to the activity

@@ -28,6 +28,10 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use treeserve::page::ThemeMode;
 use treeserve::{Config, RootStatus};
+pub use treestamp::BuildInfo;
+
+/// What this binary is, filled in by `build.rs`.
+pub const BUILD: BuildInfo = treestamp::build_info!("TREESIGHT_");
 
 /// The one window's label — public so a downstream action ([`ShellExt`])
 /// can find the same window the shell drives.
@@ -1068,19 +1072,17 @@ fn start(app: &AppHandle) -> Result<(), String> {
     // dialog on a desktop, or a downstream shell that claims `/.ts/open` and has
     // something to ask with where we have not.
     cfg.picker = cfg!(desktop) || ext.picker;
-    // The name on the start page and in the window title, which have no folder
-    // to be named after. From Tauri's own product name rather than this crate's:
-    // a downstream shell embedding this one is a different program, and it was
-    // calling itself treesight on both.
-    cfg.app_name = Some(
-        app.config()
-            .product_name
-            .clone()
-            .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string()),
-    );
-    cfg.app_version = Some(app.config().version.clone().unwrap_or_else(|| {
-        env!("CARGO_PKG_VERSION").to_string()
-    }));
+    // The name, version and commit on the start page, the window title and the
+    // footer, none of which have a folder to be named after. From the running
+    // binary's own stamp rather than from this crate or from `app.config()`: a
+    // downstream shell embedding this one is a different program, and the
+    // config's `version` is an optional field whose fallback was *this crate's*
+    // version — so a shell that left it out advertised treesight's number as
+    // its own. A stamp cannot make that mistake: whoever built it is who it is
+    // about.
+    cfg.app_name = Some(BUILD.name.to_string());
+    cfg.app_version = Some(BUILD.version.to_string());
+    cfg.app_commit = (!BUILD.commit.is_empty()).then(|| BUILD.commit_mark());
     cfg.intro = ext.intro.clone();
     cfg.places = places(app)
         .into_iter()

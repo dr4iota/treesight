@@ -4330,6 +4330,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "treeserve",
+ "treestamp",
  "windows-sys 0.61.2",
 ]
 
