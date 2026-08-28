@@ -30,7 +30,9 @@ use treeserve::page::ThemeMode;
 use treeserve::{Config, RootStatus};
 pub use treestamp::BuildInfo;
 
-/// What this binary is, filled in by `build.rs`.
+/// What this binary is, filled in by `build.rs`. A downstream shell builds its
+/// own the same way and hands it over as [`ShellExt::build`] — this one is only
+/// right for the program this crate is.
 pub const BUILD: BuildInfo = treestamp::build_info!("TREESIGHT_");
 
 /// The one window's label — public so a downstream action ([`ShellExt`])
@@ -279,6 +281,11 @@ pub struct ShellExt {
     /// [`treeserve::HeaderFlag::roots`], or it will be offered against roots it
     /// cannot act on.
     pub flags: Vec<treeserve::HeaderFlag>,
+    /// What the downstream binary is: its version and the commit it was built
+    /// from, for the page footer and its own `--version`. `None` leaves the
+    /// footer showing this crate's stamp, which is right only when this crate
+    /// is the program being run.
+    pub build: Option<BuildInfo>,
     /// One shot at the builder before the shell finishes it: plugins to
     /// register, mobile-specific setup.
     #[allow(clippy::type_complexity)]
@@ -352,6 +359,7 @@ struct Ext {
         Vec<Box<dyn Fn(&AppHandle) -> Vec<treeserve::PaneSection> + Send + Sync>>,
     init_script: String,
     picker: bool,
+    build: BuildInfo,
     intro: Option<String>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
@@ -379,6 +387,9 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
             ext.init_script.unwrap_or_else(|| SHORTCUTS.to_string())
         ),
         picker: ext.picker,
+        // Resolved once, here, so nothing later has to remember that an absent
+        // stamp means this crate's own.
+        build: ext.build.unwrap_or(BUILD),
         intro: ext.intro,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
@@ -1080,9 +1091,9 @@ fn start(app: &AppHandle) -> Result<(), String> {
     // version — so a shell that left it out advertised treesight's number as
     // its own. A stamp cannot make that mistake: whoever built it is who it is
     // about.
-    cfg.app_name = Some(BUILD.name.to_string());
-    cfg.app_version = Some(BUILD.version.to_string());
-    cfg.app_commit = (!BUILD.commit.is_empty()).then(|| BUILD.commit_mark());
+    cfg.app_name = Some(ext.build.name.to_string());
+    cfg.app_version = Some(ext.build.version.to_string());
+    cfg.app_commit = (!ext.build.commit.is_empty()).then(|| ext.build.commit_mark());
     cfg.intro = ext.intro.clone();
     cfg.places = places(app)
         .into_iter()
