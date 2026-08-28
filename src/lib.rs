@@ -237,6 +237,11 @@ pub struct Config {
     /// The version to print beside [`Config::app_name`]. Same reason: a shell
     /// embedding this crate ships on its own version, not on this one's.
     pub app_version: Option<String>,
+    /// The commit that build came from — `a1b2c3d4`, or `a1b2c3d4+2` where two
+    /// tracked files differed from it. Appended to [`Config::app_label`] in
+    /// parentheses, and `None` where nobody stamped the build, which is every
+    /// copy of this crate's own server binary.
+    pub app_commit: Option<String>,
     /// What the start page says this program is. Plain text, escaped by the page;
     /// `None` uses the sentence this crate would write about itself, which is only
     /// right for the program this crate is.
@@ -301,6 +306,7 @@ impl Config {
             picker: false,
             app_name: None,
             app_version: None,
+            app_commit: None,
             intro: None,
             places: Vec::new(),
             recent: RwLock::new(Arc::new(Vec::new())),
@@ -411,10 +417,15 @@ impl Config {
 
     /// The site title as of now. Rootless, that is the product's own name — there
     /// is no folder to be named after yet.
-    /// `name vX.Y.Z` for the status line, from whatever this program is rather
-    /// than from this crate.
+    /// `name vX.Y.Z (a1b2c3d4+2)` for the status line, from whatever this
+    /// program is rather than from this crate.
+    ///
+    /// Parentheses around the commit, and not the `·` this file spends
+    /// elsewhere: the footer already uses that dot for the gap between this
+    /// label and the path beside it, and a separator that means two things at
+    /// once means neither.
     pub fn app_label(&self) -> String {
-        format!(
+        let mut label = format!(
             "{} v{}",
             self.app_name
                 .clone()
@@ -422,7 +433,11 @@ impl Config {
             self.app_version
                 .clone()
                 .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
-        )
+        );
+        if let Some(commit) = &self.app_commit {
+            label.push_str(&format!(" ({commit})"));
+        }
+        label
     }
 
     pub fn title(&self) -> String {

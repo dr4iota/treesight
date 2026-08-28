@@ -1653,13 +1653,17 @@ mod tests {
         // wrong program, which is the kind of thing that goes unnoticed.
         state.cfg.app_name = Some("downstream".to_string());
         state.cfg.app_version = Some("9.9.9".to_string());
+        state.cfg.app_commit = Some("a1b2c3d4+2".to_string());
         state.cfg.intro = Some("A sentence of <its> own.".to_string());
         let html = start_page(&state, prefs(), "/");
         assert!(html.contains("<h1>downstream</h1>"), "{html}");
         assert!(html.contains("<title>downstream</title>"), "{html}");
         // Said once: the header's crumbs are empty on this page, on purpose.
         assert!(html.contains("<div class=\"crumbs\"></div>"), "{html}");
-        assert!(html.contains("downstream v9.9.9"), "footer names the app");
+        assert!(
+            html.contains("downstream v9.9.9 (a1b2c3d4+2)"),
+            "footer names the app and the commit it was built from: {html}"
+        );
         assert!(!html.contains("treeserve v"), "not this crate's name");
         // The embedder's sentence, escaped: it is text, not markup.
         assert!(html.contains("A sentence of &lt;its&gt; own."), "{html}");
