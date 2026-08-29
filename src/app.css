@@ -281,8 +281,35 @@ header > .tag { order: 0; flex: 0 0 auto; }
     font-size: .85rem;
   }
   /* The status line is down to one line's worth of room, and the served folder
-     is worth more of it than our own version number. */
-  footer .where .app { display: none; }
+     is worth more of it than our own version number — so from here down the
+     version may have half the line and the folder gets the rest. It used to be
+     dropped outright at this width, which costs a 600px window a version it had
+     room for: the cap takes nothing until the two of them actually collide.
+     `max-width`, so a short version still takes only what it needs: half is what
+     it may have, not what it gets.
+     Only where there *is* a folder to hand the other half to, which is what this
+     selector is for — the start page's line holds the version and nothing else,
+     so a rule that shortens it there is spending room nothing else can use. That
+     page is exempt at every width, here and below. */
+  body:not(.nothing) footer .where .app { max-width: 50%; }
+}
+/* Every phone, held upright: 480px is above the 360 a handset is usually at
+   least as wide as and above the 412 a big one is, and `rem` rather than `px` so
+   a system font turned up crosses it earlier still — what has to fit on this
+   line is text, and text that grew has less room than the pixel count says.
+   Here the version goes rather than being shortened. Beside a path it is worth
+   reading whole or not at all: `telechore v0.1.0 (0a2c57…` names no build and
+   barely a release, and the characters it spends saying so are ones the folder
+   name still wants. This width is where the two of them stop both fitting, so it
+   is where the version stops being drawn — above it there is room for all of it,
+   below it there is room for the folder alone.
+   The cap above outlives this rule for one case: an embedder whose name is long
+   enough to hit half a line even here. Then the version is shortened after all,
+   because the alternative is a path squeezed to nothing, and between a clipped
+   version and no folder at all the folder wins — which is what the cap has said
+   all along. */
+@media (max-width: 30rem) {
+  body:not(.nothing) footer .where .app { display: none; }
 }
 /* Past this width the pane can only be a drawer, so the switch hands its place
    to the button that opens one — the same corner of the row, and never both at
@@ -956,8 +983,40 @@ footer {
    space before the path is the version's margin and not a `gap`, which would
    also have opened one between the head and the leaf — and those two are halves
    of one path that has to read as one. */
-footer .where { min-width: 0; }
-footer .where .app { flex: 0 0 auto; margin-right: .35rem; }
+/* The line, not the length of what is on it. Left to size itself this box is
+   shrink-to-fit, and then a percentage inside it — the version's cap below — is
+   a percentage of the text rather than of the room: a short path made `.where`
+   250px wide, half of that clipped `telechore v0.1.0 (…` to nothing worth
+   reading, and 400px of empty footer sat beside it. Claiming the line costs
+   nothing (what is in it is left-aligned either way, and the picker is held to
+   the far end by its own `margin-left: auto`) and makes every percentage under
+   this rule mean what it says. */
+footer .where { flex: 1 1 auto; min-width: 0; }
+/* The version takes the width of its own text and no more, and gives none of it
+   back: `flex-shrink: 0` for the reason the leaf has it — a box that shrinks by
+   a fraction of a pixel is a box with an ellipsis in it, and three characters
+   gone to pay for a mark nobody asked for. `max-width` is the whole cap, so it
+   is only ever shortened by a rule that means to shorten it — and dropped only
+   where a folder has better use for the room, never on the start page, where
+   this is the only thing the line has to say. */
+footer .where .app {
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: .35rem;
+}
+/* What is left of the line after the version, and the box the head and the leaf
+   measure themselves against. It shrinks and the version does not, which is the
+   order of importance said in flexbox: the path gives up the room, the version
+   gives up nothing until a rule says it may. */
+footer .where .path {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 /* The status line holds the only picker, at every width. It used to hide above
    50rem because the Files heading carried one there — but that heading now carries
    Pin instead, which is an act on the root it names, and dropping the picker from

@@ -688,9 +688,18 @@ pub fn layout(
         // The served root gets the same head-and-leaf treatment as a Recent, and
         // for the same reason: what a plain ellipsis drops off the end of a path
         // is the folder you are actually in. The version goes first in the line
-        // and last in importance, so it is what leaves when the line is short.
+        // and last in importance, so it is the one that gives up width when the
+        // line is short — width, not its place: see the stylesheet.
+        //
+        // The path gets a box of its own rather than sitting beside the version
+        // as two more children of the line. Head and leaf size themselves against
+        // their parent, so a bare `.leaf` is capped at the whole line and the
+        // version is added on top of that — a long folder name paints over the
+        // picker. In a box that is only what the version left, the same cap means
+        // what it says.
         footer = format!(
-            "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>{2}</span>\
+            "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>\
+             <span class=\"path\">{2}</span></span>\
              {3}",
             html_escape(&root.id),
             html_escape(&state.cfg.app_label()),
@@ -1711,6 +1720,14 @@ mod tests {
             "the picker left the heading: {html}"
         );
         assert!(html.contains("href=\"/.ts/close\""), "{html}");
+
+        // Beside the picker, the two things this line says: what is running, and
+        // which folder is open. The path is in a box of its own so that what the
+        // version leaves is all the room it can measure itself against — without
+        // it a long folder name is capped at the whole line and painted over the
+        // button beside it.
+        assert!(html.contains("<span class=\"app\">"), "the line names the app: {html}");
+        assert!(html.contains("<span class=\"path\">"), "and boxes the path: {html}");
 
         fs::remove_dir_all(&dir).unwrap();
     }
