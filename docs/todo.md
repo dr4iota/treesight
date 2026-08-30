@@ -19,7 +19,7 @@ nobody wanted.
   base`, the change, `… new`, `diff -r`. Each item below says which outcome is
   correct — **IDENTICAL** (any diff is a bug) or **REVIEWED DIFF** (exactly the
   described change and nothing else).
-- `cargo test`, `cargo test -p treesight`, and
+- `cargo test`, `cargo test -p treesight-shell`, and
   `cargo check --no-default-features --features pure` green; no new warnings.
 - Served pages stay zero-JavaScript.
 - `root_id_is_local` is the only RootId grammar. Never re-derive it.

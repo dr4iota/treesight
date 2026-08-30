@@ -6,32 +6,19 @@ description = "Desktop shell for treeserve: a native window over the local serve
 license = "MIT OR Apache-2.0"
 publish = false
 
-[lib]
-name = "treesight"
-crate-type = ["lib"]
+# No library half. Everything this program is made of is in `treesight-shell`
+# next door; what is left here is the part that cannot be a library — the
+# tauri.conf.json, the icons, the capabilities, and the context the config is
+# compiled into. Keeping the two apart is what lets a downstream app link the
+# shell without also linking a second `tauri_build::build()`; see shell/Cargo.toml.
 
 [build-dependencies]
 tauri-build = "2"
 treestamp = { path = "../stamp" }
 
 [dependencies]
+# For `generate_context!`, which is the whole reason this crate is not the library.
 tauri = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
-# No `http`: the shell serves the same router through the webview's own
-# protocol, so tiny_http and the socket it wants are not built at all.
-treeserve = { path = "..", default-features = false, features = ["onig"] }
-# Both halves of the stamp: the build script writes it, the crate reads it.
+treesight-shell = { path = "../shell" }
+# Both halves of the stamp: the build script writes it, `main` reads it.
 treestamp = { path = "../stamp" }
-
-# Desktop only, and it does not build for mobile at all: there is no second
-# launch to fold into the first when the system routes intents to the activity
-# that is already running.
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-single-instance = "2"
-
-# For `GetLogicalDrives`, which is the only way to ask which drive letters exist
-# without asking the drives themselves. Already in the tree under tauri, so this
-# is a name for something we were building anyway.
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

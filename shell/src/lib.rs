@@ -30,10 +30,10 @@ use treeserve::page::ThemeMode;
 use treeserve::{Config, RootStatus};
 pub use treestamp::BuildInfo;
 
-/// What this binary is, filled in by `build.rs`. A downstream shell builds its
-/// own the same way and hands it over as [`ShellExt::build`] — this one is only
-/// right for the program this crate is.
-pub const BUILD: BuildInfo = treestamp::build_info!("TREESIGHT_");
+/// What this *library* is, filled in by `build.rs`. Only ever a fallback: a
+/// program names itself through [`ShellExt::build`], which is what the footer
+/// and `--version` should say. Seeing this one means nobody did.
+pub const BUILD: BuildInfo = treestamp::build_info!("TREESIGHT_SHELL_");
 
 /// The one window's label — public so a downstream action ([`ShellExt`])
 /// can find the same window the shell drives.
@@ -215,10 +215,11 @@ impl Serving {
     }
 }
 
-/// What a downstream app may hang on the shell. [`run`] is
-/// `run_with(generate_context!(), ShellExt::default())`; a downstream build
-/// supplies its own context — its own identifier, icons and windows — and its
-/// extensions, and everything else here serves both apps from one source.
+/// What a downstream app may hang on the shell. Every app supplies its own
+/// context — its own identifier, icons and windows — to [`run_with`], along with
+/// its extensions, and everything else here serves all of them from one source.
+/// The `treesight` binary next door is itself one such app and gets no shortcut:
+/// this crate has no `tauri.conf.json` and cannot build a context of its own.
 ///
 /// Unstable: this is the seam for downstream apps of this repo, not a public
 /// API with compatibility promises.
@@ -368,10 +369,6 @@ struct Ext {
 }
 
 struct SharedExt(Arc<Ext>);
-
-pub fn run() {
-    run_with(tauri::generate_context!(), ShellExt::default());
-}
 
 pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
     let configure = ext.configure.take();

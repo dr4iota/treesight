@@ -1,0 +1,42 @@
+[package]
+name = "treesight-shell"
+version = "0.1.0"
+edition = "2024"
+description = "Desktop shell for treeserve: a native window over the local router, as a library"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "treesight_shell"
+crate-type = ["lib"]
+
+# No `tauri-build` here, and that is the point of this crate existing separately
+# from `app`. `tauri_build::build()` rewrites the Gradle module list of whatever
+# `TAURI_ANDROID_PROJECT_PATH` names, from the plugin set of the crate calling it
+# — so a downstream Android app that links a shell which calls it gets its own
+# `tauri.settings.gradle` overwritten mid-build, losing whichever plugins this
+# crate does not have. A library must not call it; the app next door does.
+[build-dependencies]
+treestamp = { path = "../stamp" }
+
+[dependencies]
+tauri = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+# No `http`: the shell serves the same router through the webview's own
+# protocol, so tiny_http and the socket it wants are not built at all.
+treeserve = { path = "..", default-features = false, features = ["onig"] }
+# Both halves of the stamp: the build script writes it, the crate reads it.
+treestamp = { path = "../stamp" }
+
+# Desktop only, and it does not build for mobile at all: there is no second
+# launch to fold into the first when the system routes intents to the activity
+# that is already running.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+# For `GetLogicalDrives`, which is the only way to ask which drive letters exist
+# without asking the drives themselves. Already in the tree under tauri, so this
+# is a name for something we were building anyway.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

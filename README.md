@@ -227,8 +227,8 @@ Example: `treeserve -p 9000 ~/projects/notes`
 
 ## Desktop app — treesight
 
-`app/` wraps the same server in a Tauri window, for people who would rather
-double-click an icon than run a command:
+`shell/` wraps the same server in a Tauri window and `app/` packages it, for
+people who would rather double-click an icon than run a command:
 
 ```sh
 cargo run -p treesight -- [FOLDER]     # dev run

@@ -11,21 +11,32 @@ implementation supplied by the embedder.
 
 ---
 
-## Two crates, two binaries
+## Four crates, two binaries
 
 | crate | path | binary | role |
 |---|---|---|---|
 | `treeserve` | repo root | `treeserve` | HTTP server + CLI. Sync worker threads, `tiny_http`. |
-| `treesight` | `app/` | `treesight` | Tauri window around the same server. `publish = false`. |
+| `treesight-shell` | `shell/` | — | The window, the custom scheme, the panes — everything the app is made of, as a library. |
+| `treesight` | `app/` | `treesight` | This repo's app: a tauri.conf.json, icons, and the context they compile into. `publish = false`. |
 | `treestamp` | `stamp/` | — | What a build says it is. No dependencies: it is a build-dependency *and* a dependency of every consumer. |
 
 `cargo build` at the root builds only `treeserve`, so webview libraries are
 needed only when you ask for the app (`cargo run -p treesight`, `./build.sh`).
 
 The CLI (`src/main.rs`) is a thin argument parser over `treeserve::spawn`.
-The app (`app/src/main.rs`) is seven lines that call `treesight::run()`.
-`run()` is `run_with(generate_context!(), ShellExt::default())`; a second
-app supplies its own Tauri context and a [`ShellExt`](#shellext).
+The app (`app/src/main.rs`) is twenty lines: read `--version`, then hand
+`generate_context!()` and a [`ShellExt`](#shellext) to `treesight_shell::run_with`.
+A downstream app does exactly the same with its own context and its own
+extensions — this repo's app gets no shortcut the others do not.
+
+**Why the shell is a separate crate from the app.** `tauri_build::build()`, which
+every Tauri *app* runs, rewrites the Gradle module list of whatever
+`TAURI_ANDROID_PROJECT_PATH` names — from the plugin set of the crate calling it.
+When a downstream Android app links a shell that also calls it, both build scripts
+write that file in the same second and the loser's plugins vanish from the build,
+surfacing a build later as a `ClassNotFoundException` on launch. So the library
+half calls it nowhere and sets the `desktop`/`mobile` cfg aliases by hand instead;
+only `app/` builds a Tauri context, and downstream apps build their own.
 
 One router, two faces. `handle(&State, &Req) -> Reply` decides every answer
 and touches nothing that carries it.
@@ -86,7 +97,7 @@ HTML pages are `Cache-Control: no-store`. Raw bodies get an ETag from
 directories are cookies (`ts_theme`, `ts_ln`, `ts_sidebar`, `ts_open`), not
 query strings, so a shared URL stays shareable.
 
-**The shell keeps its own cookie jar** (`Jar`, `app/src/lib.rs`), because a
+**The shell keeps its own cookie jar** (`Jar`, `shell/src/lib.rs`), because a
 custom scheme has nowhere to keep cookies. `treesight://localhost` has an
 opaque origin — it serializes to "null" — and a scheme request never reaches
 the network process that would do the storing, so `Set-Cookie` was dropped and
@@ -427,10 +438,15 @@ embedder's, not a fixed plus.
 
 `treestamp::Stamp::emit`, called from `app/build.rs`, hands rustc the version,
 the commit, the branch, the dirty-file count and the build time as
-`rustc-env`; `treestamp::build_info!("TREESIGHT_")` reads them back into the
-`BUILD` constant. It shows up in `treesight --version` and, as
+`rustc-env`; `treestamp::build_info!("TREESIGHT_")` in `app/src/main.rs` reads
+them back into that binary's `BUILD`, which reaches the shell as
+`ShellExt::build`. It shows up in `treesight --version` and, as
 `Config::app_commit`, in the footer of every page: `treesight v0.1.0
-(a1b2c3d4+2)`. Parentheses because the footer already spends `·` on the gap
+(a1b2c3d4+2)`.
+
+The shell stamps itself too, under `TREESIGHT_SHELL_`, and `run_with` falls back
+to it when `ShellExt::build` is `None`. That fallback names the *library*, so a
+footer reading `treesight-shell` means a program forgot to say what it is. Parentheses because the footer already spends `·` on the gap
 between that label and the path beside it.
 
 Two rules it is built on:
@@ -470,7 +486,7 @@ also be overridden by an environment variable of its own name, which is how
 
 ## Tests and snapshots
 
-`cargo test` (treeserve) and `cargo test -p treesight`. After treeserve
+`cargo test` (treeserve) and `cargo test -p treesight-shell`. After treeserve
 changes, two feature builds must still compile: `--no-default-features
 --features pure` (fancy-regex instead of oniguruma; used by the static musl
 build) and `--no-default-features --features onig` (no `http`, which is what

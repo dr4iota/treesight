@@ -4326,6 +4326,15 @@ version = "0.1.0"
 dependencies = [
  "tauri",
  "tauri-build",
+ "treesight-shell",
+ "treestamp",
+]
+
+[[package]]
+name = "treesight-shell"
+version = "0.1.0"
+dependencies = [
+ "tauri",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
