@@ -1501,8 +1501,26 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         "Browse a folder as a tree: files beside their contents, and nothing \
          installed on whatever machine you are reading from.",
     );
+    // Whatever else the embedder offers to start with, drawn the same way as the
+    // folder button and after it. Empty here, and empty is nothing at all: this
+    // crate's own app has one way in and does not need a second button pointing
+    // at the same place. A shell that also opens *machines* has a second, and
+    // only it can say what to call it — see `Config::set_intro_acts`.
+    let offers: String = state
+        .cfg
+        .intro_acts()
+        .iter()
+        .map(|(href, icon, label)| {
+            format!(
+                "<p><a class=\"open\" href=\"{}\">{} {}</a></p>",
+                html_escape(href),
+                svg_icon(icon),
+                html_escape(label)
+            )
+        })
+        .collect();
     let intro = format!(
-        "<div class=\"intro\"><h1>{name}</h1><p>{}</p>{}</div>",
+        "<div class=\"intro\"><h1>{name}</h1><p>{}</p>{}{}</div>",
         html_escape(said),
         match state.cfg.picker {
             true => format!(
@@ -1513,6 +1531,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             // in, and saying so beats offering a button that does nothing.
             false => "<p class=\"hint\">Open one of the places below to start.</p>".to_string(),
         },
+        offers,
         name = html_escape(&state.cfg.title()),
     );
     rootless_page(state, prefs, url_now, &format!("{intro}{lists}"))
@@ -1618,6 +1637,60 @@ mod tests {
     /// is to open, and no tree — the pane's lists are the page here, and a pane
     /// beside them would be the same list twice.
     ///
+    /// An embedder's extra way in, beside the folder button.
+    ///
+    /// Empty is the default and draws nothing, which is what this crate's own
+    /// app runs with — a second button pointing at the one way in would be a
+    /// button for its own sake. A shell that also opens machines has a second,
+    /// and the label is the embedder's because only it knows whether there is
+    /// anything to manage yet.
+    #[test]
+    fn the_start_page_draws_the_embedders_own_ways_in() {
+        let mut state = State {
+            cfg: Config::rootless(),
+            hl: Hl::for_tests(),
+        };
+        state.cfg.app_ui = true;
+        state.cfg.picker = true;
+
+        let bare = start_page(&state, prefs(), "/");
+        assert!(bare.contains("Open a folder"), "the folder button is ours");
+        assert!(!bare.contains("class=\"open\" href=\"/x/servers\""));
+
+        state.cfg.set_intro_acts(vec![(
+            "/x/servers".to_string(),
+            ICON_PLUS.to_string(),
+            "Add a server".to_string(),
+        )]);
+        let offered = start_page(&state, prefs(), "/");
+        assert!(offered.contains("href=\"/x/servers\""), "{offered}");
+        assert!(offered.contains("Add a server"));
+        // Beside the folder button and drawn like it, not instead of it.
+        assert!(offered.contains("Open a folder"));
+        assert_eq!(offered.matches("class=\"open\"").count(), 2);
+    }
+
+    /// A label the embedder changes is a label the page follows: the shell says
+    /// "Add" with nothing saved and "Manage" with a list, and the page is not
+    /// the place that knows which.
+    #[test]
+    fn an_intro_action_is_escaped_and_not_interpreted() {
+        let mut state = State {
+            cfg: Config::rootless(),
+            hl: Hl::for_tests(),
+        };
+        state.cfg.app_ui = true;
+        state.cfg.set_intro_acts(vec![(
+            "/x?q=1&z=2".to_string(),
+            ICON_PLUS.to_string(),
+            "Manage <servers>".to_string(),
+        )]);
+        let html = start_page(&state, prefs(), "/");
+        assert!(html.contains("Manage &lt;servers&gt;"), "{html}");
+        assert!(!html.contains("Manage <servers>"));
+        assert!(html.contains("/x?q=1&amp;z=2"), "{html}");
+    }
+
     /// Rootless on purpose, and with no temporary directory: this is the one page
     /// that reads nothing off a disk, and `handle` only reaches it when there is
     /// no root to read.

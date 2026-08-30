@@ -175,9 +175,16 @@ pub struct PaneSection {
     /// *managed*, and a plus promises adding one, and only the side that knows
     /// which it means can pick between them. Empty for a section with nothing to
     /// do to it, which is how Places and Recent are drawn.
-    pub heading_acts: Vec<(String, String, String)>,
+    pub heading_acts: Vec<HeadingAct>,
     pub entries: Vec<PaneEntry>,
 }
+
+/// A control the embedder offers: **(href, icon paths, title)**.
+///
+/// A name for a tuple whose meaning lived only in the comment above it, now
+/// that a second place draws the same thing. Type-identical to what it
+/// replaces, so nothing downstream changes.
+pub type HeadingAct = (String, String, String);
 
 /// One row of a [`PaneSection`].
 #[derive(Clone)]
@@ -264,6 +271,15 @@ pub struct Config {
     /// for the reason `recent` is: a config UI can add a server while the
     /// server is running, and the next page render is where that shows up.
     sections: RwLock<Arc<Vec<PaneSection>>>,
+    /// Actions offered beside "Open a folder…" on the start page. The
+    /// embedder's, and empty here — this crate's own app has one way in and
+    /// does not need a second button pointing at it.
+    ///
+    /// Behind a lock like `sections` rather than fixed at startup, because what
+    /// an embedder wants to offer can depend on what it currently holds: a
+    /// shell with nothing saved may want "Add…" where one with a list wants
+    /// "Manage…", and that changes while the app is running.
+    intro_acts: RwLock<Arc<Vec<HeadingAct>>>,
     flags: RwLock<Arc<Vec<HeaderFlag>>>,
     /// What the Places and Recent paths turned out to be, for the ones anything
     /// has got round to looking at. Written by the embedder as its answers come
@@ -313,6 +329,7 @@ impl Config {
             pinned: RwLock::new(Arc::new(Vec::new())),
             root_name: RwLock::new(None),
             sections: RwLock::new(Arc::new(Vec::new())),
+            intro_acts: RwLock::new(Arc::new(Vec::new())),
             flags: RwLock::new(Arc::new(Vec::new())),
             status: RwLock::new(HashMap::new()),
         }
@@ -395,6 +412,16 @@ impl Config {
     /// again whenever its own list changes; the next page render shows it.
     pub fn set_sections(&self, sections: Vec<PaneSection>) {
         *self.sections.write().expect("sections lock") = Arc::new(sections);
+    }
+
+    pub fn intro_acts(&self) -> Arc<Vec<HeadingAct>> {
+        Arc::clone(&self.intro_acts.read().expect("intro acts lock"))
+    }
+
+    /// Replaces the start page's extra actions. Empty draws nothing at all,
+    /// which is what this crate's own app runs with.
+    pub fn set_intro_acts(&self, acts: Vec<HeadingAct>) {
+        *self.intro_acts.write().expect("intro acts lock") = Arc::new(acts);
     }
 
     /// What a shortcut turned out to be. `Unknown` for anything nobody has
