@@ -1506,32 +1506,36 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
     // crate's own app has one way in and does not need a second button pointing
     // at the same place. A shell that also opens *machines* has a second, and
     // only it can say what to call it — see `Config::set_intro_acts`.
-    let offers: String = state
-        .cfg
-        .intro_acts()
-        .iter()
-        .map(|(href, icon, label)| {
-            format!(
-                "<p><a class=\"open\" href=\"{}\">{} {}</a></p>",
-                html_escape(href),
-                svg_icon(icon),
-                html_escape(label)
-            )
-        })
-        .collect();
+    // One row, not one paragraph each. The buttons are already `inline-flex`, so
+    // what stacked them was the block around each one — and two short labels fit
+    // side by side on a phone in portrait, which is where the vertical space is
+    // worth the most. A wrapping row costs nothing when there is only one button
+    // and does the right thing at any number of them.
+    let mut ways = String::new();
+    if state.cfg.picker {
+        ways.push_str(&format!(
+            "<a class=\"open\" href=\"/.ts/open\">{} Open a folder&hellip;</a>",
+            svg_icon(ICON_FOLDER)
+        ));
+    }
+    for (href, icon, label) in state.cfg.intro_acts().iter() {
+        ways.push_str(&format!(
+            "<a class=\"open\" href=\"{}\">{} {}</a>",
+            html_escape(href),
+            svg_icon(icon),
+            html_escape(label)
+        ));
+    }
     let intro = format!(
-        "<div class=\"intro\"><h1>{name}</h1><p>{}</p>{}{}</div>",
+        "<div class=\"intro\"><h1>{name}</h1><p>{}</p>{}</div>",
         html_escape(said),
-        match state.cfg.picker {
-            true => format!(
-                "<p><a class=\"open\" href=\"/.ts/open\">{} Open a folder&hellip;</a></p>",
-                svg_icon(ICON_FOLDER)
-            ),
-            // A platform whose folder picker we cannot ask: the lists are the way
-            // in, and saying so beats offering a button that does nothing.
-            false => "<p class=\"hint\">Open one of the places below to start.</p>".to_string(),
+        match ways.is_empty() {
+            false => format!("<div class=\"ways\">{ways}</div>"),
+            // Nothing this platform can be asked for and nothing the embedder
+            // offers: the lists are the way in, and saying so beats an empty row
+            // where a button should be.
+            true => "<p class=\"hint\">Open one of the places below to start.</p>".to_string(),
         },
-        offers,
         name = html_escape(&state.cfg.title()),
     );
     rootless_page(state, prefs, url_now, &format!("{intro}{lists}"))
@@ -1668,6 +1672,31 @@ mod tests {
         // Beside the folder button and drawn like it, not instead of it.
         assert!(offered.contains("Open a folder"));
         assert_eq!(offered.matches("class=\"open\"").count(), 2);
+        // And in one row, so two short labels can share a line where there is
+        // width for them. A paragraph each is what used to stack them whatever
+        // the screen said.
+        assert_eq!(offered.matches("class=\"ways\"").count(), 1);
+        let row = offered.split("class=\"ways\"").nth(1).unwrap();
+        let row = &row[..row.find("</div>").unwrap()];
+        assert_eq!(row.matches("<a class=\"open\"").count(), 2, "{row}");
+        // `</p>`, not `<p` — the icons are SVG and every one of them is a
+        // `<path>`, which the looser check happily mistook for a paragraph.
+        assert!(!row.contains("</p>"), "the row wraps buttons, not paragraphs: {row}");
+    }
+
+    /// Nothing to offer and nothing to ask this platform for: a sentence, not an
+    /// empty row where a button should be.
+    #[test]
+    fn a_start_page_with_no_way_in_says_so_instead() {
+        let mut state = State {
+            cfg: Config::rootless(),
+            hl: Hl::for_tests(),
+        };
+        state.cfg.app_ui = true;
+        state.cfg.picker = false;
+        let html = start_page(&state, prefs(), "/");
+        assert!(html.contains("Open one of the places below"), "{html}");
+        assert!(!html.contains("class=\"ways\""));
     }
 
     /// A label the embedder changes is a label the page follows: the shell says

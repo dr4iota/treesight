@@ -488,8 +488,19 @@ body.nothing .intro { margin: 1rem 0 2rem; }
 body.nothing .intro h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 .5rem; }
 body.nothing .intro p { margin: 0 0 1rem; }
 body.nothing .intro .hint { color: var(--muted); font-size: .9rem; }
-/* The one thing to do on this page, so it is the one thing that looks like a
-   button rather than a link that happens to be first. */
+/* The ways in, as one wrapping row rather than a stack of paragraphs.
+   Two short labels sit together on a phone in portrait, which is where the
+   vertical space on this page is worth the most, and anything that does not fit
+   drops to the next line on its own. It costs nothing at one button and keeps
+   costing nothing as more are added. */
+body.nothing .ways {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin: 0 0 1rem;
+}
+/* Something to do on this page, so it looks like a button rather than a link
+   that happens to be first. */
 body.nothing a.open {
   display: inline-flex;
   align-items: center;
