@@ -242,6 +242,18 @@ pub struct ShellExt {
     #[allow(clippy::type_complexity)]
     pub extra_sections:
         Vec<Box<dyn Fn(&AppHandle) -> Vec<treeserve::PaneSection> + Send + Sync>>,
+    /// Buttons offered beside "Open a folder…" on the start page, in the row
+    /// with it — the intro's counterpart to [`Self::extra_sections`], and
+    /// called at the same moment for the same reason.
+    ///
+    /// A closure rather than a list, because the server builds its `Config`
+    /// fresh when it starts and anything set before that is discarded: an
+    /// embedder cannot usefully hand this over at build time. For anything
+    /// later — a config UI saved the first server, and "Add…" should become
+    /// "Manage…" — call `Config::set_intro_acts` through [`Serving::state`].
+    #[allow(clippy::type_complexity)]
+    pub extra_intro_acts:
+        Vec<Box<dyn Fn(&AppHandle) -> Vec<treeserve::HeadingAct> + Send + Sync>>,
     /// Whether *this* shell can ask for a folder on a platform where this crate
     /// cannot. `/.ts/open` is a link an action may claim (see [`Self::actions`]),
     /// and a downstream app that claims it knows something this crate does not:
@@ -358,6 +370,9 @@ struct Ext {
     #[allow(clippy::type_complexity)]
     extra_sections:
         Vec<Box<dyn Fn(&AppHandle) -> Vec<treeserve::PaneSection> + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
+    extra_intro_acts:
+        Vec<Box<dyn Fn(&AppHandle) -> Vec<treeserve::HeadingAct> + Send + Sync>>,
     init_script: String,
     picker: bool,
     build: BuildInfo,
@@ -376,6 +391,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         actions: ext.actions,
         extra_places: ext.extra_places,
         extra_sections: ext.extra_sections,
+        extra_intro_acts: ext.extra_intro_acts,
         // `init_script` replaces the *shortcuts*. The platform script goes in
         // either way: an embedder swapping key bindings is not asking for a
         // window that draws behind the status bar.
@@ -1106,6 +1122,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.set_recent(recent(app));
     cfg.set_pinned(pinned(app));
     cfg.set_sections(ext.extra_sections.iter().flat_map(|f| f(app)).collect());
+    cfg.set_intro_acts(ext.extra_intro_acts.iter().flat_map(|f| f(app)).collect());
     cfg.set_flags(ext.flags.iter().map(clone_flag).collect());
 
     let state = treeserve::state_for(cfg);
