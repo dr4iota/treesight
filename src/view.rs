@@ -1,4 +1,4 @@
-use crate::md::{render_markdown, render_mermaid_figure};
+use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
 use crate::page::{
     bare_layout, flag, layout, svg_icon, Prefs, ICON_DOWNLOAD, ICON_PRINT, ICON_RAW, ICON_RENDERED,
@@ -233,7 +233,12 @@ pub fn file_page(
 
     if !want_source {
         let body = if MARKDOWN_EXTS.contains(&ext.as_str()) {
-            Some(render_markdown(&state.hl, &text, !state.cfg.app_ui))
+            Some(render_markdown(
+                &state.hl,
+                &text,
+                !state.cfg.app_ui,
+                RawHtml::of(vfs),
+            ))
         } else if MERMAID_EXTS.contains(&ext.as_str()) {
             Some(render_mermaid_figure(&text))
         } else {

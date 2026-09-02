@@ -120,6 +120,28 @@ pub trait Vfs: Send + Sync {
         true
     }
 
+    /// Whether a document from here came off the machine this is running on.
+    ///
+    /// Not a claim about the *bytes* — a cloned repository is somebody else's
+    /// text on your own disk — but about the transport, which is the line a
+    /// browser draws too: a file you can already open with any other program on
+    /// this device, versus one a remote machine just handed us.
+    ///
+    /// What turns on it is whether a document's own raw HTML is drawn as markup
+    /// (`md::RawHtml`). Script is not the reason: no element runs under the
+    /// pages' CSP, wherever the document came from. Style is. `style-src
+    /// 'unsafe-inline'` is what lets our own pages carry their theme, and it is
+    /// also enough for a remote document to paint a convincing copy of the
+    /// password box this app puts on the screen — over the very page that was
+    /// waiting for a connection to that machine.
+    ///
+    /// `false` is the default, so a backend that says nothing is treated as
+    /// somewhere else. A new remote is then safe before anybody remembers it
+    /// exists, and the two backends that *are* this device say so below.
+    fn on_this_device(&self) -> bool {
+        false
+    }
+
     /// The most this backend will hand over in one piece, where it has a limit
     /// at all. `None` — the answer for anything reading a filesystem or a
     /// stream it can seek — means whatever it can reach, it can serve.
@@ -183,6 +205,11 @@ impl LocalFs {
 }
 
 impl Vfs for LocalFs {
+    /// This machine's own filesystem, by definition.
+    fn on_this_device(&self) -> bool {
+        true
+    }
+
     fn downloadable(&self) -> bool {
         Self::copies_are_worth_making()
     }

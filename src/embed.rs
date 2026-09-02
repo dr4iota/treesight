@@ -53,6 +53,12 @@ impl EmbeddedFs {
 }
 
 impl Vfs for EmbeddedFs {
+    /// The pages are `include_bytes!`d into this binary: they did not travel to
+    /// get here, and the only author is whoever built it.
+    fn on_this_device(&self) -> bool {
+        true
+    }
+
     /// Never. These pages are compiled into the binary the reader is running —
     /// there is no copy to be had that they do not already have.
     fn downloadable(&self) -> bool {

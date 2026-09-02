@@ -619,7 +619,33 @@ fn rest_of_line_blank(b: &[u8], from: usize) -> bool {
         .all(|&c| c == b' ' || c == b'\t')
 }
 
-fn md_options() -> Options<'static> {
+/// Whether a document's own raw HTML is drawn as markup, or shown as the text
+/// it is.
+///
+/// Decided by where the document came from, never by what is in it — see
+/// [`Vfs::on_this_device`](crate::Vfs::on_this_device) for why the line is the
+/// transport. A local README renders as its author meant; one a remote machine
+/// served shows its markup, because the CSP that stops its scripts does not stop
+/// it painting something that looks like this app asking for a password.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RawHtml {
+    /// Draw it. The document is from this device.
+    Draw,
+    /// Show it as text. The document came from somewhere else.
+    Show,
+}
+
+impl RawHtml {
+    /// The answer for a document served out of `vfs`.
+    pub fn of(vfs: &dyn crate::Vfs) -> Self {
+        match vfs.on_this_device() {
+            true => RawHtml::Draw,
+            false => RawHtml::Show,
+        }
+    }
+}
+
+fn md_options(raw: RawHtml) -> Options<'static> {
     let mut options = Options::default();
     // GitHub Flavored Markdown.
     options.extension.strikethrough = true;
@@ -636,14 +662,20 @@ fn md_options() -> Options<'static> {
     // Math: `$x$` / `$$x$$` and `$`x`$` / ```math fences.
     options.extension.math_dollars = true;
     options.extension.math_code = true;
-    // Embedded raw HTML stays on, minus the tags GFM's tagfilter neutralizes
-    // (script, iframe, style, …). The content is not always local — this
-    // renderer is backend-agnostic and draws what a remote machine serves —
-    // so what actually keeps the markup inert is the pages'
-    // Content-Security-Policy (`html_reply`): no script element runs and no
-    // handler attribute fires, wherever the document came from. Tagfilter
-    // only neutralizes tag *names*; it says nothing about attributes.
+    // A document's own raw HTML, for a document from this device: minus the tags
+    // GFM's tagfilter neutralizes (script, iframe, style, …), minus any
+    // attribute value that is a URL nobody should follow
+    // (`scrub_raw_html_urls`), and inert as to script under the pages'
+    // Content-Security-Policy (`html_reply`) wherever it came from.
+    //
+    // For a document from anywhere else the markup is *shown* instead. CSP is
+    // why script was never the reason for that; `style-src 'unsafe-inline'` is.
+    // A README on a machine being browsed can otherwise position a box over the
+    // page and dress it as this app's own password prompt — the one the reader
+    // is expecting, on the page they are expecting it on — and no script is
+    // needed to do it. Escaped, the same markup is visibly text.
     options.render.r#unsafe = true;
+    options.render.escape = raw == RawHtml::Show;
     options
 }
 
@@ -655,8 +687,8 @@ fn md_options() -> Options<'static> {
 /// already answers the navigation by handing the URL to the system browser. The
 /// attribute there swaps a road that works for one that has to be met at the
 /// other end, which is a trade with nothing on our side of it.
-pub fn render_markdown(hl: &Hl, src: &str, tabs: bool) -> String {
-    let options = md_options();
+pub fn render_markdown(hl: &Hl, src: &str, tabs: bool, raw: RawHtml) -> String {
+    let options = md_options(raw);
 
     let adapter = CodeAdapter { hl };
     let mut plugins = Plugins::default();
@@ -785,9 +817,15 @@ mod tests {
     use super::*;
     use crate::hl::Hl;
 
-    /// As a browser gets it: the tabs are the half that only exists there.
+    /// As a browser gets it, for a document on this device: the tabs are the
+    /// half that only exists there, and `Draw` is what a local README gets.
     fn html(src: &str) -> String {
-        render_markdown(&Hl::for_tests(), src, true)
+        render_markdown(&Hl::for_tests(), src, true, RawHtml::Draw)
+    }
+
+    /// The same document, served by a machine somewhere else.
+    fn remote(src: &str) -> String {
+        render_markdown(&Hl::for_tests(), src, true, RawHtml::Show)
     }
 
     /// `unsafe` is on for embedded HTML, and it must not carry the href gate
@@ -821,6 +859,36 @@ mod tests {
         let ordinary = html("![x](shot.png \"A shot\")");
         assert!(ordinary.contains("src=\"shot.png\""), "{ordinary}");
         assert!(ordinary.contains("title=\"A shot\""), "{ordinary}");
+    }
+
+    /// Where a document came from decides whether its markup is drawn at all.
+    ///
+    /// The risk CSP does not cover: `style-src 'unsafe-inline'` is what carries
+    /// our own theme, and it is also enough for a remote README to paint a copy
+    /// of this app's password box over the page that is waiting to connect. No
+    /// script needed, so no CSP to stop it — the markup itself has to go.
+    #[test]
+    fn a_remote_document_shows_its_markup_instead_of_drawing_it() {
+        let phish = "<div style=\"position:fixed;inset:0;background:#fff\">\
+                     <p>Passphrase for iota</p><input type=\"password\"></div>";
+        let drawn = html(phish);
+        assert!(drawn.contains("<input"), "a local document still renders: {drawn}");
+
+        let shown = remote(phish);
+        assert!(!shown.contains("<input"), "{shown}");
+        assert!(!shown.contains("<div style"), "{shown}");
+        // Shown, not swallowed: the reader can see what the file says.
+        assert!(shown.contains("&lt;input"), "{shown}");
+        assert!(shown.contains("Passphrase for iota"), "{shown}");
+
+        // Markdown itself is unaffected either way — this is about the
+        // document's own HTML, not about the renderer's.
+        let md = "# Title\n\nSome *text* and [a link](/a.md).\n";
+        for out in [html(md), remote(md)] {
+            assert!(out.contains("<h1"), "{out}");
+            assert!(out.contains("<em>text</em>"), "{out}");
+            assert!(out.contains("href=\"/a.md\""), "{out}");
+        }
     }
 
     /// Raw HTML the document wrote itself. The scan is not a sanitizer — CSP is
@@ -948,7 +1016,7 @@ mod tests {
         // And not in the shell, which has no tabs and its own way out: a webview
         // hands a request for a window of its own down a different path from a
         // navigation, and the navigation is the one the shell already answers.
-        let shell = render_markdown(&Hl::for_tests(), src, false);
+        let shell = render_markdown(&Hl::for_tests(), src, false, RawHtml::Draw);
         assert!(!shell.contains("_blank"), "{shell}");
         assert!(shell.contains("<a href=\"https://example.com/x\">docs</a>"), "{shell}");
     }

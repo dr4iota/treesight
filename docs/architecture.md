@@ -129,6 +129,17 @@ held to the same rule by the `Content-Security-Policy` every page carries
 (`html_reply`): raw HTML in a rendered document cannot script, whichever
 backend served it.
 
+Script is not the whole of it, though, and the rest is why `md::RawHtml`
+exists. `style-src 'unsafe-inline'` is what lets a page carry its theme, and
+it is also enough for a document to paint a box over the page and dress it as
+the program's own — no script, so no CSP to stop it. A document's own raw HTML
+is therefore *drawn* only where it came off this machine
+(`Vfs::on_this_device`: `LocalFs`, `EmbeddedFs`, and an embedder's own
+device-local backend); from anywhere else the markup is escaped and shown as
+the text it is. The line is the transport, not the bytes — a cloned repository
+is somebody else's text on your own disk — because that is the line a browser
+draws too.
+
 The one piece of page state that is neither a cookie nor a link is the
 narrow-window drawer (≤50rem, where the pane leaves the layout): a checkbox
 that only CSS reads, `#ts-drawer:checked ~ .shell nav.tree`. The sibling
