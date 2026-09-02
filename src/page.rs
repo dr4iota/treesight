@@ -215,13 +215,19 @@ pub fn theme_icon(mode: ThemeMode) -> (&'static str, &'static str) {
 /// One mark, drawn on a 16-unit grid.
 ///
 /// The size here is a presentation attribute and therefore a *fallback*: it is
-/// what a document gets when its stylesheet did not arrive. `--mark` in
+/// what a document gets when its stylesheet did not arrive. `--mark-size` in
 /// `app.css` decides the size everywhere else, and is where to change it.
+///
+/// `class="mark"` is how the stylesheet finds them. It used to name the
+/// containers instead — a dozen selectors, one per place a mark can sit — and
+/// that list was wrong twice over within a day: the two buttons on the start
+/// page were never in it, and neither was the Files heading. A mark's size is a
+/// property of the mark, so it is asked of the mark.
 pub fn svg_icon(paths: &str) -> String {
     format!(
-        "<svg viewBox=\"0 0 16 16\" width=\"14\" height=\"14\" fill=\"none\" stroke=\"currentColor\" \
-         stroke-width=\"1.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" \
-         aria-hidden=\"true\">{paths}</svg>"
+        "<svg class=\"mark\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\" fill=\"none\" \
+         stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\" \
+         stroke-linejoin=\"round\" aria-hidden=\"true\">{paths}</svg>"
     )
 }
 

@@ -232,11 +232,9 @@ header > .tag { order: 0; flex: 0 0 auto; }
    beside 15px text and a 16.8px twisty. They read as smaller than everything
    around them because they were.
 
-   Set here rather than on each `<svg>`: `svg_icon` in `page.rs` writes a size
-   as a presentation attribute, which is the fallback for a document whose
-   stylesheet did not arrive, and CSS wins wherever it did. Touch keeps its own
-   22 and 24 further down — those rules are more specific and are sized for a
-   fingertip rather than for a line of text. */
+   `svg_icon` in `page.rs` writes a size as a presentation attribute too, which
+   is the fallback for a document whose stylesheet did not arrive; CSS wins
+   wherever it did. */
 /* `--mark-size` and not `--mark`: that name was taken, by the markdown
    highlight colour at the top of this file, and taking it back cost both. In
    light the size won on source order and `background: 18px` is not a colour, so
@@ -245,21 +243,17 @@ header > .tag { order: 0; flex: 0 0 auto; }
    the marks stayed 14px and this whole rule did nothing. One name, two types,
    and each theme picked a different one to break. */
 :root { --mark-size: 18px; }
-.ico svg,
-.icon svg,
-.back svg,
-.up svg,
-.paneflag svg,
-.drawer-btn svg,
-.controls a svg,
-.controls span.ctl svg,
-.controls button svg,
-footer a.pick svg,
-nav.tree a.asroot svg,
-nav.tree .chooser a.aside svg,
-nav.tree section h2 a.secact svg,
-body.nothing .start h2 a.secact svg,
-body.nothing .start .row > a.aside svg {
+/* Asked of the mark, not of the place it sits in.
+   This was a list of a dozen container selectors — `.ico svg`, `.icon svg`,
+   `nav.tree a.asroot svg`, and so on — and the list was wrong twice over inside
+   a day: `a.open`, which is both buttons on the start page, was never in it, and
+   nor was the Files heading's own pin and close. Every one of these comes out of
+   `svg_icon`, which labels them, so one selector reaches all of them and there
+   is no list left to keep in step.
+   Touch keeps its own 22 and 24 below: those rules name containers on purpose,
+   are more specific, and are sized for a fingertip rather than for a line of
+   text. */
+svg.mark {
   width: var(--mark-size);
   height: var(--mark-size);
 }
