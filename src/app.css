@@ -237,7 +237,14 @@ header > .tag { order: 0; flex: 0 0 auto; }
    stylesheet did not arrive, and CSS wins wherever it did. Touch keeps its own
    22 and 24 further down — those rules are more specific and are sized for a
    fingertip rather than for a line of text. */
-:root { --mark: 18px; }
+/* `--mark-size` and not `--mark`: that name was taken, by the markdown
+   highlight colour at the top of this file, and taking it back cost both. In
+   light the size won on source order and `background: 18px` is not a colour, so
+   highlights went; in dark the colour won on specificity — it is set under
+   `:root:not([data-theme="light"])` — and `width: #5a4a00` is not a length, so
+   the marks stayed 14px and this whole rule did nothing. One name, two types,
+   and each theme picked a different one to break. */
+:root { --mark-size: 18px; }
 .ico svg,
 .icon svg,
 .back svg,
@@ -253,8 +260,8 @@ nav.tree .chooser a.aside svg,
 nav.tree section h2 a.secact svg,
 body.nothing .start h2 a.secact svg,
 body.nothing .start .row > a.aside svg {
-  width: var(--mark);
-  height: var(--mark);
+  width: var(--mark-size);
+  height: var(--mark-size);
 }
 .back, .up, .paneflag, .controls a, .controls span.ctl, footer a.pick {
   display: var(--ctl-display, inline);

@@ -556,6 +556,12 @@ fn ask_for_folder(app: AppHandle, exit_if_cancelled: bool) {
             if let Some(last) = start {
                 dialog = dialog.set_directory(last);
             }
+            // Parented like every other dialog here: a picker with no parent is
+            // a window of its own for the compositor to place, and it can land
+            // behind the one that asked for it.
+            if let Some(win) = back.get_webview_window(WINDOW) {
+                dialog = dialog.set_parent(&win);
+            }
             let app = back.clone();
             dialog.pick_folder(move |picked| match picked {
                 Some(path) => match path.into_path() {
@@ -1540,11 +1546,11 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
         return;
     };
     let Ok(target) = treeserve::resolve_in_root(root.vfs.as_ref(), url.path()) else {
-        say(app, &format!("{} is not in this folder.", url.path()));
+        fail(app, &format!("{} is not in this folder.", url.path()), false);
         return;
     };
     if !root.vfs.metadata(&target.path).map(|m| m.is_file).unwrap_or(false) {
-        say(app, &format!("{} is not a file to save.", url.path()));
+        fail(app, &format!("{} is not a file to save.", url.path()), false);
         return;
     }
     // The save sheet on a phone hands back a `content://` URI, and the copy
@@ -1600,7 +1606,7 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
             let mode = vfs.metadata(&src).ok().and_then(|m| m.mode).map(|m| m & 0o666);
             let copied = copy_bounded(&vfs, &src, &dest);
             match copied {
-                Err(e) => say(&app, &format!("Could not save {}: {e}", dest.display())),
+                Err(e) => fail(&app, &format!("Could not save {}: {e}", dest.display()), false),
                 Ok(_) => {
                     #[cfg(unix)]
                     if let Some(mode) = mode {
@@ -1699,7 +1705,7 @@ fn copy_bounded(
 #[cfg(mobile)]
 fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeserve::Root) {
     let Some(dir) = app_storage_dir(app) else {
-        say(app, "This device gave the app no storage to save into.");
+        fail(app, "This device gave the app no storage to save into.", false);
         return;
     };
     let name = target.rel.last().cloned().unwrap_or_else(|| "download".into());
@@ -1710,7 +1716,7 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
     thread::spawn(move || {
         let copied = copy_bounded(&vfs, &src, &dest);
         match copied {
-            Ok(_) => say_ok(
+            Ok(_) => notify(
                 &app,
                 &format!(
                     "Saved to Files as {}",
@@ -1718,7 +1724,7 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
                 ),
             ),
             // `copy_bounded` has already removed the partial.
-            Err(e) => say(&app, &format!("Could not save {name}: {e}")),
+            Err(e) => fail(&app, &format!("Could not save {name}: {e}"), false),
         }
     });
 }
@@ -1745,21 +1751,6 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
         }
     }
     taken
-}
-
-/// The other half of [`say`], for something that went right.
-#[cfg(mobile)]
-fn say_ok(app: &AppHandle, msg: &str) {
-    let back = app.clone();
-    let msg = msg.to_string();
-    let _ = app.run_on_main_thread(move || notify(&back, &msg));
-}
-
-/// A dialog from a thread: the window's own is the main thread's to open.
-fn say(app: &AppHandle, msg: &str) {
-    let back = app.clone();
-    let msg = msg.to_string();
-    let _ = app.run_on_main_thread(move || fail(&back, &msg, false));
 }
 
 /// Minimal percent-decoding for a single URL path segment.
@@ -2190,26 +2181,42 @@ fn origin_allowed(allowed: &[String], url: &tauri::Url) -> bool {
 
 /// Says something happened, for actions with no visible result of their own.
 fn notify(app: &AppHandle, msg: &str) {
-    app.dialog()
-        .message(msg)
-        .kind(MessageDialogKind::Info)
-        .title("treesight")
-        .show(|_| {});
+    raise(app, msg, MessageDialogKind::Info, false);
 }
 
 /// Reports a problem in a native dialog, since a GUI build has nowhere to print.
 fn fail(app: &AppHandle, msg: &str, fatal: bool) {
+    raise(app, msg, MessageDialogKind::Error, fatal);
+}
+
+/// Every dialog this shell raises: on the thread that may raise one, and
+/// parented to the window it is about.
+///
+/// Neither half was here. An unparented dialog on a desktop is a window in its
+/// own right — the compositor places it, and "wherever it likes" includes behind
+/// the window that raised it, which leaves a page that will not respond and
+/// nothing on screen saying why. And these are reached from webview callbacks —
+/// a finished download reports from `on_download` — so the hop belongs here
+/// rather than at each call site, which is where it kept being forgotten.
+fn raise(app: &AppHandle, msg: &str, kind: MessageDialogKind, fatal: bool) {
     let app = app.clone();
     let msg = msg.to_string();
-    app.dialog()
-        .message(msg)
-        .kind(MessageDialogKind::Error)
-        .title("treesight")
-        .show(move |_| {
+    let _ = app.clone().run_on_main_thread(move || {
+        #[cfg_attr(mobile, allow(unused_mut))]
+        let mut dialog = app.dialog().message(msg).kind(kind).title("treesight");
+        // No `parent` on the builder on mobile, where a dialog belongs to the
+        // one activity and has nothing to get lost behind.
+        #[cfg(desktop)]
+        if let Some(win) = app.get_webview_window(WINDOW) {
+            dialog = dialog.parent(&win);
+        }
+        let back = app.clone();
+        dialog.show(move |_| {
             if fatal {
-                app.exit(1);
+                back.exit(1);
             }
         });
+    });
 }
 
 fn recent_file(app: &AppHandle) -> Option<PathBuf> {

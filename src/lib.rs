@@ -1442,3 +1442,92 @@ mod tests {
         assert!(!root_id_is_local("ssh2:x:/y"));
     }
 }
+
+#[cfg(test)]
+mod css_names {
+    /// A custom property means one kind of thing, everywhere it is set.
+    ///
+    /// `--mark` was the markdown highlight colour, and a later rule reused the
+    /// name for an 18px icon size. Nothing failed and nothing warned: each theme
+    /// simply picked a different winner and dropped the other declaration on the
+    /// floor. Light took the size on source order, so `background: 18px` was not
+    /// a colour and highlights went; dark took the colour on specificity, so
+    /// `width: #5a4a00` was not a length and the icons never grew. A stylesheet
+    /// this size cannot be held in one head, and the compiler does not read it,
+    /// so the invariant is asserted instead.
+    #[test]
+    fn a_custom_property_is_one_kind_of_value() {
+        #[derive(PartialEq, Debug)]
+        enum Kind {
+            Colour,
+            Length,
+            Other,
+        }
+        fn kind(v: &str) -> Kind {
+            let v = v.trim();
+            if v.starts_with('#') || v.starts_with("rgb") || v.starts_with("hsl") {
+                return Kind::Colour;
+            }
+            // A bare number with a unit. `calc(...)` and `var(...)` are neither,
+            // and land in `Other` with the keywords.
+            let numeric = v.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%');
+            match !numeric.is_empty()
+                && numeric.len() < v.len()
+                && numeric.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+            {
+                true => Kind::Length,
+                false => Kind::Other,
+            }
+        }
+
+        // Comments first, or the prose in them parses as declarations — this
+        // file explains its own custom properties by name.
+        let mut css = String::with_capacity(super::APP_CSS.len());
+        let mut rest = super::APP_CSS;
+        while let Some(open) = rest.find("/*") {
+            css.push_str(&rest[..open]);
+            match rest[open..].find("*/") {
+                Some(close) => rest = &rest[open + close + 2..],
+                None => {
+                    rest = "";
+                    break;
+                }
+            }
+        }
+        css.push_str(rest);
+
+        // A declaration is whatever sits between the punctuation, wherever it
+        // sits — `:root { --mark: 18px; }` is one line, and that is the line the
+        // first version of this test skipped.
+        let mut seen: std::collections::BTreeMap<String, (Kind, String)> =
+            std::collections::BTreeMap::new();
+        for chunk in css.split([';', '{', '}', '\n']) {
+            let chunk = chunk.trim();
+            let Some(rest) = chunk.strip_prefix("--") else {
+                continue;
+            };
+            let Some((name, value)) = rest.split_once(':') else {
+                continue;
+            };
+            let (name, value) = (name.trim(), value.trim());
+            if name.is_empty() || name.contains(char::is_whitespace) {
+                continue;
+            }
+            let this = kind(value);
+            if this == Kind::Other {
+                continue;
+            }
+            match seen.get(name) {
+                Some((was, first)) if *was != this => panic!(
+                    "--{name} is set as {was:?} (`{first}`) and as {this:?} (`{value}`); \
+                     one name, one kind — see the note beside `--mark-size`"
+                ),
+                Some(_) => {}
+                None => {
+                    seen.insert(name.to_string(), (this, value.to_string()));
+                }
+            }
+        }
+        assert!(seen.len() > 10, "the sheet's properties were not found at all");
+    }
+}
