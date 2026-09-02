@@ -1624,10 +1624,15 @@ const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// stream is bounded too, and a file that turns out to be longer than it claimed
 /// fails like any other.
 ///
-/// A failure removes what was written. Note what that cannot undo: `File::create`
-/// truncates, so overwriting an existing file has already destroyed it by the
-/// time the first byte arrives. Writing beside the target and renaming is the fix
-/// for that, and it is a different change from this one.
+/// Written beside the target and renamed onto it, so the file at `dest` is
+/// either the one that was there before or the whole of the new one. A copy that
+/// wrote straight to `dest` destroyed an existing file at `File::create` — before
+/// a single byte of the replacement had arrived — and a network that dropped
+/// half way then left a truncated file wearing the name of a good one.
+///
+/// The part file sits in the same directory, which is what makes the rename a
+/// rename rather than a second copy, and carries the target's name so a stray one
+/// says what it was going to be.
 fn copy_bounded(
     vfs: &Arc<dyn treeserve::Vfs>,
     src: &treeserve::VfsPath,
@@ -1640,20 +1645,37 @@ fn copy_bounded(
             "it is {len} bytes, past the {MAX_DOWNLOAD_BYTES}-byte limit on one download"
         )));
     }
+    let mut part = dest.as_os_str().to_os_string();
+    part.push(".part");
+    let part = PathBuf::from(part);
     let copy = || -> io::Result<u64> {
         use std::io::Read;
         let mut from = vfs.open(src)?.take(MAX_DOWNLOAD_BYTES + 1);
-        let mut to = fs::File::create(dest)?;
+        // `create_new` so two writers cannot share one path, but a part file
+        // left behind by a crash must not wedge every later save: it is ours,
+        // and a leftover one is garbage by definition, so it is removed and the
+        // create tried once more.
+        let mut to = match fs::File::options().write(true).create_new(true).open(&part) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                fs::remove_file(&part)?;
+                fs::File::options().write(true).create_new(true).open(&part)?
+            }
+            other => other?,
+        };
         let copied = io::copy(&mut from, &mut to)?;
         if copied > MAX_DOWNLOAD_BYTES {
             return Err(io::Error::other(format!(
                 "it is past the {MAX_DOWNLOAD_BYTES}-byte limit on one download"
             )));
         }
+        // Flushed before the rename: the name is the promise that the bytes are
+        // there, and on a crash between the two it should not be a lie.
+        to.sync_all()?;
+        fs::rename(&part, dest)?;
         Ok(copied)
     };
     copy().inspect_err(|_| {
-        let _ = fs::remove_file(dest);
+        let _ = fs::remove_file(&part);
     })
 }
 
