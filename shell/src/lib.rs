@@ -1587,9 +1587,7 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
             // reader is browsing, and a download that is silently runnable
             // because the far end said `0755` is a trap a browser would not set.
             let mode = vfs.metadata(&src).ok().and_then(|m| m.mode).map(|m| m & 0o666);
-            let copied = vfs.open(&src).and_then(|mut from| {
-                fs::File::create(&dest).and_then(|mut to| io::copy(&mut from, &mut to))
-            });
+            let copied = copy_bounded(&vfs, &src, &dest);
             match copied {
                 Err(e) => say(&app, &format!("Could not save {}: {e}", dest.display())),
                 Ok(_) => {
@@ -1605,6 +1603,58 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
         });
     });
     }
+}
+
+/// The most one Download will write.
+///
+/// `Vfs::open_limit` is the wrong bound for this: that is what a backend can
+/// hand over *in one piece*, and the backend that most needs a ceiling — a
+/// stream it can seek, over a network — correctly has no such limit at all. What
+/// is finite is the device. A `?dl=1` on a multi-gigabyte file, in a link that
+/// came from the very machine being browsed, would otherwise fill the disk with
+/// no button having offered it.
+const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Copies one file out of a backend, bounded, leaving no partial behind.
+///
+/// The size is asked for first so the ordinary refusal is cheap: a length the
+/// backend already knows is a sentence, not two gigabytes of writing followed by
+/// one. It is not *trusted*, though — a remote file can grow between the stat
+/// and the read, and a backend is free to say nothing about size at all — so the
+/// stream is bounded too, and a file that turns out to be longer than it claimed
+/// fails like any other.
+///
+/// A failure removes what was written. Note what that cannot undo: `File::create`
+/// truncates, so overwriting an existing file has already destroyed it by the
+/// time the first byte arrives. Writing beside the target and renaming is the fix
+/// for that, and it is a different change from this one.
+fn copy_bounded(
+    vfs: &Arc<dyn treeserve::Vfs>,
+    src: &treeserve::VfsPath,
+    dest: &Path,
+) -> io::Result<u64> {
+    if let Some(len) = vfs.metadata(src).ok().map(|m| m.len)
+        && len > MAX_DOWNLOAD_BYTES
+    {
+        return Err(io::Error::other(format!(
+            "it is {len} bytes, past the {MAX_DOWNLOAD_BYTES}-byte limit on one download"
+        )));
+    }
+    let copy = || -> io::Result<u64> {
+        use std::io::Read;
+        let mut from = vfs.open(src)?.take(MAX_DOWNLOAD_BYTES + 1);
+        let mut to = fs::File::create(dest)?;
+        let copied = io::copy(&mut from, &mut to)?;
+        if copied > MAX_DOWNLOAD_BYTES {
+            return Err(io::Error::other(format!(
+                "it is past the {MAX_DOWNLOAD_BYTES}-byte limit on one download"
+            )));
+        }
+        Ok(copied)
+    };
+    copy().inspect_err(|_| {
+        let _ = fs::remove_file(dest);
+    })
 }
 
 /// The phone's Download: a copy into Files, under the name it already has.
@@ -1625,9 +1675,7 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
     let src = target.path.clone();
     let app = app.clone();
     thread::spawn(move || {
-        let copied = vfs.open(&src).and_then(|mut from| {
-            fs::File::create(&dest).and_then(|mut to| io::copy(&mut from, &mut to))
-        });
+        let copied = copy_bounded(&vfs, &src, &dest);
         match copied {
             Ok(_) => say_ok(
                 &app,
@@ -1636,10 +1684,8 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
                     dest.file_name().unwrap_or_default().to_string_lossy()
                 ),
             ),
-            Err(e) => {
-                let _ = fs::remove_file(&dest);
-                say(&app, &format!("Could not save {name}: {e}"));
-            }
+            // `copy_bounded` has already removed the partial.
+            Err(e) => say(&app, &format!("Could not save {name}: {e}")),
         }
     });
 }
