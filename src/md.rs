@@ -206,6 +206,112 @@ fn render_mermaid_nodes<'a>(root: Node<'a>) {
     }
 }
 
+/// Empties any attribute value in the document's own raw HTML that comrak would
+/// refuse as a URL.
+///
+/// Markdown's links and images are gated where they are written (see the `Links`
+/// formatter). Raw HTML is not written by this renderer at all — `unsafe` is on,
+/// so `<a href="javascript:…">` reaches the page as the author typed it — and
+/// GFM's tagfilter only neutralizes tag *names*, never attributes.
+///
+/// **What this is, and is not.** It is the same refusal the link gate makes,
+/// applied one level down, so a document cannot carry a `javascript:` href past
+/// a renderer that refuses one in markdown. It is *not* an HTML sanitizer and
+/// must not be read as a boundary: an entity-encoded scheme, a `srcdoc`, an
+/// `onclick`, all pass through untouched. What keeps those inert is the pages'
+/// Content-Security-Policy, which is still the only boundary here.
+fn scrub_raw_html_urls<'a>(root: Node<'a>) {
+    let mut edits: Vec<(Node<'a>, String)> = Vec::new();
+    for node in root.descendants() {
+        let clean = match &node.data().value {
+            NodeValue::HtmlBlock(block) => without_dangerous_attrs(&block.literal),
+            NodeValue::HtmlInline(literal) => without_dangerous_attrs(literal),
+            _ => None,
+        };
+        if let Some(clean) = clean {
+            edits.push((node, clean));
+        }
+    }
+    for (node, clean) in edits {
+        match &mut node.data_mut().value {
+            NodeValue::HtmlBlock(block) => block.literal = clean,
+            NodeValue::HtmlInline(literal) => *literal = clean,
+            _ => (),
+        }
+    }
+}
+
+/// The rewrite, or `None` when there was nothing to rewrite.
+///
+/// A scan and not a parse: inside a tag, an attribute value is whatever follows
+/// `=` — quoted or bare — and a value is emptied when [`dangerous_url`] says so.
+/// Anchored at the start of the value, which is where a scheme has to be, so
+/// `title="mind javascript: urls"` is prose and stays prose.
+fn without_dangerous_attrs(raw: &str) -> Option<String> {
+    let b = raw.as_bytes();
+    // The value spans to drop, in order. Collected first and applied after, so
+    // the scan stays a scan and the string is built once.
+    let mut refused: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    let mut in_tag = false;
+    while i < b.len() {
+        if !in_tag {
+            // A tag opens at `<` followed by a name or a slash. A bare `<` in
+            // text is text, which is how a browser reads it too.
+            in_tag = b[i] == b'<'
+                && b.get(i + 1)
+                    .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'/');
+            i += 1;
+            continue;
+        }
+        if b[i] == b'>' {
+            in_tag = false;
+            i += 1;
+            continue;
+        }
+        if b[i] != b'=' {
+            i += 1;
+            continue;
+        }
+        let mut value = i + 1;
+        while b.get(value).is_some_and(|c| c.is_ascii_whitespace()) {
+            value += 1;
+        }
+        let quote = matches!(b.get(value), Some(b'"' | b'\''));
+        let end = match quote {
+            true => {
+                let q = b[value];
+                value += 1;
+                value + b[value..].iter().position(|&c| c == q).unwrap_or(0)
+            }
+            false => {
+                value
+                    + b[value..]
+                        .iter()
+                        .position(|&c| c.is_ascii_whitespace() || c == b'>')
+                        .unwrap_or(b.len() - value)
+            }
+        };
+        // A browser strips leading control characters and whitespace before it
+        // reads the scheme, so the gate is asked about the same thing it would.
+        if end > value && dangerous_url(raw[value..end].trim()) {
+            refused.push((value, end));
+        }
+        i = end;
+    }
+    if refused.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut copied = 0;
+    for (from, to) in refused {
+        out.push_str(&raw[copied..from]);
+        copied = to;
+    }
+    out.push_str(&raw[copied..]);
+    Some(out)
+}
+
 /// Light and dark SVG for a standalone mermaid source (a `.mmd` file, or the
 /// body of a fence).
 pub fn render_mermaid_figure(src: &str) -> String {
@@ -562,6 +668,7 @@ pub fn render_markdown(hl: &Hl, src: &str, tabs: bool) -> String {
     let root = parse_document(&arena, &src, &options);
     render_math_nodes(root);
     render_mermaid_nodes(root);
+    scrub_raw_html_urls(root);
 
     let mut out = String::with_capacity(src.len() * 3 / 2);
     match Links::format_document_with_plugins(root, &options, &mut out, &plugins, tabs) {
@@ -643,6 +750,34 @@ create_formatter!(Links<bool>, {
         }
         context.write_str(">")?;
     },
+    // The same gate, for the other thing markdown writes a URL into. Comrak's
+    // own image renderer skips it under `unsafe` exactly as its link renderer
+    // does, and an image is not a milder case: `<img src="javascript:…">` is
+    // inert in a browser, but the src is also what an `onerror` would carry and
+    // what a `data:text/html` would navigate to. No document has a legitimate
+    // one, so the gate holds whatever `unsafe` says.
+    //
+    // Byte-for-byte comrak's `render_image` otherwise, minus `figure_with_caption`
+    // — an option this renderer does not set. `Plain` is what makes the children
+    // the alt text rather than markup.
+    NodeValue::Image(ref nl) => |context, node, entering| {
+        if !entering {
+            if !nl.title.is_empty() {
+                context.write_str("\" title=\"")?;
+                context.escape(&nl.title)?;
+            }
+            context.write_str("\" />")?;
+            return Ok(ChildRendering::HTML);
+        }
+        context.write_str("<img")?;
+        render_sourcepos(context, node)?;
+        context.write_str(" src=\"")?;
+        if !dangerous_url(&nl.url) {
+            context.escape_href(&nl.url)?;
+        }
+        context.write_str("\" alt=\"")?;
+        return Ok(ChildRendering::Plain);
+    },
 });
 
 #[cfg(test)]
@@ -666,6 +801,58 @@ mod tests {
         assert!(out.contains("<a"), "{out}");
         // And an ordinary link is untouched.
         assert!(html("[y](/docs/a.md)").contains("href=\"/docs/a.md\""));
+    }
+
+    /// An image is the other place markdown writes a URL, and comrak skips the
+    /// gate there under `unsafe` for the same reason it does for links.
+    #[test]
+    fn a_dangerous_image_src_is_dropped_too() {
+        let out = html("![x](javascript:alert(1))");
+        assert!(!out.to_lowercase().contains("javascript:"), "{out}");
+        assert!(out.contains("<img"), "the picture is still a picture: {out}");
+        assert!(out.contains("alt=\"x\""), "{out}");
+        // `data:text/html` is a document, not a picture, and GFM refuses it.
+        let doc = html("![x](data:text/html;base64,PHNjcmlwdD4=)");
+        assert!(!doc.contains("text/html"), "{doc}");
+        // The inline PNG a README legitimately carries is still drawn, and so
+        // is an ordinary path, title and all.
+        let png = html("![x](data:image/png;base64,iVBORw0KGgo=)");
+        assert!(png.contains("data:image/png;base64,iVBORw0KGgo="), "{png}");
+        let ordinary = html("![x](shot.png \"A shot\")");
+        assert!(ordinary.contains("src=\"shot.png\""), "{ordinary}");
+        assert!(ordinary.contains("title=\"A shot\""), "{ordinary}");
+    }
+
+    /// Raw HTML the document wrote itself. The scan is not a sanitizer — CSP is
+    /// the boundary — but a `javascript:` href must not pass a renderer that
+    /// refuses one in markdown.
+    #[test]
+    fn a_dangerous_url_in_raw_html_is_emptied() {
+        for src in [
+            "<a href=\"javascript:alert(1)\">x</a>",
+            "<a href='javascript:alert(1)'>x</a>",
+            "<a href=javascript:alert(1)>x</a>",
+            "<a\n   href=\"  javascript:alert(1)\">x</a>",
+            "<div>\n<img src=\"javascript:alert(1)\">\n</div>",
+        ] {
+            let out = html(src);
+            assert!(!out.to_lowercase().contains("javascript:"), "{src} -> {out}");
+            assert!(out.contains("<a") || out.contains("<img"), "{src} -> {out}");
+        }
+
+        // What must survive: ordinary attributes, an inline PNG, and prose that
+        // merely mentions a scheme — the gate is anchored at the value's start.
+        let kept = html(
+            "<a href=\"/docs/a.md\" title=\"mind javascript: urls\" class=\"x\">a</a>\n             <img src=\"data:image/png;base64,iVBORw0KGgo=\" alt=\"y\">\n             <p>Write javascript: and nothing happens.</p>",
+        );
+        assert!(kept.contains("href=\"/docs/a.md\""), "{kept}");
+        assert!(kept.contains("title=\"mind javascript: urls\""), "{kept}");
+        assert!(kept.contains("data:image/png;base64,iVBORw0KGgo="), "{kept}");
+        assert!(kept.contains("Write javascript: and nothing happens."), "{kept}");
+
+        // And the tag filter still does its own job on top.
+        let filtered = html("<script>alert(1)</script>");
+        assert!(!filtered.contains("<script"), "{filtered}");
     }
 
     #[test]
