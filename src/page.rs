@@ -212,6 +212,11 @@ pub fn theme_icon(mode: ThemeMode) -> (&'static str, &'static str) {
     }
 }
 
+/// One mark, drawn on a 16-unit grid.
+///
+/// The size here is a presentation attribute and therefore a *fallback*: it is
+/// what a document gets when its stylesheet did not arrive. `--mark` in
+/// `app.css` decides the size everywhere else, and is where to change it.
 pub fn svg_icon(paths: &str) -> String {
     format!(
         "<svg viewBox=\"0 0 16 16\" width=\"14\" height=\"14\" fill=\"none\" stroke=\"currentColor\" \

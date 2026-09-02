@@ -214,6 +214,48 @@ header > .tag { order: 0; flex: 0 0 auto; }
    resting values differ and only the icon form is shared. */
 .lbl { display: var(--lbl, inline); }
 .ico { display: var(--ico, none); }
+/* How big a drawn mark is, in one place.
+
+   Eighteen pixels, and the number is not a taste: a pill's word form is
+   `.8rem` of text at `line-height: 1.4`, which reserves 17.92px, so a mark of
+   that size is a mark the containers already have room for. Nothing grows —
+   not a listing row (a 22.5px line box, and `.icon svg` sits 3px below the
+   baseline, so 15px of the mark is above it), not a pane row (`.85rem` at 1.5
+   is 20.4px and the row is a flex box), not a control on our own pages (the
+   svg is `display: block` in a flex button whose label already claims 17.92px).
+   The header even stops changing height when it flips between words and marks,
+   which it did before: the mark form was the shorter of the two.
+
+   The marks were 14px in a `0 0 16 16` viewBox, and most of the artwork sits
+   well inside that box — the arrow spans ten of the sixteen units, the close
+   cross seven — so what reached the screen was eight or nine pixels of glyph
+   beside 15px text and a 16.8px twisty. They read as smaller than everything
+   around them because they were.
+
+   Set here rather than on each `<svg>`: `svg_icon` in `page.rs` writes a size
+   as a presentation attribute, which is the fallback for a document whose
+   stylesheet did not arrive, and CSS wins wherever it did. Touch keeps its own
+   22 and 24 further down — those rules are more specific and are sized for a
+   fingertip rather than for a line of text. */
+:root { --mark: 18px; }
+.ico svg,
+.icon svg,
+.back svg,
+.up svg,
+.paneflag svg,
+.drawer-btn svg,
+.controls a svg,
+.controls span.ctl svg,
+.controls button svg,
+footer a.pick svg,
+nav.tree a.asroot svg,
+nav.tree .chooser a.aside svg,
+nav.tree section h2 a.secact svg,
+body.nothing .start h2 a.secact svg,
+body.nothing .start .row > a.aside svg {
+  width: var(--mark);
+  height: var(--mark);
+}
 .back, .up, .paneflag, .controls a, .controls span.ctl, footer a.pick {
   display: var(--ctl-display, inline);
   align-items: center;
