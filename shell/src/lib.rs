@@ -1576,16 +1576,31 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
     #[cfg(desktop)]
     {
     let app = app.clone();
-    let mut dialog = app
+    // Everything the dialog needs, worked out here — on the thread `save_as`
+    // spawned. `download_dir` goes through the path API and the name comes off
+    // the target, and neither belongs on the thread that answers clicks; only
+    // the dialog itself is dispatched back, the way `ask_for_folder` does it.
+    let name = target.rel.last().cloned().unwrap_or_default();
+    let start = app.path().download_dir().ok();
+    let vfs = Arc::clone(&root.vfs);
+    let src = target.path;
+    let back = app.clone();
+    let _ = app.run_on_main_thread(move || {
+    let app = back.clone();
+    let mut dialog = back
         .dialog()
         .file()
         .set_title("Save file")
-        .set_file_name(target.rel.last().cloned().unwrap_or_default());
-    if let Ok(dir) = app.path().download_dir() {
+        .set_file_name(name);
+    if let Some(dir) = start {
         dialog = dialog.set_directory(dir);
     }
-    let vfs = Arc::clone(&root.vfs);
-    let src = target.path;
+    // Parented, like every other dialog this shell raises: without it the sheet
+    // is a window of its own for the compositor to place, and it can land behind
+    // the one that asked for it.
+    if let Some(win) = back.get_webview_window(WINDOW) {
+        dialog = dialog.set_parent(&win);
+    }
     dialog.save_file(move |dest| {
         let Some(dest) = dest.and_then(|d| d.into_path().ok()) else {
             return; // cancelled
@@ -1618,6 +1633,7 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
                 }
             }
         });
+    });
     });
     }
 }
