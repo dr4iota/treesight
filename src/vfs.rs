@@ -268,8 +268,21 @@ impl Vfs for LocalFs {
         Ok(out)
     }
 
+    /// Bounded, the way `DocumentFs` and `SftpFs` are.
+    ///
+    /// Callers already ask only for files they have measured, so nothing today
+    /// reaches this with a large one — but "the caller checked" is the kind of
+    /// invariant that holds until a new caller does not, and this one is a whole
+    /// file into memory on a machine that may be a phone. One byte past the cap
+    /// is enough to tell the difference between a file that fits and one that
+    /// does not, which is the answer `read`'s callers want anyway.
     fn read(&self, path: &VfsPath) -> io::Result<Vec<u8>> {
-        fs::read(self.host(path))
+        use std::io::Read;
+        let mut out = Vec::new();
+        fs::File::open(self.host(path))?
+            .take(crate::util::MAX_HIGHLIGHT_BYTES + 1)
+            .read_to_end(&mut out)?;
+        Ok(out)
     }
 
     fn open(&self, path: &VfsPath) -> io::Result<Box<dyn ReadSeek>> {
