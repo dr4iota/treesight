@@ -709,7 +709,18 @@ fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: b
         // opener is about to do something slow on this thread, which is the
         // other half of why it is here.
         let previous = show_waiting(&app, &opener.label(&app, &id));
-        let opened = opener.open(&app, &id);
+        // An embedder's opener is somebody else's code doing something slow —
+        // a network dial, a platform picker — and a panic in it used to leave
+        // the window on the wait page for the rest of the session, with the
+        // generation counter stopping a *later* open from being stranded but
+        // never this one. Caught here so the failure is a page that comes back.
+        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            opener.open(&app, &id)
+        }))
+        .unwrap_or_else(|_| {
+            eprintln!("treesight: the opener for {id} panicked");
+            None
+        });
         let back = app.clone();
         // Windows and server state are the main thread's to touch.
         let _ = app.run_on_main_thread(move || {
