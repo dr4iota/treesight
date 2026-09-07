@@ -191,7 +191,11 @@ header > .tag { order: 0; flex: 0 0 auto; }
 }
 .crumbs .sep { color: var(--muted); margin: 0 .15rem; }
 .controls { display: flex; gap: .35rem; flex-wrap: wrap; }
-.controls a, .controls span.ctl {
+/* `button` is one of these too. The shell's own controls are anchors and spans,
+   so this list was written for those — and every page that had a *button* in its
+   header reinvented the pill instead, each one slightly differently and each one
+   smaller than the real thing. A pill is a shape, not an element. */
+.controls a, .controls span.ctl, .controls button {
   font-size: .8rem;
   padding: var(--pill-pad, .15rem .55rem);
   border: 1px solid var(--border);
@@ -200,7 +204,7 @@ header > .tag { order: 0; flex: 0 0 auto; }
   white-space: nowrap;
 }
 @media (hover: hover) {
-  .controls a:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
+  .controls a:hover, .controls button:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
 }
 /* Each flag carries a symbol as well as its words, and drops the words when
    the header runs out of room. Deliberately not emoji: those are colour glyphs
@@ -273,7 +277,7 @@ svg.mark {
   width: var(--mark-size);
   height: var(--mark-size);
 }
-.back, .up, .paneflag, .controls a, .controls span.ctl, footer a.pick {
+.back, .up, .paneflag, .controls a, .controls span.ctl, .controls button, footer a.pick {
   display: var(--ctl-display, inline);
   align-items: center;
   justify-content: center;
@@ -1292,6 +1296,7 @@ body.nothing .start h2 a.secact {
 .back,
 .up,
 .controls a,
+.controls button,
 .controls span.ctl,
 footer a.pick {
     display: inline-flex;
@@ -1323,6 +1328,7 @@ footer a.pick {
 .back svg,
 .up svg,
 .controls a svg,
+.controls button svg,
 .controls span.ctl svg,
 footer a.pick svg {
     width: 24px;
