@@ -2143,20 +2143,34 @@ mod tests {
         let block = &sheet[at..at + sheet[at..].find("\n}").unwrap_or(0)];
         assert!(block.contains(".paneflag { display: none; }"), "{block}");
 
-        // And neither control's touch sizing may out-rank that swap. These two
-        // once shared the unscoped touch list, whose `display` beat both swap
-        // rules on specificity — a phone drew both controls, a tablet a drawer
-        // button with no drawer behind it. So the button's touch box lives only
-        // inside a pane's-width block, and the switch's only above that width.
-        for (i, _) in sheet.match_indices("html[data-touch] .drawer-btn") {
+        // And neither control's sizing may out-rank that swap. These two once
+        // shared one unscoped list, whose `display` beat both swap rules on
+        // specificity — a phone drew both controls, a tablet a drawer button
+        // with no drawer behind it. The sizing is no longer gated on a pointer,
+        // which makes it *less* specific than it was and the containment more
+        // load-bearing, not less: the button's box lives only inside a
+        // pane's-width block and the switch's only above that width, and at
+        // equal specificity the later rule is the one that wins.
+        let sized = |what: &str| {
+            sheet
+                .match_indices(what)
+                .filter(|(i, _)| sheet[*i..].starts_with(&format!("{what} {{\n    ")))
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+        // A matcher that finds nothing passes every assertion under it, which is
+        // the way this check would rot without saying so.
+        assert!(!sized(".drawer-btn").is_empty(), "the drawer button's sizing rule moved");
+        assert!(!sized(".paneflag").is_empty(), "the pane switch's sizing rule moved");
+        for i in sized(".drawer-btn") {
             let open = sheet[..i].rfind("@media (max-width: 50rem)");
             let shut = sheet[..i].rfind("\n}");
-            assert!(open > shut, "a drawer-btn touch rule the width swap cannot beat: {}", &sheet[i..i + 80]);
+            assert!(open > shut, "a drawer-btn sizing rule the width swap cannot beat: {}", &sheet[i..i + 80]);
         }
-        for (i, _) in sheet.match_indices("html[data-touch] .paneflag") {
+        for i in sized(".paneflag") {
             let open = sheet[..i].rfind("@media (width > 50rem)");
             let shut = sheet[..i].rfind("\n}");
-            assert!(open > shut, "a pane-switch touch rule the width swap cannot beat: {}", &sheet[i..i + 80]);
+            assert!(open > shut, "a pane-switch sizing rule the width swap cannot beat: {}", &sheet[i..i + 80]);
         }
 
         fs::remove_dir_all(&dir).unwrap();

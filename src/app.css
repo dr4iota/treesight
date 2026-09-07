@@ -243,6 +243,22 @@ header > .tag { order: 0; flex: 0 0 auto; }
    the marks stayed 14px and this whole rule did nothing. One name, two types,
    and each theme picked a different one to break. */
 :root { --mark-size: 18px; }
+/* ---- The one measurement that still asks what is doing the pointing ----
+
+   Everything else in this sheet is one size for every screen: the same marks,
+   the same text, the same boxes round the same controls, at the comfortable
+   size rather than the tight one. A mouse is not a reason to draw smaller, and
+   a sheet that has a desktop shape and a phone shape is a sheet where half of
+   it is never seen by whoever is editing it.
+
+   Rows of targets are the exception, and not because a finger needs a bigger
+   button — it gets the same one — but because it needs more air between that
+   button and the next. A cursor covers a pixel and lands where it is pointed;
+   a fingertip covers several rows and lands near where it is aimed. So the
+   space *between* adjacent tappable rows is the one thing that varies, it
+   varies here, and nothing else reads `data-touch` at all. */
+:root { --row-min: 2rem; --row-air: .3rem; }
+{ --row-min: 2.5rem; --row-air: .5rem; }
 /* Asked of the mark, not of the place it sits in.
    This was a list of a dozen container selectors — `.ico svg`, `.icon svg`,
    `nav.tree a.asroot svg`, and so on — and the list was wrong twice over inside
@@ -1102,28 +1118,27 @@ footer a.pick {
     max-width: calc(12rem + var(--pane-left) - .5rem);
   }
 }
-/* Except on a finger, where this band *is* the phone in landscape rather than a
-   half-width desktop window: the whole reason the pane narrows is that a smaller
-   window has a listing to feed as well, and a phone turned sideways has room for
-   both at full width. Rows are taller here and names no shorter. */
-/* A finger, not a pointer — and the app knowing it is on a phone, rather than the
-   window guessing from whatever is plugged into it. `pointer: coarse` was the
-   first answer and it is wrong twice: an emulator driven by a host mouse reports
-   `fine` and shows a phone build at desktop sizes, and a real phone with a
-   Bluetooth mouse would shrink its targets mid-session while the screen it is
-   held against has not changed. The shell's script sets `data-touch` when the
-   pointer is coarse *or* the platform is one you touch; the rules are the same
-   either way.
-   What grows is the target, not the drawing. Apple asks for 44pt and Material for
-   48dp, against the 19x14 these marks had; a mark centred in a 2.5rem box looks
-   as it did and can be hit. The pane cannot afford bigger icons — it is 17rem
-   holding rows of file names — but it can afford bigger boxes around the same
-   ones, which is the trade the twisty already made above.
-   Rows grow by padding rather than by becoming flex containers: every ellipsis in
-   this pane is the work of an `inline-block` link inside an `overflow: hidden`
-   row, and a display change there is a rewrite of behaviour this sheet spends
-   several comments getting right. */
-html[data-touch] nav.tree {
+/* ---- And then wider again, for everyone ----
+
+   The band above narrows the pane because a smaller window has a listing to
+   feed as well. That reasoning holds for a half-width desktop window and not
+   for a phone turned sideways, which has room for both at full width — and
+   since the rows below are now the same size on either, the pane that has to
+   hold them is the same too. Overriding the band rather than editing it: the
+   band's own reason is sound and this is the case it does not cover.
+
+   What grows is the target, not the drawing. Apple asks for 44pt and Material
+   for 48dp, against the 19x14 these marks had; a mark centred in a 2.5rem box
+   looks as it did and can be hit. The pane cannot afford bigger icons — it is
+   17rem holding rows of file names — but it can afford bigger boxes around the
+   same ones, which is the trade the twisty already made above. A cursor is no
+   worse off for it: nobody has ever missed a target by having too much of it.
+
+   Rows grow by padding rather than by becoming flex containers: every ellipsis
+   in this pane is the work of an `inline-block` link inside an `overflow:
+   hidden` row, and a display change there is a rewrite of behaviour this sheet
+   spends several comments getting right. */
+nav.tree {
     flex-basis: calc(17rem + var(--pane-left) - .5rem);
     max-width: calc(17rem + var(--pane-left) - .5rem);
   }
@@ -1161,13 +1176,13 @@ html[data-touch] nav.tree {
     color: var(--muted);
     cursor: pointer;
   }
-  html[data-touch] .drawer-btn {
+  .drawer-btn {
     width: auto;
     height: auto;
     min-width: 2.5rem;
     min-height: 2.5rem;
   }
-  html[data-touch] .drawer-btn svg { width: 24px; height: 24px; }
+  .drawer-btn svg { width: 24px; height: 24px; }
   @media (hover: hover) {
     .drawer-btn:hover { color: var(--link); border-color: var(--link); }
   }
@@ -1222,42 +1237,42 @@ nav.tree, main { scrollbar-width: thin; }
      and not a minimum height, because these links are `inline-block` and their
      ellipsis is the block layout's: a flex container puts its text in an
      anonymous item, where `text-overflow` stops being reliable. */
-html[data-touch] nav.tree { font-size: 1rem; }
+nav.tree { font-size: 1rem; }
   /* Vertical only. A name is the width of the pane and the thing being aimed at,
      so side padding here buys nothing — nobody misses a row by pressing an inch
      to the left of a word — and spends the characters that would have shown the
      end of the name. */
-html[data-touch] nav.tree .files a { padding: .5rem .1rem; }
-html[data-touch] nav.tree li .row { min-height: 2.5rem; }
+nav.tree .files a { padding: var(--row-air) .1rem; }
+nav.tree li .row { min-height: var(--row-min); }
   /* Something between the name and the buttons at the end of its row. */
   /* Room between a name and the buttons at the end of its row — but the arrow
      before it is part of the same row and wants none. */
-html[data-touch] nav.tree .chooser .row,
-html[data-touch] body.nothing .start .row { gap: .3rem; }
-html[data-touch] nav.tree li .row { gap: 0; }
-html[data-touch] nav.tree li .row > a.asroot { margin-left: .3rem; }
+nav.tree .chooser .row,
+body.nothing .start .row { gap: .3rem; }
+nav.tree li .row { gap: 0; }
+nav.tree li .row > a.asroot { margin-left: .3rem; }
   /* The chooser's lists and the start page's are the other shape: those links are
      already flex — the head-and-leaf shrinking above depends on it — so they take
      a minimum height directly, and the line needs centring inside it because the
      default is to stretch. */
-html[data-touch] nav.tree .chooser a,
-html[data-touch] body.nothing .start li > a,
-html[data-touch] body.nothing .start .row > a:first-child {
-    min-height: 2.5rem;
+nav.tree .chooser a,
+body.nothing .start li > a,
+body.nothing .start .row > a:first-child {
+    min-height: var(--row-min);
     align-items: center;
   }
   /* Wider, and it already stretches to the row's full height. */
   /* Wide enough to hit and no wider: at 2.5rem the arrow sat a thumb's width from
      the name it belongs to, which reads as two controls rather than one row. */
-html[data-touch] nav.tree .row > .twisty { width: 1.8rem; }
+nav.tree .row > .twisty { width: 1.8rem; }
   /* Every mark that is its own control: a box big enough to hit, the mark
      centred in it, and the drawing untouched. Only the pane's own marks take
      `padding: 0` — they are never words. */
-html[data-touch] nav.tree a.asroot,
-html[data-touch] nav.tree .chooser a.aside,
-html[data-touch] nav.tree section h2 a.secact,
-html[data-touch] body.nothing .start .row > a.aside,
-html[data-touch] body.nothing .start h2 a.secact {
+nav.tree a.asroot,
+nav.tree .chooser a.aside,
+nav.tree section h2 a.secact,
+body.nothing .start .row > a.aside,
+body.nothing .start h2 a.secact {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1274,11 +1289,11 @@ html[data-touch] body.nothing .start h2 a.secact {
      `display` too, and out-ranked the two rules that swap them at 50rem, so a
      phone drew both controls and a tablet drew a button with no drawer behind
      it. Each now takes its box only at the widths where it exists at all. */
-html[data-touch] .back,
-html[data-touch] .up,
-html[data-touch] .controls a,
-html[data-touch] .controls span.ctl,
-html[data-touch] footer a.pick {
+.back,
+.up,
+.controls a,
+.controls span.ctl,
+footer a.pick {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1288,7 +1303,7 @@ html[data-touch] footer a.pick {
     height: auto;
   }
 @media (width > 50rem) {
-  html[data-touch] .paneflag {
+  .paneflag {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1297,7 +1312,7 @@ html[data-touch] footer a.pick {
     width: auto;
     height: auto;
   }
-  html[data-touch] .paneflag svg { width: 24px; height: 24px; }
+  .paneflag svg { width: 24px; height: 24px; }
 }
   /* And the mark grows with the box it is in. 14px was drawn for a pointer and a
      1.7rem pill; alone in the middle of a 2.5rem one it reads as a mistake, which
@@ -1305,37 +1320,37 @@ html[data-touch] footer a.pick {
      Inside a border, 24 of 40 — three fifths, which is where a drawn mark stops
      looking lost in its own button and stops crowding the ring. Bare marks can
      take a little less: nothing around them says how much room they were given. */
-html[data-touch] .back svg,
-html[data-touch] .up svg,
-html[data-touch] .controls a svg,
-html[data-touch] .controls span.ctl svg,
-html[data-touch] footer a.pick svg {
+.back svg,
+.up svg,
+.controls a svg,
+.controls span.ctl svg,
+footer a.pick svg {
     width: 24px;
     height: 24px;
   }
-html[data-touch] nav.tree a.asroot svg,
-html[data-touch] nav.tree .chooser a.aside svg,
-html[data-touch] nav.tree section h2 a.secact svg,
-html[data-touch] body.nothing .start h2 a.secact svg,
-html[data-touch] body.nothing .start .row > a.aside svg {
+nav.tree a.asroot svg,
+nav.tree .chooser a.aside svg,
+nav.tree section h2 a.secact svg,
+body.nothing .start h2 a.secact svg,
+body.nothing .start .row > a.aside svg {
     width: 22px;
     height: 22px;
   }
   /* The disclosure arrow is a glyph, not a drawing, so it grows by type size —
      and it was the smallest mark in the pane while sitting in one of the widest
      boxes. */
-html[data-touch] nav.tree .row > .twisty { font-size: 1.6rem; }
+nav.tree .row > .twisty { font-size: 1.6rem; }
   /* Eight pixels between targets, which is what Material asks for and what stops
      two marks at the end of a bar reading as one wide button. */
-html[data-touch] nav.tree section h2 .acts,
-html[data-touch] body.nothing .start h2 .acts { gap: .5rem; }
+nav.tree section h2 .acts,
+body.nothing .start h2 .acts { gap: .5rem; }
   /* The heading bar has to hold what is now in it. */
-html[data-touch] nav.tree section h2:has(a.secact) { padding-top: 0; padding-bottom: 0; }
+nav.tree section h2:has(a.secact) { padding-top: 0; padding-bottom: 0; }
   /* Opacity is a pointer's affordance: there is no hover on a finger, so a
      control that waits to be hovered is a control that is never found. */
-html[data-touch] nav.tree a.asroot,
-html[data-touch] nav.tree .chooser a.aside,
-html[data-touch] body.nothing .start .row > a.aside {
+nav.tree a.asroot,
+nav.tree .chooser a.aside,
+body.nothing .start .row > a.aside {
     opacity: .75;
   }
 
