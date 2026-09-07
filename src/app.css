@@ -196,6 +196,10 @@ header > .tag { order: 0; flex: 0 0 auto; }
    header reinvented the pill instead, each one slightly differently and each one
    smaller than the real thing. A pill is a shape, not an element. */
 .controls a, .controls span.ctl, .controls button {
+  /* A pill has no ground of its own. Only a `button` brings one — the UA gives
+     it a grey — so clearing it belongs with the shape rather than in each page
+     that happens to use one. */
+  background: none;
   font-size: .8rem;
   padding: var(--pill-pad, .15rem .55rem);
   border: 1px solid var(--border);
