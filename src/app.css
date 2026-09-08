@@ -266,7 +266,7 @@ header > .tag { order: 0; flex: 0 0 auto; }
    space *between* adjacent tappable rows is the one thing that varies, it
    varies here, and nothing else reads `data-touch` at all. */
 :root { --row-min: 2rem; --row-air: .3rem; }
-{ --row-min: 2.5rem; --row-air: .5rem; }
+:root[data-touch] { --row-min: 2.5rem; --row-air: .5rem; }
 /* Asked of the mark, not of the place it sits in.
    This was a list of a dozen container selectors — `.ico svg`, `.icon svg`,
    `nav.tree a.asroot svg`, and so on — and the list was wrong twice over inside

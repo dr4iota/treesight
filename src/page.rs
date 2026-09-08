@@ -1695,6 +1695,18 @@ mod tests {
         assert!(!row.contains("</p>"), "the row wraps buttons, not paragraphs: {row}");
     }
 
+    /// The touch sizes need something to select. They lost it once — the rule
+    /// was left as a bare `{ --row-min: 2.5rem; … }`, which is not a rule at all,
+    /// so every screen kept the tight spacing and nothing said so.
+    #[test]
+    fn the_touch_sizes_are_asked_of_something() {
+        let sheet = crate::app_css();
+        assert!(
+            sheet.contains(":root[data-touch] { --row-min:"),
+            "the touch band has no selector: {sheet}"
+        );
+    }
+
     /// Nothing to offer and nothing to ask this platform for: a sentence, not an
     /// empty row where a button should be.
     #[test]
