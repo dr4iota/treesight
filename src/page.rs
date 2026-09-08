@@ -1695,6 +1695,48 @@ mod tests {
         assert!(!row.contains("</p>"), "the row wraps buttons, not paragraphs: {row}");
     }
 
+    /// Every section heading is the same height, whether or not it carries an
+    /// action — because the start page lays its sections out in a row, where a
+    /// heading that stands taller than the one beside it is three underlines at
+    /// three heights and a first row that does not line up. It was: the action's
+    /// touch box made the heading, so the heading with a button was 22px taller
+    /// than the ones without.
+    ///
+    /// A stylesheet test because there is nothing in the markup to check: the
+    /// two headings are the same `<h2>` either way, and which of them ends up
+    /// taller is a question only the sheet answers.
+    #[test]
+    fn a_heading_is_one_height_with_an_action_or_without() {
+        let sheet = crate::app_css();
+        let rule = |sel: &str| {
+            let at = sheet.find(sel).unwrap_or_else(|| panic!("no `{sel}`: {sheet}"));
+            let block = &sheet[at..];
+            &block[..block.find("\n}").expect("an unclosed rule")]
+        };
+        assert!(sheet.contains(":root { --sec-head:"), "one number, named: {sheet}");
+        // Both surfaces read it, and each does so unconditionally: a heading that
+        // took its height only when it had something on it is the bug itself.
+        for sel in ["nav.tree section h2 {", "body.nothing .start h2 {"] {
+            assert!(
+                rule(sel).contains("min-height: var(--sec-head);"),
+                "`{sel}` sets its own height: {}",
+                rule(sel)
+            );
+        }
+        assert!(
+            !sheet.contains("h2:has(a.secact)"),
+            "a heading is still styled by whether it has an action: {sheet}"
+        );
+        // And the mark inside it takes the touch box's width but not its height,
+        // which is the half that was making the heading.
+        let marks = rule("nav.tree section h2 a.secact,\nbody.nothing .start h2 a.secact {");
+        assert!(marks.contains("min-height: 0;"), "{marks}");
+        assert!(
+            sheet.contains("body.nothing .start h2 a.secact::after {"),
+            "the finger's target went with it: {sheet}"
+        );
+    }
+
     /// The touch sizes need something to select. They lost it once — the rule
     /// was left as a bare `{ --row-min: 2.5rem; … }`, which is not a rule at all,
     /// so every screen kept the tight spacing and nothing said so.

@@ -251,6 +251,20 @@ header > .tag { order: 0; flex: 0 0 auto; }
    the marks stayed 14px and this whole rule did nothing. One name, two types,
    and each theme picked a different one to break. */
 :root { --mark-size: 18px; }
+/* How tall a section heading is, in one place, for both surfaces that draw one:
+   the pane's bar and the start page's underlined line.
+
+   One number because the start page lays its sections out in a *row*, where a
+   heading that is taller than the one beside it is visible as three underlines
+   at three heights. It was: a heading with an action on it took its height from
+   that action's 2.5rem touch box and stood 22px above the ones without. The pane
+   never showed the difference because the pane stacks.
+
+   So the heading sets the height and the action lives inside it, which is also
+   what makes adding a control to Places or Pinned later a change to that section
+   and not to the row. Border-box, so it is the whole bar: a little more than the
+   text alone asked for, which is the air a heading wants anyway. */
+:root { --sec-head: 1.75rem; }
 /* ---- The one measurement that still asks what is doing the pointing ----
 
    Everything else in this sheet is one size for every screen: the same marks,
@@ -441,25 +455,32 @@ nav.tree section h2 {
   text-transform: uppercase;
   color: var(--muted);
   background: var(--border);
+  /* Every bar the same height, whether or not it carries an action, so the
+     sections read as one list of bars — and so the day Places grows a button is
+     the day a button appears, not the day the pane relayouts. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--sec-head);
   /* Out through the pane's padding on both sides, the scrollbar strip included:
      the bar reaches the pane's edges whether or not a scrollbar is over it, and
      an overlay one lands on colour rather than on the heading's own action. */
   margin: .5rem calc(-.5rem - var(--bar-strip)) .35rem -.5rem;
-  padding: .25rem calc(.6rem + var(--bar-strip)) .25rem .6rem;
+  /* No vertical padding: `--sec-head` is the bar's height and centring is what
+     puts the words in the middle of it. Padding on top of a height is a floor
+     under a floor — and with a 22px mark in a bar padded to 20px of content it
+     was the taller floor, which is the shape this was fixing. */
+  padding: 0 calc(.6rem + var(--bar-strip)) 0 .6rem;
 }
-/* A section the embedder brought can hang one action off its heading — "add a
-   server". The bar becomes a line with two ends only when there is something to
-   put on the far one, so Places and Recent are set exactly as they were before
-   this existed; `:has` is what says that, and the sheet already leans on it. */
-nav.tree section h2:has(a.secact) {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-/* More than one action on a heading: they group at the far end together, so the
-   bar keeps two ends instead of spreading its children across the line. Both
-   headings that carry them group the same way — the pane's and the start page's —
-   and where the two differ is only in how the group reaches the far end. */
+/* A section the embedder brought can hang actions off its heading — "add a
+   server", "manage them". Every bar is a line with two ends whether or not
+   anything is at the far one: that was a `:has` rule once, so that Places and
+   Recent were left exactly as they had been, and leaving them was the bug — the
+   bar with the button was a different size from the bars without it.
+   More than one action: they group at the far end together, so the bar keeps two
+   ends instead of spreading its children across the line. Both headings that
+   carry them group the same way — the pane's and the start page's — and where
+   the two differ is only in how the group reaches the far end. */
 nav.tree section h2 .acts,
 body.nothing .start h2 .acts { display: flex; align-items: center; gap: .35rem; }
 nav.tree section h2 a.secact {
@@ -610,22 +631,21 @@ body.nothing .start h2 {
   margin: 0 0 .5rem;
   display: flex;
   align-items: center;
+  /* The same height as the pane's bar and as every heading beside it in the row:
+     the columns' rules meet, and a section that grows an action later does not
+     push its own underline down past the others. */
+  min-height: var(--sec-head);
 }
-/* The mark is 14px in a 12px line, so a heading that carries one stood taller
-   than the heading beside it and the two rules underneath did not meet. Its box
-   is the line's height, and the drawing overflows it: the rule is what the eye
-   lines up, not the icon. */
 /* The wrapper is the flex child, so the wrapper is what goes to the far end. On
    the anchor inside it, `margin-left: auto` moved nothing and the marks sat
    against the heading's own words. */
 body.nothing .start h2 .acts { margin-left: auto; }
 body.nothing .start h2 a.secact {
-  height: 1em;
   line-height: 1;
   color: var(--muted);
   opacity: .7;
 }
-body.nothing .start h2 a.secact svg { display: block; margin-top: -.15em; }
+body.nothing .start h2 a.secact svg { display: block; }
 @media (hover: hover) {
   body.nothing .start h2 a.secact:hover { color: var(--link); opacity: 1; }
 }
@@ -1290,6 +1310,24 @@ body.nothing .start h2 a.secact {
     height: auto;
     padding: 0;
   }
+  /* Every one of those except the two on a heading, which is where the box was
+     making the heading. `--sec-head` is the height there and the mark sits in
+     it; what a finger needs comes back below, out of the layout. */
+nav.tree section h2 a.secact,
+body.nothing .start h2 a.secact {
+    position: relative;
+    min-height: 0;
+  }
+  /* The target a finger aims at, drawn nowhere and taking no room: it reaches up
+     into the margin above the heading, which is empty on both surfaces — the
+     pane bar's own `.5rem` and the start page's row gap — and barely down, where
+     the first row of the list is and a band over that would steal its taps. */
+nav.tree section h2 a.secact::after,
+body.nothing .start h2 a.secact::after {
+    content: "";
+    position: absolute;
+    inset: -.5rem -.2rem -.25rem;
+  }
   /* The header's pills grow the same way, but keep their own padding: in word
      form `--pill-pad` is the resting pad and the word needs it off the ring; in
      mark form the bands set it to zero, which is the zero this used to force.
@@ -1354,8 +1392,6 @@ nav.tree .row > .twisty { font-size: 1.6rem; }
      two marks at the end of a bar reading as one wide button. */
 nav.tree section h2 .acts,
 body.nothing .start h2 .acts { gap: .5rem; }
-  /* The heading bar has to hold what is now in it. */
-nav.tree section h2:has(a.secact) { padding-top: 0; padding-bottom: 0; }
   /* Opacity is a pointer's affordance: there is no hover on a finger, so a
      control that waits to be hovered is a control that is never found. */
 nav.tree a.asroot,
