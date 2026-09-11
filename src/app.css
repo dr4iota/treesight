@@ -109,11 +109,13 @@ a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
 }
 
-/* Up, at the top of what is served. Dimmed rather than gone: a control that
-   disappears takes the two beside it along for the ride, and a header whose
-   buttons move as you browse is harder to hit than one with a grey button in it.
-   Set by the server, which knows where the parent is — the state this used to
-   ask the page for, and got a different answer to on every engine. */
+/* Up, at the top of what is served, on a server with no shell around it — in
+   the shell the same slot is Home, which is a live button and needs none of
+   this. Dimmed rather than gone: a control that disappears takes the two beside
+   it along for the ride, and a header whose buttons move as you browse is
+   harder to hit than one with a grey button in it. Set by the server, which
+   knows where the parent is — the state this used to ask the page for, and got
+   a different answer to on every engine. */
 .nowhere { opacity: .3; }
 
 header {

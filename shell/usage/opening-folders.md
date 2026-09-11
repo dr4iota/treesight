@@ -53,4 +53,12 @@ remembered in Recent.
 The header carries the path, and every directory row in the tree has a button
 that serves *that* folder as the root — which is how you go down without going
 through the dialog again. **Close** puts the window back on the start page; what
-was open is in Recent, so there is nothing to confirm.
+was open is in Recent, so there is nothing to confirm. It is on the **Files**
+heading in the pane, and the header carries it too: at the top of what is open
+there is no folder above you, so **Up** is **Home** there and does the same
+thing — the page above the root is the page you started on.
+
+Back goes the same way, one step at a time: the folders you walked into, and
+then the folder you opened, which leaves you on the start page with it closed.
+On a phone that is the system's own gesture, and it takes one more press to
+leave the app from there.

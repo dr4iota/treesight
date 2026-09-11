@@ -9,6 +9,15 @@ pub mod hl;
 pub mod http;
 #[cfg(feature = "http")]
 pub use http::{spawn, Serving};
+
+/// The start page's own address, routed below and navigated to by the shell.
+///
+/// Named here because both sides have to spell it the same: this crate answers
+/// it, and the shell it is embedded in opens its window on it and asks whether
+/// that is the page on screen before deciding whether a folder is a step
+/// forward. A disagreement would be a Back button that silently stopped working.
+pub const HOME_PATH: &str = "/.ts/home";
+
 pub mod md;
 pub mod page;
 pub mod util;
@@ -845,6 +854,29 @@ pub fn handle(state: &State, req: &Req) -> Reply {
         // Somewhere for the shell to park the window while it finds out whether a
         // folder opens. Only it ever navigates here, and only when `app_ui` is on;
         // served on its own this is a page about nothing.
+        // The start page, at an address of its own.
+        //
+        // `/` already draws it — but only while nothing is open, which makes the
+        // two states of that one address indistinguishable to a history: a step
+        // forward into a folder would leave behind an entry that re-renders as
+        // whatever is open *now*, which is why the shell replaces its page
+        // instead of pushing one. This address says the start page whatever is
+        // open, so opening a folder can be a step forward and Back a step out of
+        // it — which is what a phone's Back gesture walks.
+        //
+        // And arriving here *is* closing what was open: the reader is looking at
+        // the page that says nothing is, and the two must not disagree. That is
+        // the same thing `/.ts/close` does, and the reason both exist is that one
+        // is an address and the other a command — the command replaces the page
+        // and leaves the history alone.
+        //
+        // Shell only, like the wait page. A served tree has no start page to go
+        // to, and a route that closed the root would hand any visitor the way to
+        // shut the server's own folder.
+        HOME_PATH if state.cfg.app_ui => {
+            state.cfg.close_root();
+            return html_reply(200, page::start_page(state, prefs, &url_now));
+        }
         "/.ts/wait" if state.cfg.app_ui => {
             let path = query_get(&query, "path").unwrap_or_default();
             return html_reply(
@@ -1393,6 +1425,65 @@ mod tests {
 
         // The stylesheet still answers: the start page is drawn with it.
         assert_eq!(get("/.ts/app.css").status, 200);
+    }
+
+    /// The start page's own address: it says the start page whatever is open, and
+    /// arriving there closes what was.
+    ///
+    /// That is what makes a folder a step forward rather than a change of scene —
+    /// the shell pushes the tree onto this page, and Back out of the tree lands
+    /// here rather than on a second copy of the tree's own address. Closing on
+    /// arrival is not a side effect but the point: the reader is looking at the
+    /// page that says nothing is open, and the app must not disagree with it.
+    #[test]
+    fn the_start_pages_own_address_says_so_and_closes_what_was_open() {
+        let dir = std::env::temp_dir().join(format!("treeserve-home-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut cfg = super::Config::new(dir.clone());
+        cfg.app_ui = true;
+        let state = super::state_for(cfg);
+        let get = |url: &str| {
+            super::handle(
+                &state,
+                &super::Req {
+                    url: url.to_string(),
+                    headers: vec![("Accept".to_string(), "text/html".to_string())],
+                    is_get: true,
+                },
+            )
+        };
+
+        // A folder is open, and `/` is its listing.
+        assert!(state.cfg.root().is_some());
+        match get("/").body {
+            super::Body::Text(t) => assert!(t.contains("<table class=\"listing\">"), "{t}"),
+            _ => panic!("a page is text"),
+        }
+
+        // The other address says the start page anyway, and the folder is shut.
+        match get(super::HOME_PATH).body {
+            super::Body::Text(t) => assert!(t.contains("class=\"app nothing\""), "{t}"),
+            _ => panic!("a page is text"),
+        }
+        assert!(state.cfg.root().is_none(), "arriving home closes the folder");
+
+        // And a served tree has neither: no start page to offer, and no route
+        // that would let a visitor shut the folder the server was started on.
+        let mut plain = super::Config::new(dir.clone());
+        plain.app_ui = false;
+        let plain = super::state_for(plain);
+        let reply = super::handle(
+            &plain,
+            &super::Req {
+                url: super::HOME_PATH.to_string(),
+                headers: vec![("Accept".to_string(), "text/html".to_string())],
+                is_get: true,
+            },
+        );
+        assert_eq!(reply.status, 404, "not a route on a server");
+        assert!(plain.cfg.root().is_some(), "and it closed nothing");
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The id a remote root is filed under, for the header to show beside a path

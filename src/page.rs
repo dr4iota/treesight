@@ -114,6 +114,15 @@ const ICON_MENU: &str = "<path d=\"M3.6 5h8.8M3.6 8h8.8M3.6 11h8.8\"/>";
 /// rest rather than typed as an arrow character, which has an advance width and
 /// a baseline of its own and so never lined up with the icons beside it.
 const ICON_UP: &str = "<path d=\"M8 12.8V3.8\"/><path d=\"M4.3 7.5L8 3.8l3.7 3.7\"/>";
+/// The way out of the *root*, which is only a way out inside a shell: the start
+/// page, reached by closing what is open. A house because that is what every
+/// header spells this with, and because Up's arrow is already spoken for one
+/// line down the same button — the two share a slot and must not share a
+/// drawing. Kept to the same box and the same weight as the rest: a roof from
+/// eave to eave, the walls under it, and a door, which is as much as survives
+/// at fourteen pixels.
+pub const ICON_HOME: &str = "<path d=\"M2.6 8.1L8 3.1l5.4 5\"/>\
+     <path d=\"M4.2 7.2v6h7.6v-6\"/><path d=\"M6.8 13.2V9.8h2.4v3.4\"/>";
 /// The theme flag says which setting is chosen rather than which one is next: a
 /// sun for light, a moon for dark, and half of each for following the system.
 /// Three settings, three drawings — resolving `auto` to the sun or the moon the
@@ -490,7 +499,30 @@ fn head_and_header(
             };
             format!("\n  {}", flag("up", &href, &svg_icon(ICON_UP), "Up", &title))
         }
-        // The top of what is served. Dimmed and inert rather than gone, and not
+        // The top of what is served, in a shell: there is somewhere above it
+        // after all, and it is the start page — where the folder came from and
+        // where everything else that could be opened is listed. So the button
+        // keeps its slot and changes what it is, the way a control that means
+        // "back out of this" should: Up while there is a folder above, Home when
+        // the folder is the root.
+        //
+        // The same link the pane's × carries. Two ways to say one thing on one
+        // screen is the pane's own affair — it is a drawer at the width where
+        // this matters most, and a header button is what a phone can reach
+        // without opening one.
+        None if state.cfg.app_ui => format!(
+            "\n  {}",
+            flag(
+                "up home",
+                "/.ts/close",
+                &svg_icon(ICON_HOME),
+                "Home",
+                "Close this folder",
+            )
+        ),
+        // The top of what is served, with no shell around it: nothing above and
+        // nothing to close — `/.ts/close` is the embedder's route and this
+        // server does not answer it. Dimmed and inert rather than gone, and not
         // a link at all — an `<a>` with no `href` is not focusable, so nothing
         // has to be told to leave it alone.
         None => format!(
@@ -2141,31 +2173,52 @@ mod tests {
     /// link and its absence are both exact, and the same on every engine. The
     /// button it replaced asked the page about its history and was told
     /// something different by each one.
+    ///
+    /// At the root the same button is Home in a shell, because there the start
+    /// page is what is above the folder — and nothing at all on a server, which
+    /// has no start page to offer and no route that would close anything.
     #[test]
-    fn up_is_the_parent_and_nothing_at_the_top() {
+    fn up_is_the_parent_and_home_or_nothing_at_the_top() {
         let dir = tmp_dir("upbutton");
-        let state = state_at(dir.clone());
-        let root = state.cfg.root().expect("these tests always serve one");
-        let page = |rel: &[String]| {
+        let mut state = state_at(dir.clone());
+        let page = |state: &State, rel: &[String]| {
+            let root = state.cfg.root().expect("these tests always serve one");
             let canon = VfsPath::new(rel.to_vec());
-            listing_page(&state, &root, prefs(), rel, &canon, &[], "/")
+            listing_page(state, &root, prefs(), rel, &canon, &[], "/")
         };
         let seg = |s: &str| s.to_string();
 
         // Two deep: up is one segment shorter, and named.
-        let html = page(&[seg("sub"), seg("deep")]);
+        let html = page(&state, &[seg("sub"), seg("deep")]);
         assert!(
             html.contains("<a class=\"up\" href=\"/sub/\" title=\"Up to sub\">"),
             "{html}"
         );
         // One deep: up is the served root, under the name the site wears.
-        let html = page(&[seg("sub")]);
+        let html = page(&state, &[seg("sub")]);
         assert!(html.contains("<a class=\"up\" href=\"/\" title=\"Up to "), "{html}");
-        // At the top there is nowhere to go, and it is not a link: no href at
-        // all, so nothing has to be told not to follow it.
-        let html = page(&[]);
+        // At the top of a served tree there is nowhere to go, and it is not a
+        // link: no href at all, so nothing has to be told not to follow it.
+        let html = page(&state, &[]);
         assert!(html.contains("class=\"up nowhere\" aria-disabled=\"true\""), "{html}");
         assert!(!html.contains("class=\"up\" href"), "{html}");
+
+        // In the shell the top of the tree is not the top of anything: closing
+        // the folder puts the start page in front of you, so the button is Home
+        // and points at the route that does it.
+        state.cfg.app_ui = true;
+        let html = page(&state, &[]);
+        assert!(
+            html.contains("<a class=\"up home\" href=\"/.ts/close\""),
+            "{html}"
+        );
+        assert!(html.contains(">Home</span>"), "{html}");
+        assert!(!html.contains("nowhere"), "{html}");
+        // And one below it is Up again, whatever the shell is: Home belongs to
+        // the root and nowhere else.
+        let html = page(&state, &[seg("sub")]);
+        assert!(html.contains("<a class=\"up\" href=\"/\""), "{html}");
+        assert!(!html.contains("class=\"up home\""), "{html}");
 
         fs::remove_dir_all(&dir).unwrap();
     }

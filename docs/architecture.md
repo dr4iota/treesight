@@ -249,7 +249,9 @@ starts; `Config::new(dir)` is the CLI's, and re-rooting fills the slot in.
 
 While it is `None`, `handle` answers `/` with `page::start_page` and redirects
 everything else there — a URL from before the folder was closed is history, not
-an error. The page names itself once — an `h1` in the content, not in the header bar as
+an error. `HOME_PATH` (`/.ts/home`) answers with that page *whatever* is open,
+and closes what is; see **Back** below for why the start page needs a second
+address of its own. The page names itself once — an `h1` in the content, not in the header bar as
 well — and takes its words from the embedder: `Config::app_name` and
 `app_version` come from Tauri's product name and version (so a shell embedding
 this crate stops calling itself treesight in its own window title and status
@@ -301,6 +303,38 @@ page. Recent alone gets one: it is the only pane list that is a record of what
 the reader did rather than a fixture, so the only one that can hold something
 they want gone — a folder that moved, or a root some since-fixed bug wrote down
 wrong. It forgets the row and never touches the folder.
+
+### Back
+
+Two addresses, and exactly one step between them. Every page of a tree wears
+`entry` — the origin and a slash — so an entry pushed for one of them is a copy
+of the address you are already on, and Back into it re-renders whatever root is
+current now. That is why `replace_page` exists and why everything uses it.
+
+The start page is the exception, and `HOME_PATH` is what makes it one: a second
+address, rendering the start page whatever is open and closing what is. So
+opening the **first** folder of a run can be a real step — `show_tree` pushes
+when the window is showing that page and replaces otherwise, and `show_waiting`
+takes the step ahead of it so that a slow dial still costs one entry. Back out of
+the tree then lands on a page that says nothing is open and has made that true.
+
+`Serving::at_home` is how the shell knows which it is showing. Not
+`WebviewWindow::url()`: that waits on wry's pipe, and `serve_root` runs on the
+thread that services it (see *What may run on the navigation callback*). The flag
+is written by whatever puts a page up and again by the page-load hook, which is
+the only thing that sees a page the shell did not ask for — a link into a
+subfolder, and a Back onto the start page.
+
+**Where the step actually comes back.** On the schemes that map to
+`http://<scheme>.localhost` — Windows, Android — Back traverses it and lands on
+the start page, which is what a phone's system gesture walks. Under a custom
+scheme on WebKitGTK it does not: the entry is pushed and Back does not come back
+out of it, the same family of trouble that makes the History API unusable on
+`tauri://` there. Nothing depends on the step working: Home in the header and the
+× on the Files heading go to the same place by the same route (`/.ts/close`), and
+they are how you go home on a desktop. Do not "fix" this by pushing more entries,
+or by giving the tree a per-folder address — that is the copy-of-one-address
+problem above, and it is worse than a Back that does nothing.
 
 ### The tree pane
 

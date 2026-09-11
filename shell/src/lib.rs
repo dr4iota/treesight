@@ -135,6 +135,24 @@ pub const VIEWPORT: &str = r#"
 })();
 "#;
 
+/// The way a page that was put away comes back current. Injected into every
+/// document alongside `VIEWPORT`, on every platform — an embedder's shortcuts
+/// replace `SHORTCUTS`, never this.
+///
+/// Back walks real entries in this window: the start page is one address and the
+/// tree another, so a folder is a step forward and Back is a step out of it. The
+/// page that step lands on may come from the back/forward cache, rendered before
+/// whatever was done in between — a server renamed, a folder pinned, a root
+/// closed. A tree page carries no script of its own to notice, so this is where
+/// it is told to ask the server again.
+const RESTORE: &str = r#"
+addEventListener('pageshow', function (e) {
+  if (e.persisted && document.body && document.body.classList.contains('app')) {
+    location.reload();
+  }
+});
+"#;
+
 const SHORTCUTS: &str = r#"
 addEventListener('keydown', function (e) {
   if (e.altKey && !e.ctrlKey && e.key === 'ArrowLeft') { history.back(); }
@@ -182,9 +200,17 @@ pub struct Serving {
     state: Arc<treeserve::State>,
     /// The scheme base every page of ours hangs off.
     origin: String,
-    /// The URL the window opens with. Once a plain root: there is no cookie to
-    /// collect on the way in any more.
+    /// The served root: where the tree is, and the only address any of its pages
+    /// wears. Once the URL the window opened with, back when the start page and
+    /// the tree shared it.
     entry: String,
+    /// The start page's own address, which is what the window opens on now.
+    ///
+    /// Two addresses rather than one is what makes a folder a *step*: the tree
+    /// can be pushed onto this, and Back out of the tree lands on a page that
+    /// says the start page whatever is open — and closes what is, so that the
+    /// page and the app agree. See `treeserve::HOME_PATH`.
+    home: String,
     /// Whether a page of ours has finished loading in the window yet.
     ///
     /// Re-rooting has to put the new root on screen without leaving the old page
@@ -195,6 +221,20 @@ pub struct Serving {
     /// the window's own first load has committed there is none, and a plain
     /// navigation supersedes that load rather than stacking on it.
     loaded: AtomicBool,
+    /// Whether the page in the window is the start page.
+    ///
+    /// Which decides whether a folder about to be shown is a step forward or a
+    /// change of what is on screen — see [`show_tree`]. Kept here rather than
+    /// asked of the window, because the answer is wanted from the one thread
+    /// that must never ask: `WebviewWindow::url()` waits on wry's own pipe, and
+    /// `serve_root` runs on the thread that services it (`docs/architecture.md`,
+    /// *What may run on the navigation callback*). A `bool` costs nothing and
+    /// cannot hang.
+    ///
+    /// Written twice over: by whatever puts a page up, so it is right at once,
+    /// and by the page-load hook, which is the only thing that sees the pages
+    /// this shell did not ask for — a link into a subfolder, and Back.
+    at_home: AtomicBool,
 }
 
 impl Serving {
@@ -212,6 +252,12 @@ impl Serving {
     /// Where a fresh navigation should start: the served root.
     pub fn entry(&self) -> &str {
         &self.entry
+    }
+
+    /// The start page, which is where a window with nothing open begins and what
+    /// closing a folder goes back to.
+    pub fn home(&self) -> &str {
+        &self.home
     }
 }
 
@@ -385,6 +431,16 @@ struct Ext {
 
 struct SharedExt(Arc<Ext>);
 
+/// What every document in this window is handed, in the order it runs: the
+/// platform script, the restore, and the key bindings — the embedder's if it
+/// brought its own, this crate's otherwise.
+fn window_script(custom: Option<String>) -> String {
+    format!(
+        "{VIEWPORT}\n{RESTORE}\n{}",
+        custom.unwrap_or_else(|| SHORTCUTS.to_string())
+    )
+}
+
 pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
     let configure = ext.configure.take();
     let ext = Arc::new(Ext {
@@ -392,13 +448,11 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         extra_places: ext.extra_places,
         extra_sections: ext.extra_sections,
         extra_intro_acts: ext.extra_intro_acts,
-        // `init_script` replaces the *shortcuts*. The platform script goes in
+        // `init_script` replaces the *shortcuts*. The platform scripts go in
         // either way: an embedder swapping key bindings is not asking for a
-        // window that draws behind the status bar.
-        init_script: format!(
-            "{VIEWPORT}\n{}",
-            ext.init_script.unwrap_or_else(|| SHORTCUTS.to_string())
-        ),
+        // window that draws behind the status bar, or for a page restored from
+        // the back/forward cache to go on saying what was true before it.
+        init_script: window_script(ext.init_script),
         picker: ext.picker,
         // Resolved once, here, so nothing later has to remember that an absent
         // stamp means this crate's own.
@@ -763,7 +817,7 @@ fn serve_opened(app: &AppHandle, opened: Opened, remember: bool) {
         let id = opened.id.clone();
         off_the_callback(app, move |app| remember_root_id(app, &id));
     }
-    replace_page(app, serving.entry());
+    show_tree(app);
     if let Some(win) = app.get_webview_window(WINDOW) {
         show(&win);
     }
@@ -806,12 +860,10 @@ fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
         // `entry` is the served root, which is all it is now that there is no
         // cookie to collect on the way in. The page-load hook retitles.
         //
-        // Replaced rather than navigated to, because a navigation would push:
-        // every page of this window wears the same address, so the entry left
-        // behind is a copy of the page you are on — Back into it re-renders
-        // whatever root is current, and on the first folder of a run it made a
-        // live Back button out of a window with nothing behind it at all.
-        replace_page(app, &serving.entry);
+        // Whether that is a step or a change of scene is `show_tree`'s to judge,
+        // and it judges by the page on screen: over the start page a folder is a
+        // step forward, and over a tree it is the same window under another root.
+        show_tree(app);
         if let Some(win) = app.get_webview_window(WINDOW) {
             // It may still be hidden: the window is built while the picker is up,
             // and this is the first moment there is a folder to put in it.
@@ -863,7 +915,14 @@ fn show_waiting(app: &AppHandle, label: &str) -> Option<tauri::Url> {
         serving.origin,
         treeserve::util::percent_encode(label)
     );
-    replace_page(app, &url);
+    match on_the_start_page(app) {
+        // The entry the folder will land in is taken here, over the start page,
+        // rather than when the dial finishes: the wait page *is* the folder as
+        // far as the history is concerned, and `show_tree` replaces it with the
+        // tree when the open lands.
+        true => push_page(app, &url),
+        false => replace_page(app, &url),
+    }
     previous
 }
 
@@ -879,14 +938,27 @@ fn open_failed(app: &AppHandle, previous: Option<tauri::Url>) {
     if app.get_webview_window(WINDOW).is_some()
         && let Some(url) = previous
     {
-        replace_page(app, url.as_str());
+        match url.path() == treeserve::HOME_PATH {
+            // The start page is *behind* the wait page rather than under it: it
+            // is where the open was asked for, and `show_waiting` stepped off it.
+            // So this steps back, which leaves the history as it found it —
+            // replacing would put a second copy of the start page on the pile and
+            // cost a second Back to leave.
+            true => eval(app, "history.back()"),
+            false => replace_page(app, url.as_str()),
+        }
         return;
     }
     // Nothing real to go back to — the page before us was itself a wait page, or
     // the window had none. Re-render whatever root is current rather than strand
     // on a wait page; only with no state at all is there nothing to do but ask.
     match app.try_state::<Serving>() {
-        Some(serving) => replace_page(app, serving.entry()),
+        // Whichever of the two addresses is the truth now: nothing was re-rooted,
+        // so if nothing was open before this, nothing is open after it either.
+        Some(serving) => match serving.state().cfg.root() {
+            Some(_) => replace_page(app, serving.entry()),
+            None => replace_page(app, serving.home()),
+        },
         None => ask_for_folder(app.clone(), true),
     }
 }
@@ -1150,6 +1222,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
     }
     let origin = scheme_base().to_string();
     let entry = format!("{origin}/");
+    let home = format!("{origin}{}", treeserve::HOME_PATH);
     // Before the state is handed over: the window is built after that, and this is
     // the last moment its title can be read from the config that carries it.
     let title = window_title(&state.cfg);
@@ -1157,13 +1230,22 @@ fn start(app: &AppHandle) -> Result<(), String> {
         state,
         origin: origin.clone(),
         entry: entry.clone(),
+        home: home.clone(),
         loaded: AtomicBool::new(false),
+        // The window below is built on it.
+        at_home: AtomicBool::new(true),
     });
 
     let win = WebviewWindowBuilder::new(
         app,
         WINDOW,
-        WebviewUrl::CustomProtocol(entry.parse().map_err(|e| format!("bad url: {e}"))?),
+        // The start page, not the root: nothing is open yet whatever this run was
+        // given — a folder from argv is opened after the window exists — and that
+        // is what makes it the entry behind everything. A window handed a folder
+        // supersedes this load rather than stacking on it, so that one starts on
+        // its tree with nothing behind it, which is right: it was opened *onto*
+        // the folder.
+        WebviewUrl::CustomProtocol(home.parse().map_err(|e| format!("bad url: {e}"))?),
     )
     .title(title)
     .inner_size(1200.0, 850.0)
@@ -1179,14 +1261,25 @@ fn start(app: &AppHandle) -> Result<(), String> {
         let app = app.clone();
         let shell = shell_origins();
         move |win, payload| {
-            // Only for a page this server answered. An embedder's own page — a
-            // terminal, a config editor — carries its own title, and retitling
-            // the window from the served root left it named after a folder that
-            // page has nothing to do with.
-            if payload.event() == tauri::webview::PageLoadEvent::Finished
-                && origin_allowed(&shell, payload.url())
-                && let Some(serving) = app.try_state::<Serving>()
-            {
+            if payload.event() != tauri::webview::PageLoadEvent::Finished {
+                return;
+            }
+            let Some(serving) = app.try_state::<Serving>() else {
+                return;
+            };
+            // Whoever served it. This is the only place a page the shell did not
+            // put up is seen — a link into a subfolder, an embedder's own page,
+            // and the one that matters: a Back that landed on the start page.
+            // Deciding from what *we* last showed would have missed that and
+            // spent the entry the next folder was going to be pushed into.
+            serving
+                .at_home
+                .store(payload.url().path() == treeserve::HOME_PATH, Ordering::Relaxed);
+            // The rest is only for a page this server answered. An embedder's own
+            // page — a terminal, a config editor — carries its own title, and
+            // retitling the window from the served root left it named after a
+            // folder that page has nothing to do with.
+            if origin_allowed(&shell, payload.url()) {
                 // There is a page here now, and one that can be told to replace
                 // itself — which is how a re-root avoids leaving a copy of the
                 // page behind it in the history. See `Serving::loaded`.
@@ -1983,7 +2076,15 @@ fn close_folder(app: &AppHandle) {
         return;
     };
     serving.state().cfg.close_root();
-    replace_page(app, &serving.entry);
+    // The start page's address, and the page *replaced* rather than stepped to:
+    // this is a control, not a destination. Back should come out of the folder
+    // that was open, not out of the act of closing it.
+    //
+    // The address closes the root too — see `treeserve::HOME_PATH` — which is
+    // what makes arriving there by Back mean the same thing as arriving by this.
+    // It is closed here as well because this navigation never reaches the
+    // server: `shell_action` claims it and cancels it.
+    replace_page(app, &serving.home);
 }
 
 /// Puts a URL on screen in place of the page that is there, rather than on top
@@ -2001,10 +2102,88 @@ fn close_folder(app: &AppHandle) {
 /// reasons, and getting this wrong is invisible until someone presses Back —
 /// or, on Android, swipes and finds the gesture doing nothing several times
 /// before it leaves.
+/// Whether the window is showing the start page.
+///
+/// Asked of the window and not of the config, because the question is about the
+/// *history* — what is behind the page that is about to change — and the config
+/// answers the other one. Between setting a root and showing it those two
+/// disagree, which is exactly the moment this is asked.
+fn on_the_start_page(app: &AppHandle) -> bool {
+    app.try_state::<Serving>()
+        .is_some_and(|s| s.at_home.load(Ordering::Relaxed))
+}
+
+/// Whether a URL of ours names the start page. String work, because the callers
+/// hold the address they are about to show rather than a parsed one.
+fn is_home_url(url: &str) -> bool {
+    url.split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/')
+        .ends_with(treeserve::HOME_PATH)
+}
+
+/// Records what is being put on screen, for `on_the_start_page` to read back.
+///
+/// Ahead of the page-load hook rather than instead of it: a decision may be
+/// taken before the load it follows has finished, and this makes the answer
+/// right from the moment the page was asked for.
+fn note_page(app: &AppHandle, url: &str) {
+    if let Some(serving) = app.try_state::<Serving>() {
+        serving.at_home.store(is_home_url(url), Ordering::Relaxed);
+    }
+}
+
+/// A page put on screen *as a step*: an entry of its own, so that Back comes out
+/// of it. The one navigation in this window that goes anywhere new.
+fn push_page(app: &AppHandle, url: &str) {
+    let Some(win) = app.get_webview_window(WINDOW) else {
+        return;
+    };
+    note_page(app, url);
+    if let Ok(url) = url.parse() {
+        let _ = win.navigate(url);
+    }
+}
+
+/// Puts the tree on screen once a root is set, and decides from the page that is
+/// there whether that is a step forward or a change of what is being shown.
+///
+/// Over the start page it is a step: that page is the one thing in this window
+/// that is somewhere else, and a folder opened from it is the one navigation
+/// here that goes anywhere new. Back out of the tree then lands on it — which is
+/// what a phone's Back gesture walks, and the whole reason the two pages have
+/// two addresses.
+///
+/// Everything else is the same place under another root — re-rooting from
+/// Places, a wait page turning into its folder, a failed open going back where
+/// it came from — and pushing for those would fill the history with copies of
+/// one address, each of which re-renders as whatever is open *now*.
+///
+/// The step is real where the engine traverses it: the schemes that map to
+/// `http://<scheme>.localhost`, which is Windows and Android — the platform
+/// whose Back is the system's, and the reason any of this exists. Under a custom
+/// scheme on WebKitGTK the entry is pushed and Back does not come back out of
+/// it; Home in the header goes to the same place by the same route, and is how
+/// you go home there. `docs/architecture.md`, *Back*.
+///
+/// Public because a downstream shell opens roots of its own — a folder the
+/// platform granted — and has to arrive the same way.
+pub fn show_tree(app: &AppHandle) {
+    let Some(url) = app.try_state::<Serving>().map(|s| s.entry.clone()) else {
+        return;
+    };
+    match on_the_start_page(app) {
+        true => push_page(app, &url),
+        false => replace_page(app, &url),
+    }
+}
+
 pub fn replace_page(app: &AppHandle, url: &str) {
     let Some(win) = app.get_webview_window(WINDOW) else {
         return;
     };
+    note_page(app, url);
     let loaded = app
         .try_state::<Serving>()
         .is_some_and(|s| s.loaded.load(Ordering::Relaxed));
@@ -2476,6 +2655,42 @@ fn save_recent(app: &AppHandle, list: Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Which of the two addresses a page is, from the string a caller is about
+    /// to show. The tree's is every other URL in the window, including the root
+    /// itself, which is the origin and a slash.
+    #[test]
+    fn the_start_page_is_told_from_the_tree_by_its_address() {
+        let home = format!("treesight://localhost{}", treeserve::HOME_PATH);
+        assert!(is_home_url(&home));
+        assert!(is_home_url(&format!("{home}/")));
+        assert!(is_home_url(&format!("{home}?from=x")));
+        assert!(!is_home_url("treesight://localhost/"));
+        assert!(!is_home_url("treesight://localhost/src/"));
+        // A folder that happens to be called this is still a folder: the path is
+        // under the root, not beside it.
+        assert!(!is_home_url("treesight://localhost/sub/.ts/home/deeper/"));
+    }
+
+    /// Only the key bindings are the embedder's to replace.
+    ///
+    /// The other two are what makes this a window rather than a browser: the
+    /// viewport work that keeps a page clear of a notch and a soft keyboard, and
+    /// the reload that keeps a page Back landed on from lying about what it
+    /// shows. A shell that brought its own shortcuts has said nothing about
+    /// either.
+    #[test]
+    fn an_embedders_shortcuts_replace_the_keys_and_nothing_else() {
+        let mine = window_script(None);
+        assert!(mine.contains("pageshow"), "no restore");
+        assert!(mine.contains("data-touch"), "no platform script");
+        assert!(mine.contains("ArrowLeft"), "no keys");
+
+        let theirs = window_script(Some("addEventListener('keydown', function () {});".into()));
+        assert!(theirs.contains("pageshow"), "the restore went with the keys");
+        assert!(theirs.contains("data-touch"), "the platform script went with the keys");
+        assert!(!theirs.contains("ArrowLeft"), "the keys are the embedder's now");
+    }
 
     #[test]
     fn a_set_cookie_is_a_name_a_value_and_nothing_else() {
