@@ -944,7 +944,14 @@ fn open_failed(app: &AppHandle, previous: Option<tauri::Url>) {
             // So this steps back, which leaves the history as it found it —
             // replacing would put a second copy of the start page on the pile and
             // cost a second Back to leave.
-            true => eval(app, "history.back()"),
+            //
+            // Unless the reader stepped back themselves, which is one way an open
+            // ends: Back off the wait page while it was asking for a secret
+            // dismisses the question, and the dial fails here a moment later.
+            // They are already where this would have sent them, and going back
+            // again would take them somewhere nobody asked for.
+            true if !on_the_start_page(app) => eval(app, "history.back()"),
+            true => {}
             false => replace_page(app, url.as_str()),
         }
         return;
