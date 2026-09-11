@@ -649,7 +649,9 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
   <div class="controls">{controls}</div>
 </header>
 <main>
+<div class="col">
 {content}
+</div>
 </main>
 <footer><span class="where"><span class="app">{app}</span></span></footer>
 </body>

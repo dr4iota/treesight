@@ -565,13 +565,22 @@ nav.tree .more { color: var(--muted); font-style: italic; }
    wide window and one column down a narrow one, out of the same section markup the
    pane draws them in — so they are the same rows, and there is one place where a
    row's shape is decided. */
-/* `width: 100%` and not just a max-width, because `body` is a column flex
-   container: an auto inline margin centres this, and in doing so switches off the
-   default stretch — leaving the width to be decided by the content. The content
-   here is a column of paths that must not wrap, so the widest one became the
-   width of the page and the window was the thing that overflowed. With a width to
-   fit inside, `flex-grow` has something to hand out and the paths ellipsise. */
-body.nothing main { width: 100%; max-width: 44rem; margin-inline: auto; }
+/* The cap goes on a wrapper inside `main`, never on `main` itself. `main` is
+   this page's one scroll container — see the rule above — so a cap there puts the
+   scrollbar at the column's own edge and leaves a gutter either side of it that
+   nothing can scroll: `body` is `overflow: hidden`, so a wheel out there finds no
+   scrollable ancestor at all, and on a wide window that is most of the width.
+   Full-width scroller, capped wrapper, is also what the listing already does —
+   `table.listing` carries its own 60rem and `main` stays whole.
+
+   `.col` is a plain block and wants no `width` of its own: the stretch an auto
+   inline margin switches off is `body`'s flex, and this is not a flex item. Its
+   width is its container's, which is the part that matters here — the content is
+   a column of paths that must not wrap, and with a width to fit inside,
+   `flex-grow` has something to hand out and the paths ellipsise. Left to the
+   content, the widest path became the width of the page and the window was the
+   thing that overflowed. */
+body.nothing main > .col { max-width: 44rem; margin-inline: auto; }
 body.nothing .intro { margin: 1rem 0 2rem; }
 /* A page with prose on it should say what page it is. Modest, not a hero: the
    name is the one thing here that is not a list of somewhere to go. */
