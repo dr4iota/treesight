@@ -494,7 +494,13 @@ nav.tree section h2 a.secact {
 @media (hover: hover) {
   nav.tree section h2 a.secact:hover { color: var(--link); opacity: 1; background: none; }
 }
-nav.tree section ul { padding-left: .2rem; }
+/* A section's *own* list sits nearly flush, and only that one. Written
+   `nav.tree section ul` it reached every list in the section, which down the
+   tree is every level of it: at (0,1,3) it out-ranked the `.9rem` below at
+   (0,1,2), so a nesting level bought three pixels and the tree read as a flat
+   list with a few names nudged. The child combinator is the whole fix — Places
+   and Recent are flat, so their list is a direct child either way. */
+nav.tree section > ul { padding-left: .2rem; }
 /* Places, Recent and the picker follow the tree in one scroll, rather than
    holding a strip of the pane the tree could have used. On a tree of any size
    they start out below the fold, which is where shortcuts you reach for now and
@@ -504,13 +510,23 @@ nav.tree section ul { padding-left: .2rem; }
    double rule. */
 nav.tree .chooser { margin-top: .8rem; }
 nav.tree ul { list-style: none; margin: 0; padding-left: .9rem; }
-nav.tree > ul { padding-left: .2rem; }
 nav.tree li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 nav.tree a { color: var(--fg); display: inline-block; padding: .05rem .2rem; border-radius: 4px; }
 @media (hover: hover) {
   nav.tree a:hover { background: var(--border); text-decoration: none; }
 }
 nav.tree a.dir { color: var(--link); }
+/* A file gets the gutter a directory spends on its twisty, so the two line up.
+   Without it a file is not merely un-indented, it is indented backwards: a
+   directory's name starts after a 1.8rem arrow and a file's starts at the `li`,
+   so a file four levels down was drawn to the *left* of a top-level folder. A
+   margin and not a spacer element, because there is nothing to put in one — the
+   row shape a file wants is the row shape it has, minus a control it will never
+   have. `li > a` reaches only files: a directory's name is inside `.row`.
+   `li.more` is the count at the end of a long directory and has no anchor at
+   all, so it is named here to keep the same left edge. */
+nav.tree .files li > a,
+nav.tree .files li.more { margin-left: 1.8rem; }
 /* A directory row: the name takes the width and gives it back with an ellipsis,
    the re-root button keeps its own. Quiet until the row is under the pointer,
    because the space is reserved either way and a column of bright arrows down a
@@ -829,7 +845,13 @@ table.listing th {
   padding: .3rem .75rem;
   border-bottom: 1px solid var(--border);
 }
-table.listing td { padding: .28rem .75rem; border-bottom: 1px solid var(--border); }
+/* The same air between rows the pane gets, from the same variable. This is the
+   longest column of targets in the app and it was the one place `--row-air`
+   never reached: a flat `.28rem` meant a phone scrolled 32px listing rows behind
+   a 40px sidebar. Vertical only — a name spans the column and nobody misses it
+   by a quarter inch sideways — and the heading keeps its own padding, since a
+   heading is not something anybody aims at. */
+table.listing td { padding: var(--row-air) .75rem; border-bottom: 1px solid var(--border); }
 @media (hover: hover) {
   table.listing tr:hover td { background: var(--bg-subtle); }
 }
@@ -1339,6 +1361,24 @@ body.nothing .start h2 a.secact::after {
     position: absolute;
     inset: -.5rem -.2rem -.25rem;
   }
+  /* Back to the box three rules up, and the one axis it must not fix. Downwards,
+     in a column of rows, a flat 2.5rem is 2.5rem of *row*: `.row` is a flex line
+     and takes the height of its tallest item, so every row carrying one of these
+     buttons was 40px whatever was doing the pointing — which is `--row-min`
+     switched off in the one place it was written for. A pointer got 40px
+     directory rows beside 34px file rows, and Places at 32px beside Recent at
+     40px in the same list; a finger got 40px throughout and was the only surface
+     that looked deliberate.
+
+     So the vertical box follows the row and the horizontal one does not: 2.5rem
+     of width is a target and costs nothing, 2.5rem of height is the row itself.
+     At the pointer's `--row-min` the box is still half again the 24px line it
+     sits on, which is more than a cursor needs, and a finger's rows are
+     unchanged at 40. The header's pills keep the flat 2.5rem below: they are one
+     row rather than a column, so nothing there is crowding anything. */
+nav.tree a.asroot,
+nav.tree .chooser a.aside,
+body.nothing .start .row > a.aside { min-height: var(--row-min); }
   /* The header's pills grow the same way, but keep their own padding: in word
      form `--pill-pad` is the resting pad and the word needs it off the ring; in
      mark form the bands set it to zero, which is the zero this used to force.
