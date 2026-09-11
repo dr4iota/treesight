@@ -330,9 +330,9 @@ subfolder, and a Back onto the start page.
 the start page, which is what a phone's system gesture walks. Under a custom
 scheme on WebKitGTK it does not: the entry is pushed and Back does not come back
 out of it, the same family of trouble that makes the History API unusable on
-`tauri://` there. Nothing depends on the step working: Home in the header and the
+`tauri://` there. Nothing depends on the step working: Start in the header and the
 × on the Files heading go to the same place by the same route (`/.ts/close`), and
-they are how you go home on a desktop. Do not "fix" this by pushing more entries,
+they are how you leave a folder on a desktop. Do not "fix" this by pushing more entries,
 or by giving the tree a per-folder address — that is the copy-of-one-address
 problem above, and it is worse than a Back that does nothing.
 

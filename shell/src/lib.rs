@@ -159,7 +159,7 @@ addEventListener('keydown', function (e) {
   else if (e.altKey && !e.ctrlKey && e.key === 'ArrowRight') { history.forward(); }
   else if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) { location.reload(); }
   else if (e.key === 'F5' && !e.ctrlKey && !e.altKey) { location.reload(); }
-  else if (e.ctrlKey && e.key === 'Home') { location.assign('/'); }
+  else if (e.ctrlKey && e.key === 'Home') { location.assign('__TS_HOME__'); }
   else if (e.ctrlKey && (e.key === 'o' || e.key === 'O')) { location.assign('/.ts/open'); }
   else if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { location.assign('/.ts/print'); }
   else { return; }
@@ -434,12 +434,21 @@ struct SharedExt(Arc<Ext>);
 /// What every document in this window is handed, in the order it runs: the
 /// platform script, the restore, and the key bindings — the embedder's if it
 /// brought its own, this crate's otherwise.
+///
+/// `__TS_HOME__` is filled in wherever it appears, in an embedder's script as
+/// much as in ours: the start page's address is this crate's to know, and a
+/// downstream shell that binds `Ctrl+Home` should not have to spell it out —
+/// spelled wrong, the key would navigate into the tree and land on a 404.
 fn window_script(custom: Option<String>) -> String {
     format!(
         "{VIEWPORT}\n{RESTORE}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
+    .replace(HOME_SLOT, treeserve::HOME_PATH)
 }
+
+/// Where the start page's address goes in a window script. See [`window_script`].
+pub const HOME_SLOT: &str = "__TS_HOME__";
 
 pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
     let configure = ext.configure.take();
@@ -2171,8 +2180,8 @@ fn push_page(app: &AppHandle, url: &str) {
 /// `http://<scheme>.localhost`, which is Windows and Android — the platform
 /// whose Back is the system's, and the reason any of this exists. Under a custom
 /// scheme on WebKitGTK the entry is pushed and Back does not come back out of
-/// it; Home in the header goes to the same place by the same route, and is how
-/// you go home there. `docs/architecture.md`, *Back*.
+/// it; Start in the header goes to the same place by the same route, and is how
+/// you leave a folder there. `docs/architecture.md`, *Back*.
 ///
 /// Public because a downstream shell opens roots of its own — a folder the
 /// platform granted — and has to arrive the same way.
@@ -2693,7 +2702,15 @@ mod tests {
         assert!(mine.contains("data-touch"), "no platform script");
         assert!(mine.contains("ArrowLeft"), "no keys");
 
-        let theirs = window_script(Some("addEventListener('keydown', function () {});".into()));
+        // And the address of the start page is filled in wherever it is asked
+        // for, in a script of ours or of theirs.
+        assert!(mine.contains(treeserve::HOME_PATH), "the key was left a placeholder");
+        assert!(!mine.contains(HOME_SLOT), "{mine}");
+
+        let theirs = window_script(Some(
+            format!("addEventListener('keydown', function () {{ location.assign('{HOME_SLOT}'); }});")
+        ));
+        assert!(theirs.contains(treeserve::HOME_PATH), "not filled in for an embedder");
         assert!(theirs.contains("pageshow"), "the restore went with the keys");
         assert!(theirs.contains("data-touch"), "the platform script went with the keys");
         assert!(!theirs.contains("ArrowLeft"), "the keys are the embedder's now");

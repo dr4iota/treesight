@@ -115,14 +115,19 @@ const ICON_MENU: &str = "<path d=\"M3.6 5h8.8M3.6 8h8.8M3.6 11h8.8\"/>";
 /// a baseline of its own and so never lined up with the icons beside it.
 const ICON_UP: &str = "<path d=\"M8 12.8V3.8\"/><path d=\"M4.3 7.5L8 3.8l3.7 3.7\"/>";
 /// The way out of the *root*, which is only a way out inside a shell: the start
-/// page, reached by closing what is open. A house because that is what every
-/// header spells this with, and because Up's arrow is already spoken for one
-/// line down the same button — the two share a slot and must not share a
-/// drawing. Kept to the same box and the same weight as the rest: a roof from
-/// eave to eave, the walls under it, and a door, which is as much as survives
-/// at fourteen pixels.
-pub const ICON_HOME: &str = "<path d=\"M2.6 8.1L8 3.1l5.4 5\"/>\
-     <path d=\"M4.2 7.2v6h7.6v-6\"/><path d=\"M6.8 13.2V9.8h2.4v3.4\"/>";
+/// page, reached by closing what is open.
+///
+/// Four panes, for the page that is four lists of what there is to open. It was
+/// a house first, which is the mark every header spells "home" with — and the
+/// wrong one here, because this is a file browser: a house beside a tree reads
+/// as the *home folder*, which is a row in Places and not this at all. The word
+/// went the same way, and for the same reason.
+///
+/// Not bars and not lines: the drawer button is three of those, and at the size
+/// a header mark is drawn, how much of the box a set of strokes fills is the
+/// whole of what tells two of them apart.
+pub const ICON_START: &str = "<path d=\"M3.2 3.2h4v4h-4z\"/><path d=\"M8.8 3.2h4v4h-4z\"/>\
+     <path d=\"M3.2 8.8h4v4h-4z\"/><path d=\"M8.8 8.8h4v4h-4z\"/>";
 /// The theme flag says which setting is chosen rather than which one is next: a
 /// sun for light, a moon for dark, and half of each for following the system.
 /// Three settings, three drawings — resolving `auto` to the sun or the moon the
@@ -503,8 +508,9 @@ fn head_and_header(
         // after all, and it is the start page — where the folder came from and
         // where everything else that could be opened is listed. So the button
         // keeps its slot and changes what it is, the way a control that means
-        // "back out of this" should: Up while there is a folder above, Home when
-        // the folder is the root.
+        // "back out of this" should: Up while there is a folder above, Start when
+        // the folder is the root. Not *Home*, which in a file browser is the
+        // reader's own folder and is a row in Places two inches away.
         //
         // The same link the pane's × carries. Two ways to say one thing on one
         // screen is the pane's own affair — it is a drawer at the width where
@@ -513,11 +519,11 @@ fn head_and_header(
         None if state.cfg.app_ui => format!(
             "\n  {}",
             flag(
-                "up home",
+                "up start",
                 "/.ts/close",
-                &svg_icon(ICON_HOME),
-                "Home",
-                "Close this folder",
+                &svg_icon(ICON_START),
+                "Start",
+                "The start page — closes this folder",
             )
         ),
         // The top of what is served, with no shell around it: nothing above and
@@ -2174,11 +2180,11 @@ mod tests {
     /// button it replaced asked the page about its history and was told
     /// something different by each one.
     ///
-    /// At the root the same button is Home in a shell, because there the start
+    /// At the root the same button is Start in a shell, because there the start
     /// page is what is above the folder — and nothing at all on a server, which
     /// has no start page to offer and no route that would close anything.
     #[test]
-    fn up_is_the_parent_and_home_or_nothing_at_the_top() {
+    fn up_is_the_parent_and_the_start_page_or_nothing_at_the_top() {
         let dir = tmp_dir("upbutton");
         let mut state = state_at(dir.clone());
         let page = |state: &State, rel: &[String]| {
@@ -2204,21 +2210,21 @@ mod tests {
         assert!(!html.contains("class=\"up\" href"), "{html}");
 
         // In the shell the top of the tree is not the top of anything: closing
-        // the folder puts the start page in front of you, so the button is Home
+        // the folder puts the start page in front of you, so the button is Start
         // and points at the route that does it.
         state.cfg.app_ui = true;
         let html = page(&state, &[]);
         assert!(
-            html.contains("<a class=\"up home\" href=\"/.ts/close\""),
+            html.contains("<a class=\"up start\" href=\"/.ts/close\""),
             "{html}"
         );
-        assert!(html.contains(">Home</span>"), "{html}");
+        assert!(html.contains(">Start</span>"), "{html}");
         assert!(!html.contains("nowhere"), "{html}");
-        // And one below it is Up again, whatever the shell is: Home belongs to
+        // And one below it is Up again, whatever the shell is: Start belongs to
         // the root and nowhere else.
         let html = page(&state, &[seg("sub")]);
         assert!(html.contains("<a class=\"up\" href=\"/\""), "{html}");
-        assert!(!html.contains("class=\"up home\""), "{html}");
+        assert!(!html.contains("class=\"up start\""), "{html}");
 
         fs::remove_dir_all(&dir).unwrap();
     }

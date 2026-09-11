@@ -55,8 +55,9 @@ that serves *that* folder as the root — which is how you go down without going
 through the dialog again. **Close** puts the window back on the start page; what
 was open is in Recent, so there is nothing to confirm. It is on the **Files**
 heading in the pane, and the header carries it too: at the top of what is open
-there is no folder above you, so **Up** is **Home** there and does the same
-thing — the page above the root is the page you started on.
+there is no folder above you, so **Up** is **Start** there and does the same
+thing — the page above the root is the page you started on. Not *Home*: that is
+your own folder, and it is a row in Places.
 
 Back goes the same way, one step at a time: the folders you walked into, and
 then the folder you opened, which leaves you on the start page with it closed.
