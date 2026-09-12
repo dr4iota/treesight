@@ -4317,6 +4317,7 @@ dependencies = [
  "pulldown-latex",
  "syntect",
  "tiny_http",
+ "treestamp",
  "two-face",
 ]
 

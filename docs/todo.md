@@ -125,7 +125,15 @@ unchanged.
 
 Decide the version (0.2.0), re-read `Vfs` / `Meta` / `Entry` / `PaneSection`
 for publish-worthiness — crates.io is forever — then `cargo publish -p
-treeserve` after a dry run. Downstream may then swap its submodule for a
+treeserve` after a dry run.
+
+**`treestamp` has to go first, or come inside.** `treeserve` depends on it now
+(`--version`, the page footer) and it is `publish = false`, so the dry run will
+refuse. Either publish it too — it has no dependencies and the manifest already
+carries `version = "0.1"` beside the path for exactly this — or fold its half
+page of git-asking into `build.rs` and drop the crate from this package. The
+first keeps one implementation for all four binaries and is the reason the
+version is already written down. Downstream may then swap its submodule for a
 version dependency; that is its choice, not a requirement of this item.
 
 ## 5. Small cleanups

@@ -9,10 +9,11 @@ themes. Plain HTML output, zero JavaScript, no runtime dependencies.
 
 ```sh
 ./build.sh            # or build.bat on Windows → dist/treeserve, dist/treesight
+                      # and dist/static/treeserve where musl is installed
 ./build.sh server     # just the server, no webview libraries needed
-./build.sh static     # server as one fully static file (musl, no libc)
+./build.sh static     # that portable server on its own → dist/static/treeserve
 ./build.sh windows    # both .exe files, cross-compiled → dist/windows/
-./build.sh install ~/bin       # copy dist/* there; ~/bin is the default
+./build.sh install ~/bin       # copy the top level of dist/ there; ~/bin is the default
 ./build.sh bundle     # also the installers (needs cargo-tauri, see below)
 ```
 
@@ -57,7 +58,7 @@ only on what it links against:
 | | portability |
 |---|---|
 | `treeserve`, default build | one file, links the system libc; runs on the same or newer glibc |
-| `treeserve`, `./build.sh static` | one file, **no libc at all** — copy it to any Linux of the same architecture |
+| `treeserve`, `dist/static/` | one file, **no libc at all** — copy it to any Linux of the same architecture |
 | `treeserve.exe`, `build.bat` | one file; needs the Visual C++ runtime unless you uncomment the `crt-static` line |
 | `treeserve.exe`, `./build.sh windows` | one file; imports only OS DLLs and the Universal CRT, so there is no runtime to install |
 | `treesight.exe` | uses the WebView2 runtime that ships with Windows 11 and current Windows 10. One file from `build.bat`; cross-compiled it also needs `WebView2Loader.dll` beside it |
@@ -65,9 +66,25 @@ only on what it links against:
 | `treesight` (Linux) | links WebKitGTK dynamically, so build it on the distro you will run it on; there is no realistic static option |
 
 The static build also swaps the highlighting regex engine from oniguruma (C) to
-fancy-regex (Rust) with `--no-default-features --features pure`, which is what
-removes the last C dependency. Output is byte-identical either way; highlighting
-is roughly twice as slow and the binary about 1.4 MB larger. That same flag also
+fancy-regex (Rust) with `--no-default-features --features pure,http`, which is
+what removes the last C dependency. (`http` is named back explicitly because
+`--no-default-features` drops it and the binary is `required-features =
+["http"]`; without it cargo builds the library, reports success, and leaves no
+binary to copy.) Output is byte-identical either way; highlighting
+is roughly twice as slow and the binary about 1.4 MB larger.
+
+The two live at different paths on purpose: `dist/treeserve` is the native
+build, `dist/static/treeserve` the portable one, and a plain `./build.sh` makes
+both wherever the musl target is installed. They shared a path once, and since
+nothing a `cp` can see tells them apart, the last build to run silently decided
+which one you shipped — which is fine until the machine you copied it to says
+`GLIBC_2.38 not found`. `install` copies the top level only, so the fast native
+build is what lands on your PATH; take the portable one deliberately.
+
+To identify a binary you already have somewhere, `treeserve --version` prints
+the commit it was cut from, whether that tree was clean, and when it was
+compiled; `file` answers the other half — a portable build says `static-pie
+linked`, a native one names an interpreter. That same flag also
 makes cross-compiling `treeserve` painless anywhere you have no C toolchain for
 the target, though the Windows cross build below does not need it. `treesight`
 is otherwise best built natively per platform, since it links that platform's

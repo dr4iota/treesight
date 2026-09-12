@@ -15,6 +15,7 @@
 #   ./build.sh                    server + app  -> dist/
 #   ./build.sh server             server only   -> dist/treeserve
 #   ./build.sh static             server, fully static (musl, no libc at all)
+#                                 -> dist/static/treeserve
 #   ./build.sh windows            Windows .exe, cross-compiled -> dist/windows/
 #   ./build.sh install [DIR]      copy dist/* to DIR, default ~/bin
 #   ./build.sh bundle             server + app + installers (needs cargo-tauri)
@@ -99,6 +100,38 @@ build_server() {
     cargo build --release
     mkdir -p dist
     keep target/release/treeserve dist
+}
+
+# The triple a portable build of this machine's architecture is made for, and
+# whether the toolchain has it. Linux only: the target exists for other hosts
+# as a cross-compile, and a default build that quietly tries one and fails is
+# worse than a default build that does not try.
+static_triple() { echo "$(uname -m)-unknown-linux-musl"; }
+have_static() {
+    [ "$(uname -s)" = Linux ] || return 1
+    rustup target list --installed 2>/dev/null | grep -qx "$(static_triple)"
+}
+
+# musl + the pure-Rust highlighting engine: no libc, no C dependency, so the
+# result runs on any Linux of this architecture. Highlighting is about twice as
+# slow as the default build; output is identical.
+#
+# **Into `dist/static/`, not `dist/`.** The two builds are the same file name
+# and are told apart by nothing a `cp` can see, so while they shared a path the
+# last build to run silently decided which one you shipped — and a portable
+# binary replaced by a default one looks fine until the machine you copied it
+# to refuses it. `dist/windows/` already holds the other build that is not for
+# this machine; this is the same idea.
+#
+# `http` is named back explicitly because `--no-default-features` drops it, and
+# the binary is `required-features = ["http"]` — without it cargo builds the
+# library, says "Finished", and leaves no `treeserve` to copy.
+build_static() {
+    triple="$(static_triple)"
+    echo "[build] treeserve, static ($triple)"
+    cargo build --release --target "$triple" --no-default-features --features pure,http
+    mkdir -p dist/static
+    keep "target/$triple/release/treeserve" dist/static
 }
 
 build_app() {
@@ -198,25 +231,28 @@ stamp
 case $target in
 all)
     build_server
+    # A portable copy alongside the fast one, so what is in dist/ is always
+    # something you can put on another machine. Only where the target is
+    # installed: adding it is one command, and a default build must not fail
+    # over a binary most runs of this script are not for.
+    if have_static; then
+        build_static
+    else
+        echo "note: no $(static_triple) target, so dist/static/ was not built."
+        echo "      rustup target add $(static_triple)   # for a portable binary"
+    fi
     build_app
     ;;
 server)
     build_server
     ;;
 static)
-    # musl + the pure-Rust highlighting engine: no libc, no C dependency, so
-    # the result runs on any Linux of this architecture. Highlighting is about
-    # twice as slow as the default build; output is identical.
-    triple="$(uname -m)-unknown-linux-musl"
-    if ! rustup target list --installed 2>/dev/null | grep -qx "$triple"; then
-        echo "error: target $triple is not installed. Add it with:" >&2
-        echo "    rustup target add $triple" >&2
+    if ! have_static; then
+        echo "error: target $(static_triple) is not installed. Add it with:" >&2
+        echo "    rustup target add $(static_triple)" >&2
         exit 1
     fi
-    echo "[build] treeserve, static ($triple)"
-    cargo build --release --target "$triple" --no-default-features --features pure
-    mkdir -p dist
-    keep "target/$triple/release/treeserve" dist
+    build_static
     ;;
 windows)
     build_windows
@@ -224,6 +260,10 @@ windows)
 install)
     [ -x dist/treeserve ] || build_server
     mkdir -p "$prefix"
+    # Top-level files only, which is what leaves `dist/static/` and
+    # `dist/windows/` out of it: both hold a binary for a machine that is not
+    # this one, and the fast native build is the right thing to have on the
+    # PATH here. Copy the portable one by hand where you want it.
     for f in dist/*; do
         [ -f "$f" ] || continue
         cp "$f" "$prefix/"

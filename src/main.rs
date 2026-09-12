@@ -5,10 +5,16 @@ use treeserve::hl;
 use treeserve::page::ThemeMode;
 use treeserve::Config;
 
+/// What this build is, from `build.rs`. The header of `--help`, the whole of
+/// `--version`, the line the server prints when it starts, and — through
+/// `Config` — the footer of every page it serves, so a running server and the
+/// binary that started it can never disagree about which build they are.
+const BUILD: treestamp::BuildInfo = treestamp::build_info!("TREESERVE_");
+
 fn print_help() {
     print!(
         "\
-{name} {version} — serve a directory as a browsable, rendered website
+{label} — serve a directory as a browsable, rendered website
 
 USAGE:
     {name} [OPTIONS] [ROOT]
@@ -34,10 +40,10 @@ OPTIONS:
         --list-syntax-themes
                            list embedded highlighting themes and exit
     -h, --help             print this help
-    -V, --version          print version
+    -V, --version          print the version, the commit and the build time
 ",
+        label = BUILD.label(),
         name = env!("CARGO_PKG_NAME"),
-        version = env!("CARGO_PKG_VERSION"),
     );
 }
 
@@ -67,7 +73,11 @@ fn parse_args() -> Config {
                 exit(0);
             }
             "-V" | "--version" => {
-                println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+                // Several lines, not one: which commit, whether the tree it was
+                // cut from was clean, when that commit landed and when this was
+                // compiled. On a machine somebody copied a binary to, that is
+                // the difference between "it is out of date" and a guess.
+                println!("{}", BUILD.report());
                 exit(0);
             }
             "-b" | "--bind" => {
@@ -137,6 +147,13 @@ fn parse_args() -> Config {
     }
 
     let mut cfg = Config::new(root);
+    // The same stamp the CLI prints, so every page this server writes carries
+    // it in the footer. Without this the footer fell back to `CARGO_PKG_*` and
+    // said `treeserve v0.1.0` with no commit — the one number that cannot tell
+    // two builds apart is the one that never changes between them.
+    cfg.app_name = Some(BUILD.name.to_string());
+    cfg.app_version = Some(BUILD.version.to_string());
+    cfg.app_commit = (!BUILD.commit.is_empty()).then(|| BUILD.commit_mark());
     cfg.set_title(title);
     cfg.bind = bind;
     cfg.port = port;
@@ -164,12 +181,6 @@ fn main() {
         eprintln!("error: cannot bind {}: {}", addr, e);
         exit(1);
     });
-    println!(
-        "{} v{}: serving {} at http://{}/",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        root,
-        addr
-    );
+    println!("{}: serving {} at http://{}/", BUILD.label(), root, addr);
     serving.join();
 }

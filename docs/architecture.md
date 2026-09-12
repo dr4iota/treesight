@@ -18,7 +18,7 @@ implementation supplied by the embedder.
 | `treeserve` | repo root | `treeserve` | HTTP server + CLI. Sync worker threads, `tiny_http`. |
 | `treesight-shell` | `shell/` | — | The window, the custom scheme, the panes — everything the app is made of, as a library. |
 | `treesight` | `app/` | `treesight` | This repo's app: a tauri.conf.json, icons, and the context they compile into. `publish = false`. |
-| `treestamp` | `stamp/` | — | What a build says it is. No dependencies: it is a build-dependency *and* a dependency of every consumer. |
+| `treestamp` | `stamp/` | — | What a build says it is. No dependencies: it is a build-dependency *and* a dependency of every consumer — `treeserve`, `treesight-shell` and `treesight` all stamp themselves with it. |
 
 `cargo build` at the root builds only `treeserve`, so webview libraries are
 needed only when you ask for the app (`cargo run -p treesight`, `./build.sh`).
@@ -488,6 +488,37 @@ them back into that binary's `BUILD`, which reaches the shell as
 `ShellExt::build`. It shows up in `treesight --version` and, as
 `Config::app_commit`, in the footer of every page: `treesight v0.1.0
 (a1b2c3d4+2)`.
+
+**`treeserve` stamps itself the same way**, from `build.rs` at the repo root
+under `TREESERVE_`, and `src/main.rs` puts it in four places: the header of
+`--help`, the whole of `--version`, the line printed when the server starts,
+and — by setting `Config::app_name`/`app_version`/`app_commit` — the footer of
+every page it serves. The one thing the CLI must do that `app/` need not is
+`.repo(env!("CARGO_MANIFEST_DIR"))`: `Stamp::new` asks git about the manifest
+directory's *parent*, which is this repository for `app/` and the repository
+that vendored us for the root crate.
+
+Why it is worth the build script: a binary copied to another machine is
+otherwise unidentifiable, and `treeserve 0.1.0` is the same string in every
+build ever made. `--version` now answers *which* one, whether the tree it came
+from was clean, and when:
+
+```text
+treeserve 0.1.0  2026-09-12T18:29:12Z
+commit 9cf63e5b  2026-09-12T13:29:17-04:00 on main (clean)
+```
+
+Two lines, and the times fall in the same column without being padded to it —
+`name 0.1.0` and `commit a1b2c3d4` are both fifteen characters for the names
+and versions this repo has. A third line names a vendored checkout where there
+is one.
+
+That last part needed a fix in `treestamp` itself. `git()` treats empty output
+as no answer, which is right for a hash or a date and wrong for a count: a
+clean tree prints nothing from `git diff --name-only HEAD`, so `dirty` came
+back empty — the value that means *nobody asked* — and no `--version` in any of
+the three binaries could say `(clean)`. The dirty count reads through
+`git_said`, which keeps the distinction.
 
 The shell stamps itself too, under `TREESIGHT_SHELL_`, and `run_with` falls back
 to it when `ShellExt::build` is `None`. That fallback names the *library*, so a

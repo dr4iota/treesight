@@ -161,7 +161,26 @@ impl BuildInfo {
         s
     }
 
-    /// Several lines, for `--version`, where there is room to say all of it.
+    /// Two lines, for `--version`: what this is and when it was built, then
+    /// which commit it came from, when that commit landed, and whether the tree
+    /// it was cut from had anything else in it.
+    ///
+    /// ```text
+    /// treeserve 0.1.0  2026-09-12T17:29:24Z
+    /// commit 9cf63e5b  2026-09-12T13:29:17-04:00 on main (clean)
+    /// ```
+    ///
+    /// The two times sit under each other without being padded to it:
+    /// `treeserve 0.1.0` and `commit 9cf63e5b` are both fifteen characters for
+    /// a nine-letter name and a three-part version of single digits, which is
+    /// what every binary here has. A longer name or a version that reaches ten
+    /// slides the first line right and nothing breaks — the column is a
+    /// pleasantness, not a promise, and padding to it would put a ragged gap in
+    /// the common case to keep a rare one straight.
+    ///
+    /// It was four labelled lines — `commit`, `committed`, `built`, each
+    /// spelled out down the left. The labels were the widest thing on it and
+    /// the values were what anybody was reading.
     pub fn report(&self) -> String {
         let dirty = match self.dirty.parse::<u32>() {
             Ok(0) => " (clean)".to_string(),
@@ -173,24 +192,25 @@ impl BuildInfo {
             true => String::new(),
             false => format!(" on {}", self.branch),
         };
+        // A third line only where there is a second repository to name, which
+        // is a shell that carries a copy of another one. `vendors` rather than
+        // a bare name: the line has to say what the relationship is, since by
+        // then two names and two hashes are on screen.
         let vendored = match self.vendored.is_empty() {
             true => String::new(),
             false => format!(
-                "\n{:<10} {}",
+                "\nvendors {} {}",
                 self.vendored,
                 or_unknown(self.vendored_commit)
             ),
         };
         format!(
-            "{} {}\n\
-             commit     {}{branch}{dirty}\n\
-             committed  {}{vendored}\n\
-             built      {}",
+            "{} {}  {}\ncommit {}  {}{branch}{dirty}{vendored}",
             or_unknown(self.name),
             or_unknown(self.version),
+            or_unknown(self.build_time),
             or_unknown(self.commit),
             or_unknown(self.commit_time),
-            or_unknown(self.build_time),
         )
     }
 }
@@ -255,8 +275,14 @@ impl Stamp {
         self.emit_one("BRANCH", || git(&self.repo, &["rev-parse", "--abbrev-ref", "HEAD"]));
         // Tracked files differing from HEAD, as a count. Untracked files are
         // not in it: a build directory nobody added is not a modified build.
+        // `git_said`, not `git`: a clean tree prints nothing, and nothing is
+        // the answer — zero files differ. Through `git` it came back as None
+        // and this field was left empty, which is the value that means *nobody
+        // asked*; `--version` could then never say `(clean)`, and the one thing
+        // a reader wants of a binary they found on a server is whether it is
+        // the commit it claims to be.
         self.emit_one("DIRTY", || {
-            git(&self.repo, &["diff", "--name-only", "HEAD"])
+            git_said(&self.repo, &["diff", "--name-only", "HEAD"])
                 .map(|out| out.lines().filter(|l| !l.is_empty()).count().to_string())
         });
         let vendored = self.vendored.as_ref();
@@ -370,7 +396,13 @@ fn now() -> i64 {
 
 /// `git` in `dir`, or `None` — which covers no git on the PATH, no repository,
 /// a repository with no commits, and a checkout that was never initialised.
-fn git(dir: &Path, args: &[&str]) -> Option<String> {
+/// Git's answer, where saying nothing is one of the answers.
+///
+/// `None` means git could not be asked — no git, no repository, a command that
+/// failed — and is the whole reason every field here may be empty. Only
+/// [`Stamp::emit`]'s dirty count wants this form; everything else is a hash or
+/// a date, which git either prints or fails to produce.
+fn git_said(dir: &Path, args: &[&str]) -> Option<String> {
     if !dir.is_dir() {
         return None;
     }
@@ -378,8 +410,13 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!text.is_empty()).then_some(text)
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The same, with an empty answer counted as no answer — which for a hash or a
+/// date is what it means.
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    git_said(dir, args).filter(|t| !t.is_empty())
 }
 
 /// Rebuild when this repository's HEAD moves: the file itself, the branch ref
@@ -465,6 +502,21 @@ mod tests {
         assert_eq!(b.label(), "treesight v0.1.0 (a1b2c3d4+2)");
     }
 
+    /// `0` and `""` are different answers and must read differently: zero files
+    /// differ, against nobody counted. `git diff --name-only` on a clean tree
+    /// prints nothing, and taking that silence for a failure is how every
+    /// `--version` ever printed came out saying neither.
+    #[test]
+    fn a_clean_tree_says_so_and_an_uncounted_one_says_nothing() {
+        assert!(FULL.report().contains("(clean)"), "{}", FULL.report());
+        let b = BuildInfo { dirty: "", ..FULL };
+        assert!(!b.report().contains("clean"), "{}", b.report());
+        assert!(!b.report().contains("file"), "{}", b.report());
+        // The mark is the bare hash either way — a count of nothing and a count
+        // nobody took both mean "no `+n` to add".
+        assert_eq!(b.commit_mark(), "a1b2c3d4");
+    }
+
     /// The whole point of the fallbacks: no git, no repository, nothing
     /// vendored — still a label, still a report, and no empty parentheses.
     #[test]
@@ -472,7 +524,7 @@ mod tests {
         let b = BuildInfo { name: "treesight", version: "0.1.0", ..BuildInfo::UNKNOWN };
         assert_eq!(b.label(), "treesight v0.1.0");
         let report = b.report();
-        assert!(report.contains("commit     unknown"), "{report}");
+        assert!(report.contains("commit unknown  unknown"), "{report}");
         assert!(!report.contains(" on "), "no branch, so no branch clause: {report}");
     }
 
@@ -483,7 +535,7 @@ mod tests {
             b.line(),
             "treesight v0.1.0 (a1b2c3d4) · treesight 5f6a7b8c · built 2026-08-28"
         );
-        assert!(b.report().contains("treesight  5f6a7b8c"), "{}", b.report());
+        assert!(b.report().contains("vendors treesight 5f6a7b8c"), "{}", b.report());
     }
 
     #[test]
