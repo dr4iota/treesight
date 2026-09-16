@@ -844,13 +844,20 @@ fn serve_opened(app: &AppHandle, opened: Opened, remember: bool) {
     }
 }
 
-/// Why a folder did not open, in the words the pane uses for the same thing — so
-/// that a drive which the list calls "not available" is not called "missing" here.
+/// Why a folder did not open, spelling out what the list abbreviates — a drive
+/// the row marks `N/A` is *not available* here, one it marks `denied` said no,
+/// and one it marks `gone` is *no longer there*. A dialog has room for the
+/// sentence and a row at the end of a path does not; what must not happen is
+/// the words crossing over. Each status is named, so a new one cannot fall
+/// through to somebody else's sentence.
 fn cannot_open(dir: &Path, status: RootStatus) -> String {
     let path = treeserve::util::display_path(dir);
     match status {
         RootStatus::Unreachable => {
             format!("{path} is not available.\n\nThe drive or share did not answer.")
+        }
+        RootStatus::Denied => {
+            format!("{path} would not let you in.\n\nIt is there, and this account may not read it.")
         }
         _ => format!("{path} is no longer there."),
     }
@@ -1565,8 +1572,11 @@ fn classify(e: &io::Error) -> RootStatus {
     }
     match e.kind() {
         io::ErrorKind::NotFound => RootStatus::Missing,
-        // A drive that is not ready, a folder we may not look into: something is
-        // there, we just cannot see it. Not the same as gone.
+        // It is there and it said no, which is a different errand for the
+        // reader than a drive that is not ready: a permission to change rather
+        // than a machine to go and switch on.
+        io::ErrorKind::PermissionDenied => RootStatus::Denied,
+        // Something is there, we just cannot see it. Not the same as gone.
         _ => RootStatus::Unreachable,
     }
 }

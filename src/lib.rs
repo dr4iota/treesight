@@ -82,18 +82,34 @@ pub enum RootStatus {
     Ok,
     /// It answered, and there is nothing there any more.
     Missing,
-    /// It did not answer: a drive that is not ready, a share whose host has gone,
-    /// a folder we are not allowed to look into.
+    /// It answered and would not let us in: a folder whose permissions exclude
+    /// us, a login the far end refused. Kept apart from [`Self::Unreachable`]
+    /// because the two ask different things of the reader — one is a machine or
+    /// a disk to go and see about, the other is a credential.
+    Denied,
+    /// It did not answer: a drive that is not ready, a share whose host has gone.
     Unreachable,
 }
 
 impl RootStatus {
     /// What to put next to the entry, or `None` while there is nothing to say.
+    ///
+    /// Short, because this rides at the end of a row that is mostly somebody's
+    /// path — and `N/A` is what the rest of a shell built on this already says
+    /// for a control that is not available, spelled out in full wherever there
+    /// is a sentence to spell it in (`cannot_open`, and the usage pages).
+    ///
+    /// `denied` rather than *refused*, which is the other word for this and is
+    /// already taken: a *connection refused* is a socket with nothing behind it,
+    /// which is the `N/A` case and the opposite of what this one means. `denied`
+    /// is the word both halves of it already use — ssh's own *Permission
+    /// denied*, and `io::ErrorKind::PermissionDenied`.
     pub fn note(self) -> Option<&'static str> {
         match self {
             RootStatus::Unknown | RootStatus::Ok => None,
-            RootStatus::Missing => Some("missing"),
-            RootStatus::Unreachable => Some("not available"),
+            RootStatus::Missing => Some("gone"),
+            RootStatus::Denied => Some("denied"),
+            RootStatus::Unreachable => Some("N/A"),
         }
     }
 }

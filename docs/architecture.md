@@ -281,7 +281,19 @@ for ~20 s). The window shows `/.ts/wait` meanwhile. Success: `set_root`,
 
 `check_roots` probes Places and Recent **local** ids only, one thread per
 path, and prunes dead Recents from `recent.txt`. Remote ids are skipped;
-whoever supplied them owns their status via `set_root_status`.
+whoever supplied them owns their status via `set_root_status`. It runs once,
+when the window is built — so an embedder that greys a row of its own is the
+only thing that can un-grey it, and has to say so on every route back, not just
+the one that goes through `RootOpener`.
+
+`RootStatus` has three things to say and they send a reader three different
+places: `gone` (it answered, nothing there), `denied` (it answered and would not
+have us — a permission, a login), `N/A` (it did not answer — a machine or a
+link). `denied` and not *refused*: a *connection refused* is a socket with
+nothing behind it, which is the third case and the opposite of the one that word
+would be naming. The row abbreviates; `cannot_open` spells each out, and matches
+on every status by name so a fourth cannot fall through to a sentence meant for
+another.
 
 Places come from the platform (home, desktop, documents, downloads, drive
 letters or `/`). Recent is `recent.txt` in the app config dir, newest

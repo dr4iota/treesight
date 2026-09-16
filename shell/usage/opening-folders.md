@@ -10,8 +10,10 @@ desktop, documents and downloads where the system has them, the drive letters
 that exist on Windows, and the filesystem root elsewhere. The same rows every
 launch — that is the point of it. Nothing you open is added here.
 
-A row that is greyed and says *missing* or *not available* was asked about after
-the page was drawn: a drive that is not ready, a share whose host has gone. It
+A row that is greyed was asked about after the page was drawn, and the word says
+what came back: *gone* — it answered, and there is nothing there any more —
+*denied*, meaning it is there and would not let you in, or *N/A*, meaning not
+available: a drive that is not ready, a share whose host has gone. It
 stays a link, because the only way to find out whether it is back is to ask for
 it, and clicking one costs whatever that wait costs.
 

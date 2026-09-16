@@ -2456,7 +2456,7 @@ mod tests {
             html.contains("<a class=\"aside\" href=\"/x/edit?id=prod-web\" title=\"Edit prod-web\">"),
             "{html}"
         );
-        assert!(html.contains("<span class=\"why\">missing</span>"), "{html}");
+        assert!(html.contains("<span class=\"why\">gone</span>"), "{html}");
         // Between the fixed list and the remembered one, not after both.
         state.cfg.places = vec![("Home".to_string(), "/home/x".to_string())];
         state.cfg.set_recent(vec!["/tmp".to_string()]);
