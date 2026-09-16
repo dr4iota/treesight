@@ -342,6 +342,23 @@ how it came to replace instead: over the start page that spent the only entry
 the window had, and Back out of Usage left the app rather than landing where
 Back out of a folder lands. Judging push-or-replace belongs in one place.
 
+**A replacement needs a page to replace.** `replace_page` evaluates
+`location.replace`, which runs in whatever document is current — and when a
+navigation of ours has been posted but has not committed, that is still the
+document the navigation is about to take away. The replace then races the
+navigation instead of replacing it, and the loser is sometimes the folder:
+`Files` on Android opens too fast for its own wait page to land, so the wait
+page occasionally won and the window sat on "Opening…" with the root open
+behind it. And the window is not always a matter of milliseconds: a wait page
+drawn while a root is open is `layout` like any other page, pane and all, so
+over a remote root the renderer has a `read_dir` to make across the network
+before the page can even be handed to the webview — while the open it is
+waiting for runs on a thread that owes it nothing and may be reusing a pooled
+session. That is the same stranding, on a server, with seconds to happen in. `Serving::loaded` therefore tracks the page *on screen* — false from
+the moment we navigate, true again when the webview reports a load started —
+and while it is false a page goes up by navigating, which supersedes the load
+in flight and costs no entry either.
+
 ### The tree pane
 
 A directory row is three controls, not one: the arrow opens it here, the name

@@ -211,15 +211,27 @@ pub struct Serving {
     /// says the start page whatever is open — and closes what is, so that the
     /// page and the app agree. See `treeserve::HOME_PATH`.
     home: String,
-    /// Whether a page of ours has finished loading in the window yet.
+    /// Whether the page the window is showing has committed.
     ///
     /// Re-rooting has to put the new root on screen without leaving the old page
     /// behind in the history — every page this window shows is the same URL, so
     /// a pushed entry is a copy of the one you are on, and Back into it renders
     /// the *new* root under the old page's address. `location.replace` is how a
-    /// page is changed without an entry, and it needs a page to run in: before
-    /// the window's own first load has committed there is none, and a plain
-    /// navigation supersedes that load rather than stacking on it.
+    /// page is changed without an entry, and it needs a page to run in.
+    ///
+    /// The window's own first load is one moment there is none, and not the only
+    /// one: a navigation this shell asked for a moment ago has not committed
+    /// either, and the document still on screen is the one it is about to take
+    /// away. A `location.replace` evaluated into that document races the
+    /// navigation rather than replacing it — which is how opening Files, the one
+    /// root that opens too fast for its own wait page to land, occasionally left
+    /// the window sitting on "Opening…" with the folder open behind it — and a
+    /// wait page drawn over a remote root carries a pane the renderer fetches
+    /// across the network, so the window can be seconds wide rather than
+    /// milliseconds, which is the same stranding on a server. So the
+    /// flag goes false whenever we navigate and true again when a page commits,
+    /// and while it is false a page is put up by navigating — which supersedes
+    /// the load in flight rather than stacking on it, and costs no entry either.
     loaded: AtomicBool,
     /// Whether the page in the window is the start page.
     ///
@@ -1277,12 +1289,19 @@ fn start(app: &AppHandle) -> Result<(), String> {
         let app = app.clone();
         let shell = shell_origins();
         move |win, payload| {
-            if payload.event() != tauri::webview::PageLoadEvent::Finished {
-                return;
-            }
             let Some(serving) = app.try_state::<Serving>() else {
                 return;
             };
+            // A document has committed, so there is one to run a
+            // `location.replace` in. On `Started` and not only on `Finished`,
+            // because that is the moment the answer turns true and a re-root
+            // can arrive in the millisecond between the two; and whoever served
+            // it, because the question is whether script has somewhere to run
+            // and every page answers it. See `Serving::loaded`.
+            serving.loaded.store(true, Ordering::Relaxed);
+            if payload.event() != tauri::webview::PageLoadEvent::Finished {
+                return;
+            }
             // Whoever served it. This is the only place a page the shell did not
             // put up is seen — a link into a subfolder, an embedder's own page,
             // and the one that matters: a Back that landed on the start page.
@@ -1296,10 +1315,6 @@ fn start(app: &AppHandle) -> Result<(), String> {
             // retitling the window from the served root left it named after a
             // folder that page has nothing to do with.
             if origin_allowed(&shell, payload.url()) {
-                // There is a page here now, and one that can be told to replace
-                // itself — which is how a re-root avoids leaving a copy of the
-                // page behind it in the history. See `Serving::loaded`.
-                serving.loaded.store(true, Ordering::Relaxed);
                 let _ = win.set_title(&window_title(&serving.state().cfg));
             }
         }
@@ -2158,7 +2173,19 @@ fn push_page(app: &AppHandle, url: &str) {
     };
     note_page(app, url);
     if let Ok(url) = url.parse() {
+        note_navigating(app);
         let _ = win.navigate(url);
+    }
+}
+
+/// A navigation of ours has been asked for and the page it lands on has not
+/// committed yet. Until it does, the document on screen is the one that
+/// navigation is about to take away, and a script evaluated into it is a second
+/// navigation racing the first rather than a replacement of it —
+/// see [`Serving::loaded`].
+fn note_navigating(app: &AppHandle) {
+    if let Some(serving) = app.try_state::<Serving>() {
+        serving.loaded.store(false, Ordering::Relaxed);
     }
 }
 
@@ -2207,9 +2234,11 @@ pub fn replace_page(app: &AppHandle, url: &str) {
         true => {
             let _ = win.eval(&format!("location.replace('{}')", js_quoted(url)));
         }
-        // Nothing loaded yet to run that in — the window is still fetching its
-        // own first page. A navigation supersedes a load that has not committed,
-        // so this leaves one entry too.
+        // Nothing committed to run that in — the window is still fetching its
+        // own first page, or a navigation of ours is still in flight. A
+        // navigation supersedes a load that has not committed, so this leaves
+        // one entry too, and it is the only way to reach a page that is not
+        // there yet.
         false => {
             if let Ok(url) = url.parse() {
                 let _ = win.navigate(url);
