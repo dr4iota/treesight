@@ -153,6 +153,104 @@ addEventListener('pageshow', function (e) {
 });
 "#;
 
+/// Where each of this window's scrollers was, kept across the reload that is how
+/// every change of state here arrives.
+///
+/// A theme toggled, a folder pinned, a Recent row forgotten, a directory opened
+/// in the tree: each is answered by `shell_action` and ends in `location.reload`,
+/// which is what keeps the reader's place — except that it does not. The pane
+/// and the listing are each an `overflow: auto` box of their own rather than the
+/// document's scroller, and no engine restores one of those: measured here, an
+/// identical document reloaded comes back at zero. Opening one directory in a
+/// long tree therefore threw the reader back to the top of it, which is the one
+/// thing that makes a tree pane tiring to use.
+///
+/// **The address is the carrier.** It is the one thing that survives a reload
+/// without asking the platform for anything, and `location.replace` writes it
+/// with no history entry and no navigation — a fragment-only replace is a
+/// same-document change, and a pushed copy of this window's one address is the
+/// thing that must never happen here. Storage was the other way and is not
+/// available: `treesight://localhost` is an opaque origin, which has none to
+/// reach, and the jar upstairs exists for that same reason.
+///
+/// Injected into every document beside `VIEWPORT` and `RESTORE`, and like them
+/// never replaced by an embedder: a terminal page has no `nav.tree` and this
+/// does nothing there, but a shell that brought its own keys has said nothing
+/// about scrolling.
+const SCROLLERS: &str = r#"
+(function () {
+ try {
+  // Ours and nobody else's: a document's own `#heading` is left alone, and this
+  // is not a form a reader would ever type.
+  var MARK = /^#ts(\d+),(\d+)$/;
+  // Only pages this server rendered, by the same mark `RESTORE` goes by. An
+  // embedder's own page is a program with its own idea of what its address
+  // means — telechore's Servers page has a `main` of its own and would have had
+  // a fragment written into it — and none of them reload to lose their place.
+  function ours() {
+    return !!(document.body && document.body.classList.contains('app'));
+  }
+  function boxes() {
+    return ours()
+      ? [document.querySelector('nav.tree'), document.querySelector('main')]
+      : [];
+  }
+  function restore() {
+    var m = MARK.exec(location.hash);
+    if (!m || !ours()) { return; }
+    var b = boxes();
+    if (b[0]) { b[0].scrollTop = +m[1]; }
+    if (b[1]) { b[1].scrollTop = +m[2]; }
+  }
+  var pending;
+  function remember() {
+    clearTimeout(pending);
+    // Once the scrolling stops, rather than on every frame of a flick.
+    pending = setTimeout(function () {
+      var b = boxes();
+      var t = Math.round((b[0] && b[0].scrollTop) || 0);
+      var l = Math.round((b[1] && b[1].scrollTop) || 0);
+      // Always a fragment, even at the top, and `0,0` rather than none: a
+      // replace that *removes* one is a navigation to the bare address, which
+      // is the address we are on, which is a reload. Scrolling back to the top
+      // of a tree reloaded the page under the reader, measured. Fragment to
+      // fragment is always the same document.
+      var want = location.pathname + location.search + '#ts' + t + ',' + l;
+      // And only when it would change anything: a replace to the address you
+      // are already on is that same reload, and one from a scroll handler is a
+      // page that reloads itself for as long as anybody touches it.
+      if (location.href.slice(-want.length) !== want
+          || location.hash !== '#ts' + t + ',' + l) {
+        location.replace(want);
+      }
+    }, 200);
+  }
+  function watch() {
+    var b = boxes();
+    for (var i = 0; i < b.length; i++) {
+      if (b[i]) { b[i].addEventListener('scroll', remember, { passive: true }); }
+    }
+    // After the listeners, so the scroll events this fires are seen and written
+    // straight back as the same address — which the check above then drops.
+    restore();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', watch);
+  } else {
+    watch();
+  }
+  // And again once the window has a size. A box that is not yet taller than its
+  // own frame cannot be scrolled at all, and an offset set into one is silently
+  // clamped to nothing: measured at `DOMContentLoaded`, the pane's content and
+  // its frame are both the same height, and the real one arrives with the
+  // layout. `load` fires after `VIEWPORT`'s own, which is what settles `--vh`
+  // and therefore that height — the order these are injected in is the order
+  // they are needed in.
+  addEventListener('load', restore);
+ } catch (e) { /* a window that forgets where it was still works */ }
+})();
+"#;
+
 const SHORTCUTS: &str = r#"
 addEventListener('keydown', function (e) {
   if (e.altKey && !e.ctrlKey && e.key === 'ArrowLeft') { history.back(); }
@@ -453,7 +551,7 @@ struct SharedExt(Arc<Ext>);
 /// spelled wrong, the key would navigate into the tree and land on a 404.
 fn window_script(custom: Option<String>) -> String {
     format!(
-        "{VIEWPORT}\n{RESTORE}\n{}",
+        "{VIEWPORT}\n{RESTORE}\n{SCROLLERS}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
@@ -2740,6 +2838,7 @@ mod tests {
         assert!(mine.contains("pageshow"), "no restore");
         assert!(mine.contains("data-touch"), "no platform script");
         assert!(mine.contains("ArrowLeft"), "no keys");
+        assert!(mine.contains("#ts"), "no scroll keeper");
 
         // And the address of the start page is filled in wherever it is asked
         // for, in a script of ours or of theirs.
@@ -2752,6 +2851,7 @@ mod tests {
         assert!(theirs.contains(treeserve::HOME_PATH), "not filled in for an embedder");
         assert!(theirs.contains("pageshow"), "the restore went with the keys");
         assert!(theirs.contains("data-touch"), "the platform script went with the keys");
+        assert!(theirs.contains("#ts"), "the scroll keeper went with the keys");
         assert!(!theirs.contains("ArrowLeft"), "the keys are the embedder's now");
     }
 

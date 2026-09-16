@@ -120,6 +120,19 @@ toggles wrote before this jar existed.
 `localStorage` would not do instead: an opaque origin has none to reach, and
 reading it needs script on the page, which the next paragraph rules out.
 
+A reload is how every change of state in this window arrives, and a reload puts
+every scroller in the page back at the top — the pane and the listing are each an
+`overflow: auto` box rather than the document's scroller, and no engine restores
+one of those (measured: an identical document, reloaded, comes back at zero). So
+opening one directory in a long tree threw the reader to the top of it. The
+shell's `SCROLLERS` script keeps both offsets in a fragment of its own
+(`#ts<pane>,<listing>`), written with `location.replace`, which costs no history
+entry and stays a same-document change. The fragment is always written, never
+removed: a replace that takes the fragment *off* is a navigation to the bare
+address, which is the address you are on, which is a reload — scrolling back to
+the top reloaded the page under the reader until that was understood. Storage was
+the other way and there is none here, for the reason the cookie jar exists.
+
 There is **no JavaScript on served pages**. Toggles are links to `/.ts/set`.
 The only script in the product is the shell's `initialization_script` —
 `VIEWPORT` plus the keyboard shortcuts, or plus whatever an embedder's
