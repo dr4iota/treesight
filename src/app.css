@@ -267,6 +267,28 @@ header > .tag { order: 0; flex: 0 0 auto; }
    and not to the row. Border-box, so it is the whole bar: a little more than the
    text alone asked for, which is the air a heading wants anyway. */
 :root { --sec-head: 1.75rem; }
+/* The tree's grid: how far one level is indented, and how wide the arrow's box
+   is. Two things, because they answer two questions — how much depth is worth
+   on a narrow pane, and how close an arrow may sit to the name it opens — and
+   the answers are not the same number.
+
+   What ties them is the third line. A file has no arrow, so it is given the
+   difference as a gutter, and *that* is what puts its left edge exactly on the
+   name of the directory holding it, at any depth and for any pair of values
+   above. It was two loose numbers before — a level of .9rem against an arrow's
+   box of 1.8rem, with the file's gutter written out as its own 1.8rem — so a
+   file sat half a level left of its own parent's name, and the last closed
+   directory above it looked like the thing it belonged to.
+
+   The gap is never less than the step, or the gutter below goes negative.
+
+   1.5rem for the arrow and not the 1.8rem it had: that gap reads as two
+   controls rather than one row long before a thumb stops being able to hit it,
+   and the box still stretches to the row's full height (`--row-min`), which is
+   where the target actually comes from. 2.5rem was tried and was much too far.
+   1.125rem for the step, because depth is only worth what it costs the names:
+   every level is that much less room before one ellipsises. */
+:root { --tree-step: 1.125rem; --tree-gap: 1.5rem; }
 /* ---- The one measurement that still asks what is doing the pointing ----
 
    Everything else in this sheet is one size for every screen: the same marks,
@@ -509,24 +531,32 @@ nav.tree section > ul { padding-left: .2rem; }
    separates the shortcuts from the tree, and two of them together read as a
    double rule. */
 nav.tree .chooser { margin-top: .8rem; }
-nav.tree ul { list-style: none; margin: 0; padding-left: .9rem; }
+nav.tree ul { list-style: none; margin: 0; padding-left: var(--tree-step); }
 nav.tree li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 nav.tree a { color: var(--fg); display: inline-block; padding: .05rem .2rem; border-radius: 4px; }
 @media (hover: hover) {
   nav.tree a:hover { background: var(--border); text-decoration: none; }
 }
 nav.tree a.dir { color: var(--link); }
-/* A file gets the gutter a directory spends on its twisty, so the two line up.
-   Without it a file is not merely un-indented, it is indented backwards: a
-   directory's name starts after a 1.8rem arrow and a file's starts at the `li`,
-   so a file four levels down was drawn to the *left* of a top-level folder. A
-   margin and not a spacer element, because there is nothing to put in one — the
-   row shape a file wants is the row shape it has, minus a control it will never
-   have. `li > a` reaches only files: a directory's name is inside `.row`.
-   `li.more` is the count at the end of a long directory and has no anchor at
-   all, so it is named here to keep the same left edge. */
+/* Where a file's left edge goes, which is onto the name of the directory
+   holding it — not onto the name of the directory *above* it.
+
+   Those two were the same column once, and that is the whole fault this
+   replaced: a file lined up with the name above it begins exactly where that
+   directory's contents would begin, so a closed `inner/` followed by two files
+   of its parent drew two files that read as inner's own, which is the one thing
+   a tree's indentation exists to prevent. Onto the parent's name instead, a
+   file sits one step left of that, and a child of the closed directory would
+   sit one step right — three columns, none of them shared, nothing ambiguous.
+
+   So the gutter is the one thing a file is *missing*, which is the arrow's box
+   less the step it is already indented by — and at that width its left edge is
+   its parent's name, and a child of the directory above it starts a further
+   step in. Derived and not chosen: the two numbers above can move and this
+   stays true. `li.more`, the count at the end of a long directory, takes it too
+   — it has no anchor at all and would otherwise sit alone on the arrows. */
 nav.tree .files li > a,
-nav.tree .files li.more { margin-left: 1.8rem; }
+nav.tree .files li.more { margin-left: calc(var(--tree-gap) - var(--tree-step)); }
 /* A directory row: the name takes the width and gives it back with an ellipsis,
    the re-root button keeps its own. Quiet until the row is under the pointer,
    because the space is reserved either way and a column of bright arrows down a
@@ -545,7 +575,7 @@ nav.tree .row > .twisty {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.25rem;
+  width: var(--tree-gap);
   padding: 0;
   font-size: 1.05rem;
   line-height: 1;
@@ -1333,10 +1363,9 @@ body.nothing .start .row > a:first-child {
     min-height: var(--row-min);
     align-items: center;
   }
-  /* Wider, and it already stretches to the row's full height. */
-  /* Wide enough to hit and no wider: at 2.5rem the arrow sat a thumb's width from
-     the name it belongs to, which reads as two controls rather than one row. */
-nav.tree .row > .twisty { width: 1.8rem; }
+  /* No width here any more: the arrow's box is `--tree-gap`, set once beside the
+     step it is measured against — see the grid comment there. It already
+     stretches to the row's full height. */
   /* Every mark that is its own control: a box big enough to hit, the mark
      centred in it, and the drawing untouched. Only the pane's own marks take
      `padding: 0` — they are never words. */
