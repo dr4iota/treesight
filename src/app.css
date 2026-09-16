@@ -837,9 +837,20 @@ nav.tree .chooser li.gone > a,
 nav.tree .chooser li.gone > .row > a,
 body.nothing .start li.gone > a,
 body.nothing .start li.gone > .row > a {
+  color: var(--muted);
+}
+/* The *entry* gives up the width. `> a` said every link on the row, which on a
+   row that carries marks of its own is the marks as well: they grew into the
+   slack the name did not take, so the mark sat 20px in on one row and flush on
+   the next, and the `min-width: 0` took their 2.5rem hit box with it — 16px of
+   terminal button on a row with a long name. The greying above still says every
+   link; only the width does not. */
+nav.tree .chooser li.gone > a,
+nav.tree .chooser li.gone > .row > a:first-child,
+body.nothing .start li.gone > a,
+body.nothing .start li.gone > .row > a:first-child {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--muted);
 }
 /* An entry that brought smaller links of its own — an "edit this server"
    button beside the row that opens it. Same bargain the tree's re-root button
