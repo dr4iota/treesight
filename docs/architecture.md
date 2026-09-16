@@ -336,6 +336,12 @@ they are how you leave a folder on a desktop. Do not "fix" this by pushing more 
 or by giving the tree a per-folder address — that is the copy-of-one-address
 problem above, and it is worse than a Back that does nothing.
 
+**Every root arrives through `show_tree`**, the ones this crate opens for itself
+included. Usage is already in memory and has no wait page to step off, which is
+how it came to replace instead: over the start page that spent the only entry
+the window had, and Back out of Usage left the app rather than landing where
+Back out of a folder lands. Judging push-or-replace belongs in one place.
+
 ### The tree pane
 
 A directory row is three controls, not one: the arrow opens it here, the name

@@ -81,12 +81,15 @@ pub fn open(app: &AppHandle) {
     // The set has a name of its own; without one the title would be taken from
     // the id, which ends in a slash and names nothing.
     serving.state().cfg.set_root_name(Some(LABEL.to_string()));
-    // `replace_page`, not `navigate`: opening Usage is a re-root the shell does
-    // to itself, and every page of this window wears the same address, so a
-    // pushed entry is a copy of the one you are on — Back would then render the
-    // previous root against the Usage tree, a 404 rather than the folder you
-    // left. Every other re-root goes through here for the same reason.
-    crate::replace_page(app, &serving.entry);
+    // `show_tree`, which judges from the page on screen — and not
+    // `replace_page`, which is only half of what it does. Over a tree this is
+    // the same window under another root, and a pushed entry there is a copy of
+    // the address you are already on: Back into it would render the Usage tree
+    // under the old page's URL. Over the start page it is a step forward, and
+    // replacing there spends the one entry the window had — on a phone, Back
+    // out of Usage then left the app instead of going where Files goes. Every
+    // other re-root arrives by the same route for the same reasons.
+    crate::show_tree(app);
     if let Some(win) = app.get_webview_window(WINDOW) {
         show(&win);
     }
