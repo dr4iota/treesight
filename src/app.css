@@ -700,8 +700,11 @@ body.nothing .start a { padding: .15rem .3rem; border-radius: 4px; color: var(--
 @media (hover: hover) {
   body.nothing .start a:hover { background: var(--border); text-decoration: none; }
 }
-body.nothing .start .gone > a, body.nothing .start .gone > .row > a { color: var(--muted); }
-body.nothing .start .why { display: block; font-size: .75rem; color: var(--muted); padding: 0 .3rem; }
+/* A gone entry is the same bargain on both pages, and is made once, down in the
+   pane's own rules: the entry gives up width and the word sits at the end of its
+   line. The start page had the word as a `display: block` of its own instead,
+   from before the pane worked it out — so `E:` on Windows, two characters wide
+   in a column with room for thirty, still put its word on a second line. */
 
 /* A path shows as much of itself as its box is wide, which is a length only the
    browser knows: the server sends the whole thing split in two and the ellipsis
@@ -782,7 +785,8 @@ nav.tree .chooser .head, body.nothing .start .head { color: var(--muted); }
    the first answer and it was the wrong one twice — a flex line breaks on the
    items' natural widths, before any shrinking, so a long path pushed its word to
    a second line no matter how much room shrinking could have found. */
-nav.tree .chooser li.gone {
+nav.tree .chooser li.gone,
+body.nothing .start li.gone {
   display: flex;
   align-items: baseline;
 }
@@ -797,7 +801,9 @@ nav.tree .chooser li.gone {
    now: both halves of the path can ellipsise, so there is no width at which this
    does not fit. */
 nav.tree .chooser li.gone > a,
-nav.tree .chooser li.gone > .row > a {
+nav.tree .chooser li.gone > .row > a,
+body.nothing .start li.gone > a,
+body.nothing .start li.gone > .row > a {
   flex: 1 1 auto;
   min-width: 0;
   color: var(--muted);
@@ -811,7 +817,8 @@ nav.tree .chooser li.gone > .row > a {
 nav.tree .chooser .row > a { flex: 1 1 auto; min-width: 0; }
 /* A gone entry's `li` is the flex line that its note sits at the end of, so
    when the row is what holds the link, the row is what gives up the width. */
-nav.tree .chooser li.gone > .row { flex: 1 1 auto; min-width: 0; }
+nav.tree .chooser li.gone > .row,
+body.nothing .start li.gone > .row { flex: 1 1 auto; min-width: 0; }
 nav.tree .chooser a.aside {
   flex: 0 0 auto;
   padding: 0 .15rem;
@@ -823,7 +830,8 @@ nav.tree .chooser a.aside {
   nav.tree .chooser .row:hover a.aside { opacity: 1; }
   nav.tree .chooser a.aside:hover { color: var(--link); background: none; }
 }
-nav.tree .chooser .why {
+nav.tree .chooser .why,
+body.nothing .start .why {
   flex: 0 0 auto;
   margin-left: auto;
   padding-left: .4rem;
