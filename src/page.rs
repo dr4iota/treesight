@@ -1024,19 +1024,32 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
                     None => path_label(row.id),
                 }
             );
+            let why = match note {
+                Some(n) => format!("<span class=\"why\">{n}</span>"),
+                None => String::new(),
+            };
             format!(
-                "<li{}>{}{}</li>",
+                "<li{}>{}</li>",
                 if note.is_some() { " class=\"gone\"" } else { "" },
                 if row.aside.is_empty() {
-                    link
+                    format!("{link}{why}")
                 } else {
                     // The tree's row wrapper, for the reason the tree has it:
                     // the entry and its buttons share a line of their own, so a
                     // long name ellipsises against the buttons instead of
                     // pushing them off the pane.
+                    //
+                    // The word goes *inside* it, ahead of the buttons. It used
+                    // to follow the wrapper and so took the far edge for itself,
+                    // which left the buttons wherever it ended — a terminal mark
+                    // sitting 26px in on one row, 34 on the next and flush on a
+                    // healthy one, so the column of them was ragged by exactly
+                    // the width of whichever word it was. Word first, marks last,
+                    // and the marks line up whatever is said beside them.
                     format!(
-                        "<span class=\"row\">{}{}</span>",
+                        "<span class=\"row\">{}{}{}</span>",
                         link,
+                        why,
                         row.aside
                             .iter()
                             .map(|(href, icon, title)| format!(
@@ -1048,10 +1061,6 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
                             .collect::<String>()
                     )
                 },
-                match note {
-                    Some(n) => format!("<span class=\"why\">{n}</span>"),
-                    None => String::new(),
-                }
             )
         })
         .collect();

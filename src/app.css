@@ -684,9 +684,12 @@ body.nothing .start .row { display: flex; align-items: center; }
    button grew as well and sat wherever the name left it — a column of crosses at
    ragged margins, which is what made the list look untidy rather than aligned. */
 body.nothing .start .row > a:first-child { flex: 1 1 auto; min-width: 0; }
+/* No `margin-left: auto` here any more. The slack is claimed by `.why` ahead of
+   it — or, on a row with nothing to say, by the name's own `flex-grow` — and a
+   second claim on it put the mark at the edge and the word inside the name's
+   half of the row, which is the arrangement this stopped being. */
 body.nothing .start .row > a.aside {
   flex: 0 0 auto;
-  margin-left: auto;
   padding: 0 .15rem;
   line-height: 1;
   color: var(--muted);
