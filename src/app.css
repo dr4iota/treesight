@@ -626,7 +626,11 @@ nav.tree .more { color: var(--muted); font-style: italic; }
    `flex-grow` has something to hand out and the paths ellipsise. Left to the
    content, the widest path became the width of the page and the window was the
    thing that overflowed. */
-body.nothing main > .col { max-width: 44rem; margin-inline: auto; }
+/* The wait page over a root is the same shape for the same reason: it has no
+   pane either — see `waiting_layout` — and a sentence is not read across a
+   window's whole width. */
+body.nothing main > .col,
+body.waiting main > .col { max-width: 44rem; margin-inline: auto; }
 body.nothing .intro { margin: 1rem 0 2rem; }
 /* A page with prose on it should say what page it is. Modest, not a hero: the
    name is the one thing here that is not a list of somewhere to go. */

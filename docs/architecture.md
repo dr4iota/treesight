@@ -270,12 +270,28 @@ well — and takes its words from the embedder: `Config::app_name` and
 this crate stops calling itself treesight in its own window title and status
 line), and `Config::intro` from `ShellExt::intro`.
 
-`start_page` and `/.ts/wait` are drawn by `rootless_page`, a skeleton
-of its own rather than `layout` with the parts switched off: crumbs, the pane
-flag, line numbers and the path in the footer are all about a root, and a header
-full of controls for a folder nobody chose is chrome pretending. What stays is
-the name (`Config::app_name`, the embedder's, since this crate's own is a
-library), the theme control, and the way in.
+`start_page`, and `/.ts/wait` before there is a root, are drawn by
+`rootless_page`, a skeleton of its own rather than `layout` with the parts
+switched off: crumbs, the pane flag, line numbers and the path in the footer are
+all about a root, and a header full of controls for a folder nobody chose is
+chrome pretending. What stays is the name (`Config::app_name`, the embedder's,
+since this crate's own is a library), the theme control, and the way in.
+
+**The wait page reads nothing.** With a root open it keeps that root's chrome —
+crumbs, the machine's tag, Refresh, the theme, the status line — because that is
+still what is being served, and because every part of it is an id or a
+preference rather than a read. What it does not keep is the pane, and
+`waiting_layout` is a third skeleton for exactly that reason. The pane is a read
+per directory: the root, each directory the reader has opened under it, and a
+stat for every symlink on the way. Over a remote root those are round trips, and
+this is the one page in the app that must not wait on the network to appear — an
+embedder that asks for a secret asks *through a document*, and until this page
+commits, the ask lands on the page it is replacing, which cannot tell itself from
+a page the reader walked back to. A pane can outlast the budget for finding a
+page that will take the question, and then the connection fails for want of the
+very page being drawn for it. The pane switch and the drawer button go with the
+pane, which is right either way: there is nothing behind them here. Held by a
+test — the wait page over a root whose `Vfs` panics on every method.
 
 The start page's three lists — Places, embedder sections, Recent — are built from
 the same `Row`/`root_list` renderer the pane uses, so the rows, their greying and
@@ -374,12 +390,16 @@ document the navigation is about to take away. The replace then races the
 navigation instead of replacing it, and the loser is sometimes the folder:
 `Files` on Android opens too fast for its own wait page to land, so the wait
 page occasionally won and the window sat on "Opening…" with the root open
-behind it. And the window is not always a matter of milliseconds: a wait page
-drawn while a root is open is `layout` like any other page, pane and all, so
-over a remote root the renderer has a `read_dir` to make across the network
-before the page can even be handed to the webview — while the open it is
-waiting for runs on a thread that owes it nothing and may be reusing a pooled
-session. That is the same stranding, on a server, with seconds to happen in. `Serving::loaded` therefore tracks the page *on screen* — false from
+behind it. And the window was not always a matter of milliseconds: a wait page
+drawn while a root is open used to be `layout` like any other page, pane and
+all, so over a remote root the renderer had `read_dir`s to make across the
+network before the page could even be handed to the webview — while the open it
+was waiting for ran on a thread that owed it nothing and may have been reusing a
+pooled session. That was the same stranding, on a server, with seconds to happen
+in. `waiting_layout` has since taken the pane off that page, which shortens the
+window without closing it: a load in flight is still a load in flight, and
+`location.replace` still has nowhere to run while it is.
+`Serving::loaded` therefore tracks the page *on screen* — false from
 the moment we navigate, true again when the webview reports a load started —
 and while it is false a page goes up by navigating, which supersedes the load
 in flight and costs no entry either.

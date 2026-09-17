@@ -677,25 +677,6 @@ pub fn layout(
     show_ln_toggle: bool,
     content: &str,
 ) -> String {
-    // The picker lives in the status line, which is always on screen — the pane
-    // that used to hold it is the first thing to go when the window narrows. Only
-    // where there is one to open, though, and that is the embedder's answer
-    // rather than the platform's: a phone that has wired a per-directory grant to
-    // `/.ts/open` sets the flag and gets the button, and one that has not does
-    // not, because a button that cannot do the one thing it says is worse than
-    // no button.
-    let pick = if state.cfg.app_ui && state.cfg.picker {
-        flag(
-            "pick",
-            "/.ts/open",
-            &svg_icon(ICON_FOLDER),
-            "Open Folder…",
-            "Open Folder… (Ctrl+O)",
-        )
-    } else {
-        String::new()
-    };
-
     // One switch, one thing: the pane is either there with everything in it or
     // not there at all. In the shell that takes Places and Recent with it, which
     // is the honest trade for a full-width listing — the picker they are
@@ -736,27 +717,55 @@ pub fn layout(
         scrim = scrim,
         sidebar = sidebar,
         content = content,
-        // The served root gets the same head-and-leaf treatment as a Recent, and
-        // for the same reason: what a plain ellipsis drops off the end of a path
-        // is the folder you are actually in. The version goes first in the line
-        // and last in importance, so it is the one that gives up width when the
-        // line is short — width, not its place: see the stylesheet.
-        //
-        // The path gets a box of its own rather than sitting beside the version
-        // as two more children of the line. Head and leaf size themselves against
-        // their parent, so a bare `.leaf` is capped at the whole line and the
-        // version is added on top of that — a long folder name paints over the
-        // picker. In a box that is only what the version left, the same cap means
-        // what it says.
-        footer = format!(
-            "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>\
-             <span class=\"path\">{2}</span></span>\
-             {3}",
-            html_escape(&root.id),
-            html_escape(&state.cfg.app_label()),
-            path_label(&root.id),
-            pick
-        ),
+        footer = status_line(state, root),
+    )
+}
+
+/// The line along the bottom: what is being served, and the one way to serve
+/// something else.
+///
+/// The picker lives here, in a line that is always on screen — the pane that used
+/// to hold it is the first thing to go when the window narrows. Only where there
+/// is one to open, though, and that is the embedder's answer rather than the
+/// platform's: a phone that has wired a per-directory grant to `/.ts/open` sets
+/// the flag and gets the button, and one that has not does not, because a button
+/// that cannot do the one thing it says is worse than no button.
+///
+/// The served root gets the same head-and-leaf treatment as a Recent, and for the
+/// same reason: what a plain ellipsis drops off the end of a path is the folder
+/// you are actually in. The version goes first in the line and last in
+/// importance, so it is the one that gives up width when the line is short —
+/// width, not its place: see the stylesheet.
+///
+/// The path gets a box of its own rather than sitting beside the version as two
+/// more children of the line. Head and leaf size themselves against their parent,
+/// so a bare `.leaf` is capped at the whole line and the version is added on top
+/// of that — a long folder name paints over the picker. In a box that is only
+/// what the version left, the same cap means what it says.
+///
+/// Nothing here is a read: it is the root's id, the app's name and a flag from
+/// the config. That is what lets the wait page keep the line while touching no
+/// backend at all — see `waiting_layout`.
+fn status_line(state: &State, root: &Root) -> String {
+    let pick = if state.cfg.app_ui && state.cfg.picker {
+        flag(
+            "pick",
+            "/.ts/open",
+            &svg_icon(ICON_FOLDER),
+            "Open Folder…",
+            "Open Folder… (Ctrl+O)",
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>\
+         <span class=\"path\">{2}</span></span>\
+         {3}",
+        html_escape(&root.id),
+        html_escape(&state.cfg.app_label()),
+        path_label(&root.id),
+        pick
     )
 }
 
@@ -1439,13 +1448,65 @@ pub fn listing_text(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> String {
     out
 }
 
+/// The wait page's own skeleton: the served root's chrome around a message, and
+/// no pane.
+///
+/// **This page must not read anything.** `layout` would draw the pane, and the
+/// pane is a read — `tree_dir` lists the root and every directory the reader has
+/// opened under it, one round trip each, plus one more for every symlink. Over a
+/// local folder that is free. Over a remote one it is the network, and this is
+/// the one page in the app that must not wait on the network to appear: the dial
+/// it stands in for asks for its password *through a document*, and until this
+/// one commits the ask lands on the page it is replacing, where the prompt script
+/// refuses it — correctly, since it cannot tell that document from the one a
+/// reader walked back to. An embedder's budget for finding a page that will take
+/// the question is finite and short — it is measuring a page with no bridge to
+/// it, not a network — and a pane over a slow remote root can outlast it. The
+/// dial is then dropped for want of the very page being drawn for it.
+///
+/// So the chrome and nothing else, which costs an id and a preference apiece: the
+/// crumbs, the machine's tag, Refresh and the theme, and `status_line` under
+/// them. What goes with the pane is the pane switch and the drawer button, and
+/// that is right either way — there is nothing behind them on this page. The
+/// message takes the reading column the start page's does, since without the pane
+/// beside it a full window's width is nothing to read a sentence across.
+fn waiting_layout(
+    state: &State,
+    root: &Root,
+    prefs: Prefs<'_>,
+    url_now: &str,
+    content: &str,
+) -> String {
+    format!(
+        r#"{chrome}
+<div class="shell">
+<main>
+<div class="col">
+{content}
+</div>
+</main>
+</div>
+<footer>{footer}</footer>
+</body>
+</html>
+"#,
+        chrome = head_and_header(state, root, prefs, &[], url_now, "", false, false, "waiting"),
+        content = content,
+        footer = status_line(state, root),
+    )
+}
+
 /// Shown while the shell is finding out whether a folder can be opened.
 ///
 /// Resolving a path is a syscall with no time limit — a drive letter mapped to a
-/// host that is off takes as long as the network stack takes to give up — so the
-/// shell does it on a thread and parks the window here meanwhile. Still the served
-/// root's page furniture, because that is still what is being served: only the
-/// middle of the window is waiting.
+/// host that is off takes as long as the network stack takes to give up, and a
+/// server is a handshake and a password before it is a folder — so the shell does
+/// it on a thread and parks the window here meanwhile.
+///
+/// Still the served root's page furniture, because that is still what is being
+/// served: only the middle of the window is waiting. Everything but the pane,
+/// that is — see `waiting_layout` for why the one page about waiting is the one
+/// page that may not wait for itself.
 pub fn wait_page(
     state: &State,
     root: Option<&Root>,
@@ -1462,7 +1523,7 @@ pub fn wait_page(
     // The first folder of the session is opened from the start page, where there
     // is no root yet — so this page has to be drawable without one.
     match root {
-        Some(root) => layout(state, root, prefs, &[], url_now, "", false, &content),
+        Some(root) => waiting_layout(state, root, prefs, url_now, &content),
         None => rootless_page(state, prefs, url_now, &content),
     }
 }
@@ -1693,6 +1754,74 @@ mod tests {
             html.contains("<a class=\"twisty\" href=\"/.ts/tree?shut=other&amp;back=%2Fhere%2F\""),
             "{html}"
         );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// **The one page about waiting may not wait for itself.** The pane is a read
+    /// per directory — the root, everything open under it, and a stat for every
+    /// symlink on the way — and over a remote root those are round trips. The
+    /// dial this page stands in for has a budget to find a document to ask its
+    /// password in, and a pane can outlast it: the connection then fails for want
+    /// of the very page being drawn for it.
+    ///
+    /// A backend that traps is the only way to say "reads nothing" and have it
+    /// stay said. `sidebar: true`, because a pane switched off proves nothing.
+    #[test]
+    fn the_wait_page_does_not_read_the_folder_it_is_leaving() {
+        use std::sync::Arc;
+        struct Trap;
+        impl Vfs for Trap {
+            fn resolve(&self, _: &VfsPath) -> Result<VfsPath, crate::vfs::ResolveError> {
+                panic!("the wait page resolved a path")
+            }
+            fn metadata(&self, _: &VfsPath) -> std::io::Result<crate::vfs::Meta> {
+                panic!("the wait page stat'ed something")
+            }
+            fn read_dir(&self, _: &VfsPath) -> std::io::Result<Vec<crate::vfs::Entry>> {
+                panic!("the wait page listed a directory")
+            }
+            fn read(&self, _: &VfsPath) -> std::io::Result<Vec<u8>> {
+                panic!("the wait page read a file")
+            }
+            fn open(&self, _: &VfsPath) -> std::io::Result<Box<dyn crate::vfs::ReadSeek>> {
+                panic!("the wait page opened a file")
+            }
+            fn root_id_at(&self, _: &VfsPath) -> String {
+                panic!("the wait page asked what a row would serve")
+            }
+        }
+
+        let dir = tmp_dir("waiting");
+        let mut state = state_at(dir.clone());
+        // The only configuration this page is reachable in: the route is
+        // `app_ui`-gated, and `app_ui` is also what decides the body's classes.
+        state.cfg.app_ui = true;
+        let served = state.cfg.root().expect("these tests always serve one");
+        let root = Root { id: served.id.clone(), vfs: Arc::new(Trap) };
+        let open = [String::from("deep")];
+        let prefs = Prefs { sidebar: true, open: &open, ..prefs() };
+
+        // Anything that reaches for the folder panics here.
+        let html = wait_page(&state, Some(&root), prefs, "/.ts/wait?path=prod", "prod");
+
+        assert!(html.contains("Opening prod&hellip;"), "{html}");
+        // The chrome is still the root's: which folder, on which machine, and the
+        // status line under it. None of that is a read.
+        assert!(html.contains("<div class=\"crumbs\">"), "{html}");
+        assert!(html.contains("<span class=\"where\""), "{html}");
+        // And the class the stylesheet hangs the reading column on. Without it
+        // the page still passes every assertion below and the sentence runs the
+        // whole width of the window, which is the one thing the pane used to
+        // stop. No `nopane`, because the pane is *on* here — it is this page that
+        // does not draw one.
+        assert!(html.contains("<body class=\"app waiting\">"), "{html}");
+        // The pane is not there, and neither is anything that opens one — a
+        // switch or a drawer button onto nothing is worse than no button.
+        assert!(!html.contains("<nav class=\"tree\">"), "{html}");
+        assert!(!html.contains("paneflag"), "{html}");
+        assert!(!html.contains("drawer-btn"), "{html}");
+        assert!(!html.contains("drawer-scrim"), "{html}");
 
         fs::remove_dir_all(&dir).unwrap();
     }
