@@ -131,6 +131,18 @@ pub const VIEWPORT: &str = r#"
     vv.addEventListener('resize', both);
     vv.addEventListener('scroll', height);
   }
+  // Coming back from a locked screen, which none of the above is: the window may
+  // be exactly the size it was — a lock and an unlock in one orientation resizes
+  // nothing — and it may have turned while nobody could see it, in which case
+  // whatever was measured meanwhile was measured of a window that was not being
+  // drawn. In stages, as a turn is, because an unlock brings the insets back the
+  // same way. Nothing here depends on it: `--vh` feeds a `calc()` and is put
+  // right by the next signal of any kind. It is the pages built on this that
+  // cannot wait for one — telechore's terminal turns the same measurement into a
+  // grid it sends to the far end.
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { rotated(); }
+  });
  } catch (e) { /* the defaults are a working window; this only ever improves it */ }
 })();
 "#;
