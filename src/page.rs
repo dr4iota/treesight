@@ -1,6 +1,6 @@
 use crate::md::{render_markdown, RawHtml};
 use crate::util::*;
-use crate::vfs::{Vfs, VfsPath};
+use crate::vfs::{ResolveError, Vfs, VfsPath};
 use crate::{Root, State};
 
 pub use crate::vfs::Entry;
@@ -52,8 +52,21 @@ pub struct Prefs<'a> {
     pub open: &'a [String],
 }
 
-pub fn read_dir_sorted(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> Vec<Entry> {
-    let mut out = vfs.read_dir(path).unwrap_or_default();
+/// The entries a page draws, hidden files and ordering applied.
+///
+/// **A refusal is not an empty directory.** This used to end `unwrap_or_default`,
+/// so a folder the backend would not list drew as a folder with nothing in it —
+/// on a remote root the commonest way to see that being a directory you may
+/// stat but not read, which arrived here as one silent `Err` and left as a
+/// listing, a pane node and a plain-text answer all agreeing there was nothing
+/// there. The error the backend already returns comes back out now, and each
+/// caller says what it is worth saying there.
+pub fn read_dir_sorted(
+    state: &State,
+    vfs: &dyn Vfs,
+    path: &VfsPath,
+) -> std::io::Result<Vec<Entry>> {
+    let mut out = vfs.read_dir(path)?;
     if !state.cfg.show_hidden {
         out.retain(|e| !e.name.starts_with('.'));
     }
@@ -62,7 +75,25 @@ pub fn read_dir_sorted(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> Vec<Entr
             .cmp(&a.is_dir)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-    out
+    Ok(out)
+}
+
+/// What to put on a page in place of a listing there is no listing for.
+///
+/// A sentence rather than [`ResolveError::as_reply`]'s two words: this is the
+/// middle of a window, where the reader is owed what to do about it, and the
+/// three answers send them three different places.
+fn unreadable_msg(why: ResolveError) -> &'static str {
+    match why {
+        ResolveError::Missing => "This folder is not there any more.",
+        ResolveError::Denied => "This folder cannot be read with the permissions this login has.",
+        ResolveError::Unreachable => {
+            "This folder did not answer. The machine or the connection it is on may be gone."
+        }
+        // `resolve` got us here, so it cannot have refused the same path — but a
+        // sentence is owed whatever happens, and not one that guesses.
+        ResolveError::Outside => "This folder could not be read.",
+    }
 }
 
 // Icons are drawn, not typed. The obvious characters for these — folder,
@@ -1181,7 +1212,23 @@ fn tree_dir(
     url_now: &str,
     out: &mut String,
 ) {
-    let entries = read_dir_sorted(state, vfs, &VfsPath::new(rel.clone()));
+    // A node in the pane that will not open says so in the pane, in the slot the
+    // "… N more" marker already uses. Drawing nothing was indistinguishable from
+    // an empty directory, and the reader has just clicked an arrow to find out
+    // which — so the one place the answer was wanted was the one place it was
+    // dropped.
+    let entries = match read_dir_sorted(state, vfs, &VfsPath::new(rel.clone())) {
+        Ok(entries) => entries,
+        Err(e) => {
+            let word = match ResolveError::of(&e) {
+                ResolveError::Missing => "gone",
+                ResolveError::Denied => "not readable",
+                _ => "no answer",
+            };
+            out.push_str(&format!("<ul><li class=\"more\">{word}</li></ul>"));
+            return;
+        }
+    };
     let total = entries.len();
     // An opened directory with nothing in it drew `<ul></ul>`: nothing to see, and
     // a pair of tags to wonder about in the markup. The read has already happened
@@ -1312,7 +1359,21 @@ fn listing_readme(state: &State, vfs: &dyn Vfs, dir: &VfsPath) -> String {
 }
 
 fn entries_table(state: &State, vfs: &dyn Vfs, rel: &[String], canon: &VfsPath) -> String {
-    let entries = read_dir_sorted(state, vfs, canon);
+    let entries = match read_dir_sorted(state, vfs, canon) {
+        Ok(entries) => entries,
+        // The page says it; the reply stays 200. Knowing the code before the
+        // body is drawn would mean listing the directory twice — once to ask
+        // whether it lists — and over a remote root that is a second round trip
+        // bought for a number no window in this app displays. `listing_text` is
+        // the one caller with a client that reads codes, and the router gives it
+        // one.
+        Err(e) => {
+            return format!(
+                "<div class=\"bigmsg\"><p>{}</p></div>",
+                unreadable_msg(ResolveError::of(&e))
+            );
+        }
+    };
     let mut rows = String::new();
     if !rel.is_empty() {
         let parent = &rel[..rel.len() - 1];
@@ -1372,7 +1433,11 @@ fn search_results(
     // DFS; non-recursive mode just doesn't descend.
     let mut stack: Vec<(VfsPath, Vec<String>)> = vec![(canon.clone(), Vec::new())];
     while let Some((dir, drel)) = stack.pop() {
-        for e in read_dir_sorted(state, vfs, &dir) {
+        // A directory the walk cannot read is skipped, not fatal: a search over a
+        // tree with one unreadable corner in it should return the rest rather
+        // than nothing. The listing of *that* directory says why, if the reader
+        // goes and looks at it.
+        for e in read_dir_sorted(state, vfs, &dir).unwrap_or_default() {
             scanned += 1;
             if scanned > SEARCH_MAX_SCANNED || results.len() >= SEARCH_MAX_RESULTS {
                 truncated = true;
@@ -1436,16 +1501,20 @@ fn search_results(
 }
 
 /// Plain-text listing for non-browser clients (curl, scripts).
-pub fn listing_text(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> String {
+///
+/// The one caller whose client reads status codes, so this is the one that hands
+/// the refusal back rather than drawing it: an empty body and a 200 told a script
+/// the directory was empty.
+pub fn listing_text(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> std::io::Result<String> {
     let mut out = String::new();
-    for e in read_dir_sorted(state, vfs, path) {
+    for e in read_dir_sorted(state, vfs, path)? {
         out.push_str(&e.name);
         if e.is_dir {
             out.push('/');
         }
         out.push('\n');
     }
-    out
+    Ok(out)
 }
 
 /// The wait page's own skeleton: the served root's chrome around a message, and
@@ -1822,6 +1891,87 @@ mod tests {
         assert!(!html.contains("paneflag"), "{html}");
         assert!(!html.contains("drawer-btn"), "{html}");
         assert!(!html.contains("drawer-scrim"), "{html}");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// **A refusal is not an empty directory.** Every surface that draws a
+    /// listing used to end at `unwrap_or_default`, so a folder the backend would
+    /// not list came out as a folder with nothing in it — and on a remote root
+    /// the commonest way to meet that is a directory you may stat but not read,
+    /// which is the one case where "empty" is a sentence the reader will
+    /// believe. Each surface says something different now, and none of them says
+    /// nothing.
+    #[test]
+    fn a_folder_that_will_not_open_does_not_draw_as_an_empty_one() {
+        use std::sync::Arc;
+        /// Whatever it wraps, except that one directory answers with a kind.
+        struct Refuses(Arc<dyn Vfs>, std::io::ErrorKind, Vec<String>);
+        impl Vfs for Refuses {
+            fn resolve(&self, p: &VfsPath) -> Result<VfsPath, ResolveError> {
+                self.0.resolve(p)
+            }
+            fn metadata(&self, p: &VfsPath) -> std::io::Result<crate::vfs::Meta> {
+                self.0.metadata(p)
+            }
+            fn read_dir(&self, p: &VfsPath) -> std::io::Result<Vec<crate::vfs::Entry>> {
+                match p.segments() == self.2.as_slice() {
+                    true => Err(std::io::Error::new(self.1, "said no")),
+                    false => self.0.read_dir(p),
+                }
+            }
+            fn read(&self, p: &VfsPath) -> std::io::Result<Vec<u8>> {
+                self.0.read(p)
+            }
+            fn open(&self, p: &VfsPath) -> std::io::Result<Box<dyn crate::vfs::ReadSeek>> {
+                self.0.open(p)
+            }
+            fn root_id_at(&self, p: &VfsPath) -> String {
+                self.0.root_id_at(p)
+            }
+        }
+
+        let dir = tmp_dir("refuses");
+        fs::create_dir_all(dir.join("shut/inner")).unwrap();
+        fs::write(dir.join("shut/inner/a.txt"), b"hi").unwrap();
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let plain = state.cfg.root().expect("these tests always serve one");
+        let shut = vec!["shut".to_string()];
+
+        let with = |kind| {
+            let vfs: Arc<dyn Vfs> = Arc::new(Refuses(Arc::clone(&plain.vfs), kind, shut.clone()));
+            Root { id: plain.id.clone(), vfs }
+        };
+
+        // The listing of the folder itself: a sentence about what happened, in
+        // the middle of the window where the table would have been.
+        let root = with(std::io::ErrorKind::PermissionDenied);
+        let open = [String::from("shut")];
+        let prefs = Prefs { sidebar: true, open: &open, ..prefs() };
+        let html = listing_page(&state, &root, prefs, &shut, &VfsPath::new(shut.clone()), &[], "/shut/");
+        assert!(html.contains("cannot be read with the permissions"), "{html}");
+        assert!(!html.contains("<table class=\"listing\">"), "an empty table for a refusal");
+        // And the pane, where the reader has just clicked an arrow to find out
+        // which of the two this is.
+        assert!(html.contains("<li class=\"more\">not readable</li>"), "{html}");
+
+        // The same folder, gone rather than shut: a different sentence and a
+        // different word in the pane, because they send the reader elsewhere.
+        let root = with(std::io::ErrorKind::NotFound);
+        let html = listing_page(&state, &root, prefs, &shut, &VfsPath::new(shut.clone()), &[], "/shut/");
+        assert!(html.contains("not there any more"), "{html}");
+        assert!(html.contains("<li class=\"more\">gone</li>"), "{html}");
+
+        // And a script asking for the same directory is handed the refusal
+        // rather than an empty listing under a 200.
+        let root = with(std::io::ErrorKind::PermissionDenied);
+        let err = listing_text(&state, root.vfs.as_ref(), &VfsPath::new(shut.clone())).unwrap_err();
+        assert_eq!(ResolveError::of(&err).as_reply(), (403, "not readable"));
+
+        // A sibling that reads fine is untouched by any of it.
+        let listed = listing_text(&state, root.vfs.as_ref(), &VfsPath::root()).unwrap();
+        assert_eq!(listed, "shut/\n");
 
         fs::remove_dir_all(&dir).unwrap();
     }

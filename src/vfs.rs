@@ -70,13 +70,65 @@ pub struct Entry {
 pub trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}
 
-/// Why [`Vfs::resolve`] refused a path.
+/// Why a backend would not answer for a path.
+///
+/// Named for [`Vfs::resolve`], which is where it started, but it is the seam's
+/// whole vocabulary for a refusal now — [`ResolveError::of`] classifies the
+/// `io::Error`s the other four methods return, so every call in a request
+/// sorts a failure the same way and the page can say which of these it hit.
+///
+/// **Two of these used to be one.** The enum had `Missing` and `Outside` and
+/// nothing else, so a backend with no answer had to spell every failure as
+/// "nothing there": a share whose host had gone gave a 404, and so did a folder
+/// whose permissions merely exclude you. Over a remote root that is the
+/// difference between *go and look at the network* and *you cannot read this*,
+/// and the reader was told neither. The words are the three a shortcut row
+/// already draws, deliberately — see `RootStatus`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResolveError {
     /// Nothing there.
     Missing,
     /// There, but it leads out of the served root — a symlink whose target is
     /// outside. Refused for the same reason `..` is refused in a URL.
     Outside,
+    /// It answered, and would not have us: a folder whose permissions exclude
+    /// us, a grant the platform has revoked.
+    Denied,
+    /// It did not answer at all: a session that has gone, a timeout, a mapped
+    /// drive whose host is off.
+    Unreachable,
+}
+
+impl ResolveError {
+    /// A backend's `io::Error`, as the seam's word for it.
+    ///
+    /// The one classifier, so `resolve` and every call after it agree. Only the
+    /// two kinds that mean something specific; everything else is a backend
+    /// that did not answer, which is the honest reading of an error nobody can
+    /// name — and the reading that sends a reader to the machine rather than to
+    /// a file that is sitting right there.
+    pub fn of(e: &io::Error) -> ResolveError {
+        match e.kind() {
+            io::ErrorKind::NotFound => ResolveError::Missing,
+            io::ErrorKind::PermissionDenied => ResolveError::Denied,
+            _ => ResolveError::Unreachable,
+        }
+    }
+
+    /// The HTTP status a page for this refusal is served with, and the words on
+    /// it. *Forbidden* is [`Self::Outside`]'s and stays its own: that is this
+    /// server refusing, where `Denied` is the far end refusing.
+    pub fn as_reply(self) -> (u16, &'static str) {
+        match self {
+            ResolveError::Missing => (404, "not found"),
+            ResolveError::Outside => (403, "forbidden"),
+            ResolveError::Denied => (403, "not readable"),
+            // The backend is a gateway as far as this server is concerned, and
+            // it did not answer. 502 is that, and it keeps 404 meaning the one
+            // thing a reader can act on by looking somewhere else.
+            ResolveError::Unreachable => (502, "not answering"),
+        }
+    }
 }
 
 /// A served tree. Paths are [`VfsPath`]s relative to the backend's root.
@@ -216,9 +268,13 @@ impl Vfs for LocalFs {
 
     fn resolve(&self, path: &VfsPath) -> Result<VfsPath, ResolveError> {
         // canonicalize resolves symlinks; the prefix check keeps everything
-        // inside the served root.
-        let Ok(canon) = self.host(path).canonicalize() else {
-            return Err(ResolveError::Missing);
+        // inside the served root. It fails for more reasons than absence — a
+        // directory on the way with no search bit on it is `PermissionDenied`,
+        // and a mount whose server has gone is neither — so the reason is kept
+        // rather than flattened to "nothing there".
+        let canon = match self.host(path).canonicalize() {
+            Ok(canon) => canon,
+            Err(e) => return Err(ResolveError::of(&e)),
         };
         let Ok(rel) = canon.strip_prefix(&self.root) else {
             return Err(ResolveError::Outside);
@@ -319,7 +375,7 @@ mod tests {
         let vfs = LocalFs::new(dir.clone());
 
         let p = VfsPath::new(vec!["sub".into(), "a.txt".into()]);
-        let canon = vfs.resolve(&p).ok().expect("resolves");
+        let canon = vfs.resolve(&p).expect("resolves");
         assert_eq!(canon.segments(), ["sub", "a.txt"]);
         assert!(matches!(
             vfs.resolve(&VfsPath::new(vec!["nope".into()])),

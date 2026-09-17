@@ -615,8 +615,11 @@ pub struct Resolved {
 pub enum PathError {
     /// Malformed or traversing path; nothing safe to show.
     Bad,
-    Missing(Vec<String>),
-    Outside(Vec<String>),
+    /// What the backend said, and the path to say it about. One variant rather
+    /// than one per word: the words are [`ResolveError`]'s and adding another
+    /// there should not mean adding an arm here and a near-identical page
+    /// beside the last three.
+    At(ResolveError, Vec<String>),
 }
 
 /// Resolves a URL path against the served root.
@@ -637,8 +640,7 @@ pub fn resolve_in_root(vfs: &dyn Vfs, url_path: &str) -> Result<Resolved, PathEr
 
     match vfs.resolve(&VfsPath::new(rel.clone())) {
         Ok(path) => Ok(Resolved { rel, path }),
-        Err(ResolveError::Missing) => Err(PathError::Missing(rel)),
-        Err(ResolveError::Outside) => Err(PathError::Outside(rel)),
+        Err(why) => Err(PathError::At(why, rel)),
     }
 }
 
@@ -923,25 +925,32 @@ pub fn handle(state: &State, req: &Req) -> Reply {
                 page::error_page(state, &root, prefs, &[], &url_now, 400, "bad path"),
             );
         }
-        Err(PathError::Missing(rel)) => {
+        Err(PathError::At(why, rel)) => {
+            let (code, msg) = why.as_reply();
             return html_reply(
-                404,
-                page::error_page(state, &root, prefs, &rel, &url_now, 404, "not found"),
-            );
-        }
-        Err(PathError::Outside(rel)) => {
-            return html_reply(
-                403,
-                page::error_page(state, &root, prefs, &rel, &url_now, 403, "forbidden"),
+                code,
+                page::error_page(state, &root, prefs, &rel, &url_now, u32::from(code), msg),
             );
         }
     };
 
-    let is_dir = root
-        .vfs
-        .metadata(&canon)
-        .map(|m| m.is_dir)
-        .unwrap_or(false);
+    // **A stat that failed is not a file.** This read `unwrap_or(false)`, so
+    // anything the backend would not answer for fell through to the file branch
+    // below and came out as *Could not read file* — for a directory, which is
+    // both wrong about what it is and silent about why. Over a remote root that
+    // was the ordinary case rather than a corner: `realpath` on a modern
+    // OpenSSH is lexical and says yes to a path that is not there, so `resolve`
+    // succeeded and this was the first call that could tell.
+    let is_dir = match root.vfs.metadata(&canon) {
+        Ok(m) => m.is_dir,
+        Err(e) => {
+            let (code, msg) = ResolveError::of(&e).as_reply();
+            return html_reply(
+                code,
+                page::error_page(state, &root, prefs, &rel, &url_now, u32::from(code), msg),
+            );
+        }
+    };
     if is_dir {
         // Directory URLs need a trailing slash so relative links resolve.
         if !path_raw.ends_with('/') {
@@ -958,7 +967,16 @@ pub fn handle(state: &State, req: &Req) -> Reply {
                 page::listing_page(state, &root, prefs, &rel, &canon, &query, &url_now),
             )
         } else {
-            Reply::plain(200, &page::listing_text(state, root.vfs.as_ref(), &canon))
+            match page::listing_text(state, root.vfs.as_ref(), &canon) {
+                Ok(text) => Reply::plain(200, &text),
+                // A script is owed the code, not an empty listing with a 200 on
+                // it. The HTML branch above says it in the page instead — see
+                // `entries_table` for why the two answer differently.
+                Err(e) => {
+                    let (code, msg) = ResolveError::of(&e).as_reply();
+                    Reply::plain(code, &format!("{msg}\n"))
+                }
+            }
         };
     }
 
@@ -1441,6 +1459,74 @@ mod tests {
 
         // The stylesheet still answers: the start page is drawn with it.
         assert_eq!(get("/.ts/app.css").status, 200);
+    }
+
+    /// **A stat that failed is not a file.** The router read `is_dir` off an
+    /// `unwrap_or(false)`, so anything a backend would not answer for fell
+    /// through to the file branch and came out as *Could not read file* — about
+    /// a file, for a directory, with no word about why. Over a remote root that
+    /// was the ordinary path rather than a corner: `realpath` on a modern
+    /// OpenSSH is lexical, so `resolve` says yes to a folder that is not there
+    /// and this is the first call that could tell.
+    #[test]
+    fn a_path_the_backend_will_not_answer_for_says_which_of_the_three_it_is() {
+        use std::sync::Arc;
+        use super::vfs::{Entry, Meta, ReadSeek, ResolveError, Vfs, VfsPath};
+        use super::{Body, Config, Req, Root};
+
+        /// Resolves anything, answers nothing — a backend caught mid-sentence.
+        struct Mute(std::io::ErrorKind);
+        impl Vfs for Mute {
+            fn resolve(&self, p: &VfsPath) -> Result<VfsPath, ResolveError> {
+                Ok(p.clone())
+            }
+            fn metadata(&self, _: &VfsPath) -> std::io::Result<Meta> {
+                Err(std::io::Error::new(self.0, "said no"))
+            }
+            fn read_dir(&self, _: &VfsPath) -> std::io::Result<Vec<Entry>> {
+                Err(std::io::Error::new(self.0, "said no"))
+            }
+            fn read(&self, _: &VfsPath) -> std::io::Result<Vec<u8>> {
+                Err(std::io::Error::new(self.0, "said no"))
+            }
+            fn open(&self, _: &VfsPath) -> std::io::Result<Box<dyn ReadSeek>> {
+                Err(std::io::Error::new(self.0, "said no"))
+            }
+            fn root_id_at(&self, _: &VfsPath) -> String {
+                "mute:/".to_string()
+            }
+        }
+
+        let page = |kind| {
+            let cfg = Config::rootless();
+            cfg.set_root_vfs(Root { id: "mute:/".to_string(), vfs: Arc::new(Mute(kind)) });
+            let state = super::state_for(cfg);
+            super::handle(
+                &state,
+                &Req {
+                    url: "/gone/".to_string(),
+                    headers: vec![("Accept".to_string(), "text/html".to_string())],
+                    is_get: true,
+                },
+            )
+        };
+
+        // Three kinds, three answers — and not one of them the file branch.
+        for (kind, code, says) in [
+            (std::io::ErrorKind::NotFound, 404, "not found"),
+            (std::io::ErrorKind::PermissionDenied, 403, "not readable"),
+            (std::io::ErrorKind::ConnectionAborted, 502, "not answering"),
+        ] {
+            let reply = page(kind);
+            assert_eq!(reply.status, code, "{kind:?}");
+            match reply.body {
+                Body::Text(t) => {
+                    assert!(t.contains(says), "{kind:?}: {t}");
+                    assert!(!t.contains("Could not read file"), "{kind:?}: still a file");
+                }
+                _ => panic!("a page is text"),
+            }
+        }
     }
 
     /// The start page's own address: it says the start page whatever is open, and

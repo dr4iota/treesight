@@ -201,6 +201,33 @@ follow symlinks the way `std::fs` always did: a URL cannot *navigate* out,
 but a listing may still *summarize* a link. A stricter backend may confine
 every method; the renderer only depends on `resolve` for 403.
 
+**A refusal has three words, and a page must pick one.** `ResolveError` is
+`Missing`, `Outside`, `Denied`, `Unreachable` — the last two added because with
+only the first pair a backend had to spell *every* failure as "nothing there".
+A share whose host had gone gave a 404, and so did a folder whose permissions
+merely exclude you: the one answer that sends a reader to look somewhere else,
+given for the two situations that are not about somewhere else at all. The words
+are deliberately the ones a shortcut row already draws (`RootStatus`), so the
+seam, the page and the pane say one thing.
+
+`ResolveError::of(&io::Error)` is the single classifier — `NotFound` is missing,
+`PermissionDenied` is denied, anything else is a backend that did not answer —
+and `as_reply()` turns that into the status and the two words on the error page.
+Both are used past `resolve` as well, because `resolve` is rarely where a remote
+root fails: SFTP `realpath` on a modern OpenSSH is lexical and says yes to a path
+that is not there, so `metadata` is the first call that can tell. A backend
+therefore owes an honest `io::ErrorKind` from *every* method, not only a variant
+from `resolve`.
+
+**And a refusal is not an empty directory.** `read_dir_sorted` hands the error
+back rather than ending in `unwrap_or_default`, and each surface says what is
+worth saying there: the listing replaces its table with a sentence, the pane
+marks the node *gone* / *not readable* / *no answer* in the slot "… N more"
+uses, `listing_text` returns the error so a script gets a status code, and the
+search walk skips the directory and carries on. The HTML listing stays 200 —
+knowing the code first would mean listing the directory twice, which over a
+remote root is a round trip bought for a number no window here displays.
+
 **RootId** is a scheme-aware string naming a served root:
 
 - Local: the bare **display-form** host path — the same string `recent.txt`
