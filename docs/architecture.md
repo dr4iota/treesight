@@ -431,6 +431,17 @@ the moment we navigate, true again when the webview reports a load started —
 and while it is false a page goes up by navigating, which supersedes the load
 in flight and costs no entry either.
 
+**Every `eval` that steers the window owes the same question**, which is what
+`committed()` is for. `open_failed` did not ask it and was the second victim:
+its `history.back()` off a wait page is script like any other, so an open that
+failed before the wait page committed walked the *outgoing* document's history
+and then vanished with it, leaving the window on "Opening…" with nothing left to
+leave it. Fast failures are the ones that hit it — a pooled session refusing a
+path in a round trip or two, with the embedder's dialog fire-and-forget so the
+failure path runs while the reader is still reading it. Nothing has been stepped
+onto in that case, so the answer is to navigate to the page we wanted, exactly as
+`replace_page` does.
+
 ### The tree pane
 
 A directory row is three controls, not one: the arrow opens it here, the name

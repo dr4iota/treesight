@@ -1088,7 +1088,19 @@ fn open_failed(app: &AppHandle, previous: Option<tauri::Url>) {
             // dismisses the question, and the dial fails here a moment later.
             // They are already where this would have sent them, and going back
             // again would take them somewhere nobody asked for.
-            true if !on_the_start_page(app) => eval(app, "history.back()"),
+            //
+            // And only where there is a page to run it in. `history.back()` is
+            // an `eval` like any other, so with the wait page posted and not yet
+            // committed it lands in the document that page is about to replace
+            // and walks *that* history — after which the wait page arrives and
+            // the window sits on "Opening…" with nothing left to leave it. An
+            // open that fails fast is exactly when that happens, and a pooled
+            // session makes a failure fast: the dialog is fire-and-forget, so
+            // this runs while the reader is still reading it. Nothing has been
+            // stepped onto yet in that case, so going *to* the page is right and
+            // costs no entry — `replace_page` navigates for the same reason.
+            true if !on_the_start_page(app) && committed(app) => eval(app, "history.back()"),
+            true if !on_the_start_page(app) => replace_page(app, url.as_str()),
             true => {}
             false => replace_page(app, url.as_str()),
         }
@@ -2238,21 +2250,19 @@ fn close_folder(app: &AppHandle) {
     replace_page(app, &serving.home);
 }
 
-/// Puts a URL on screen in place of the page that is there, rather than on top
-/// of it.
+/// Whether the page on screen is the page we think it is.
 ///
-/// Every navigation this shell makes for itself is a change of what is being
-/// shown, not a step forward through anything: re-rooting, a wait page, putting
-/// back the page a cancelled dial came from. A `navigate` would push an entry
-/// for each, and since every page of this window wears the same address, that
-/// entry is a copy of the page you are already on — Back into it re-renders
-/// whatever root is current now. `location.replace` changes the page and leaves
-/// the history alone, which is what all of them want.
-///
-/// Public because a downstream shell navigates the same window for the same
-/// reasons, and getting this wrong is invisible until someone presses Back —
-/// or, on Android, swipes and finds the gesture doing nothing several times
-/// before it leaves.
+/// False while a navigation of ours has been posted and has not landed: the
+/// document still up is the one it is about to take away, and script evaluated
+/// into that runs against the wrong page and then vanishes with it. Anything
+/// that reaches for the window through `eval` has to ask this first — see
+/// `Serving::loaded`, and `open_failed`, which is the second place that learned
+/// it the hard way.
+fn committed(app: &AppHandle) -> bool {
+    app.try_state::<Serving>()
+        .is_some_and(|s| s.loaded.load(Ordering::Relaxed))
+}
+
 /// Whether the window is showing the start page.
 ///
 /// Asked of the window and not of the config, because the question is about the
@@ -2342,15 +2352,27 @@ pub fn show_tree(app: &AppHandle) {
     }
 }
 
+/// Puts a URL on screen in place of the page that is there, rather than on top
+/// of it.
+///
+/// Every navigation this shell makes for itself is a change of what is being
+/// shown, not a step forward through anything: re-rooting, a wait page, putting
+/// back the page a cancelled dial came from. A `navigate` would push an entry
+/// for each, and since every page of this window wears the same address, that
+/// entry is a copy of the page you are already on — Back into it re-renders
+/// whatever root is current now. `location.replace` changes the page and leaves
+/// the history alone, which is what all of them want.
+///
+/// Public because a downstream shell navigates the same window for the same
+/// reasons, and getting this wrong is invisible until someone presses Back —
+/// or, on Android, swipes and finds the gesture doing nothing several times
+/// before it leaves.
 pub fn replace_page(app: &AppHandle, url: &str) {
     let Some(win) = app.get_webview_window(WINDOW) else {
         return;
     };
     note_page(app, url);
-    let loaded = app
-        .try_state::<Serving>()
-        .is_some_and(|s| s.loaded.load(Ordering::Relaxed));
-    match loaded {
+    match committed(app) {
         true => {
             let _ = win.eval(&format!("location.replace('{}')", js_quoted(url)));
         }
