@@ -179,6 +179,11 @@ addEventListener('pageshow', function (e) {
 /// long tree therefore threw the reader back to the top of it, which is the one
 /// thing that makes a tree pane tiring to use.
 ///
+/// A link out of the page loses it the same way and for a different reason: a
+/// navigation carries no fragment unless the link names one, so the mark is
+/// written onto the link as it is followed — the pane's offset kept, the
+/// listing's deliberately not.
+///
 /// **The address is the carrier.** It is the one thing that survives a reload
 /// without asking the platform for anything, and `location.replace` writes it
 /// with no history entry and no navigation — a fragment-only replace is a
@@ -248,11 +253,36 @@ const SCROLLERS: &str = r#"
     // straight back as the same address — which the check above then drops.
     restore();
   }
+  // A reload is not the only way out of a page. Following a link — a file in
+  // the listing, a crumb, a row in Recent — is a *navigation*, and a navigation
+  // carries no fragment unless the link says one, so the document that arrives
+  // has no mark to restore from and the pane comes back at the top of a tree
+  // the reader had scrolled halfway down. The link is the only place to put it:
+  // written as the link is followed, so it is the offset at that moment.
+  //
+  // The listing's offset is written as `0` rather than carried. The reader is
+  // opening something they have not seen; its top is where they mean to be.
+  function carry(e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey
+        || e.shiftKey || e.altKey || !ours()) { return; }
+    var a = e.target && e.target.closest && e.target.closest('a[href]');
+    // Left alone: a link that already names a fragment, because a heading in a
+    // rendered document is the reader's destination and this would take it
+    // away; a link out of this origin, which is the OS browser's and not a page
+    // of ours at all; and one aimed at another window.
+    if (!a || a.target || a.hash
+        || a.protocol !== location.protocol || a.host !== location.host) { return; }
+    var b = boxes();
+    a.hash = 'ts' + Math.round((b[0] && b[0].scrollTop) || 0) + ',0';
+  }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', watch);
   } else {
     watch();
   }
+  // On the document, in the capture phase, so a page's own handler cannot have
+  // navigated before the mark is on the link it is about to follow.
+  document.addEventListener('click', carry, true);
   // And again once the window has a size. A box that is not yet taller than its
   // own frame cannot be scrolled at all, and an offset set into one is silently
   // clamped to nothing: measured at `DOMContentLoaded`, the pane's content and
@@ -2862,6 +2892,25 @@ mod tests {
         assert!(theirs.contains("data-touch"), "the platform script went with the keys");
         assert!(theirs.contains("#ts"), "the scroll keeper went with the keys");
         assert!(!theirs.contains("ArrowLeft"), "the keys are the embedder's now");
+    }
+
+    /// The pane's offset rides out on the link, or a file opened from a long
+    /// tree throws the reader back to the top of it.
+    ///
+    /// String-level, which is all this side can see: the script is a constant
+    /// injected into a webview, and what it does with a click is the webview's
+    /// business. What is worth pinning here is that the click is watched at all,
+    /// and that the two links it must not touch are still named — a heading
+    /// anchor in a rendered document, and an address of somebody else's.
+    #[test]
+    fn the_pane_rides_out_on_a_link_and_not_over_a_heading() {
+        let script = window_script(None);
+        assert!(script.contains("addEventListener('click', carry, true)"), "no carrier");
+        assert!(script.contains("a.hash = 'ts'"), "nothing written onto the link");
+        assert!(script.contains("a.target || a.hash"), "a heading anchor is not spared");
+        assert!(script.contains("a.protocol !== location.protocol"), "leaves this origin");
+        // The listing starts at its top on a page the reader has not seen.
+        assert!(script.contains("+ ',0'"), "the listing's offset is carried");
     }
 
     #[test]
