@@ -488,7 +488,10 @@ allowlist, not a pass-through: `javascript:`, `data:`, `file:`, `intent:`,
 `content:` and the rest are dropped, never forwarded, so a README cannot fire an
 Android Intent or reach a local file through the app's own opener. The CSP on
 `html_reply` stops such a URL from *running*; this stops the app from
-*launching* it. `on_navigation` and `on_new_window` share the one helper.
+*launching* it. `on_navigation` and `on_new_window` share
+[`open_externally`](../shell/src/open.rs), and so does an embedder that has no
+real `<a>` to click — a terminal OSC 8 link invokes it rather than synthesizing
+a navigation.
 
 ### What may run on the navigation callback
 
@@ -550,6 +553,10 @@ calls `run_with(ctx, ext)`.
 Public helpers the embedder is meant to call:
 
 - `Serving::state` / `origin` / `entry`, `WINDOW`
+- `theme` / `set_theme` — the jar, for a scheme page that sits beside the tree
+- `open_externally` / `may_open_externally` — system browser or mailer; the
+  same helper and allowlist `on_navigation` uses, so an embedder with no real
+  `<a>` does not copy it (`shell/src/open.rs`)
 - `remember_root_id(app, id)` — Recent, disk, status Ok
 - `Config::set_root_vfs`, `set_sections`, `set_root_status`
 - `Config::set_flags(Vec<HeaderFlag>)` — controls of the embedder's own on the

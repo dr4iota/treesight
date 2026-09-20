@@ -25,7 +25,6 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use tauri_plugin_opener::OpenerExt;
 use treeserve::page::ThemeMode;
 use treeserve::{Config, RootStatus};
 pub use treestamp::BuildInfo;
@@ -40,6 +39,9 @@ pub const BUILD: BuildInfo = treestamp::build_info!("TREESIGHT_SHELL_");
 pub const WINDOW: &str = "main";
 /// How many roots the Recent list keeps.
 const RECENT_MAX: usize = 8;
+
+mod open;
+pub use open::{may_open_externally, open_externally};
 
 /// Keyboard shortcuts. The window has no menu bar, and on Windows and Linux a
 /// menu is what would otherwise carry accelerators, so the shell installs them
@@ -2525,33 +2527,6 @@ fn window_title(cfg: &Config) -> String {
     }
 }
 
-/// Hands a link out of the tree to the system browser or mailer — but only a
-/// URL that is actually one of those. The bytes reach here from served content
-/// (a link in a hostile README), so the scheme is allowlisted rather than
-/// trusted: `http`/`https` to a browser, `mailto` to a mailer, everything else
-/// dropped. `javascript:`, `data:`, `file:`, `blob:`, `intent:`, `content:` and
-/// the rest are never forwarded, so a README cannot fire an Android Intent,
-/// reach a local file, or smuggle a script through the app's own opener. The CSP
-/// on `html_reply` already stops such a URL from *running*; this stops the app
-/// from *launching* it. On a thread, because on mobile `open_url` is a plugin
-/// round trip with no timeout, dispatched to the very thread the callback holds.
-fn open_externally(app: &AppHandle, url: &tauri::Url) {
-    if !may_open_externally(url.scheme()) {
-        return;
-    }
-    let app = app.clone();
-    let url = url.clone();
-    thread::spawn(move || {
-        let _ = app.opener().open_url(url.as_str(), None::<&str>);
-    });
-}
-
-/// The only schemes handed to the OS. An allowlist, not a denylist: a new
-/// dangerous scheme should be refused by default, not remembered to block.
-fn may_open_externally(scheme: &str) -> bool {
-    matches!(scheme, "http" | "https" | "mailto")
-}
-
 /// Whether an extension declared this URL's origin. See
 /// [`ShellExt::allowed_origins`] for the two entry shapes.
 fn origin_allowed(allowed: &[String], url: &tauri::Url) -> bool {
@@ -3066,22 +3041,6 @@ mod tests {
         assert!(!origin_allowed(&allowed, &u("http://telesight.localhost.evil.com/x")));
         assert!(!origin_allowed(&allowed, &u("http://evil.com/telesight.localhost")));
         assert!(!origin_allowed(&allowed, &u("https://telesight.localhost/x")));
-    }
-
-    /// Only a real page or a mailer leaves for the OS. A link in a hostile
-    /// README must not fire an Android Intent, reach a local file, or forward a
-    /// scheme that survived the markdown gate.
-    #[test]
-    fn only_browsers_and_mail_leave_for_the_os() {
-        for ok in ["http", "https", "mailto"] {
-            assert!(may_open_externally(ok), "{ok}");
-        }
-        for no in [
-            "javascript", "data", "file", "blob", "intent", "content", "about", "ftp", "smb", "ws",
-            "wss", "telesight",
-        ] {
-            assert!(!may_open_externally(no), "{no}");
-        }
     }
 
     /// What the Recent file holds and what the list speaks are now the same
