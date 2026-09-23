@@ -643,7 +643,14 @@ body.nothing .startnote {
   margin: 1.75rem 0 .25rem;
   color: var(--muted);
   font-size: .9rem;
+  /* Ruled off from the lists: it is the one thing on the page that is not a
+     way in. */
+  border-top: 1px solid var(--border);
+  padding-top: .75rem;
 }
+/* The link that finishes it: the accent and nothing else, so the line it sits
+   on keeps its height. */
+body.nothing .startnote a { color: var(--link); white-space: nowrap; }
 /* The ways in, as one wrapping row rather than a stack of paragraphs.
    Two short labels sit together on a phone in portrait, which is where the
    vertical space on this page is worth the most, and anything that does not fit

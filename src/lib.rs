@@ -211,6 +211,15 @@ pub struct PaneSection {
 /// replaces, so nothing downstream changes.
 pub type HeadingAct = (String, String, String);
 
+/// What the start page says under its lists: a sentence or two, and a link that
+/// finishes it. Both plain text, escaped by the page.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StartNote {
+    pub text: String,
+    /// **(label, href)**, drawn inline after the text, on the same line.
+    pub link: Option<(String, String)>,
+}
+
 /// One row of a [`PaneSection`].
 #[derive(Clone)]
 pub struct PaneEntry {
@@ -278,9 +287,13 @@ pub struct Config {
     /// `None` uses the sentence this crate would write about itself, which is only
     /// right for the program this crate is.
     pub intro: Option<String>,
-    /// A short note under the start page's lists. Plain text, escaped by the
-    /// page. `None` draws nothing.
-    pub note: Option<String>,
+    /// A short note under the start page's lists. Behind a lock, because what
+    /// an embedder has to say there can change while it runs; see
+    /// [`Config::set_note`].
+    note: RwLock<Option<Arc<StartNote>>>,
+    /// A word the status line puts between the name and the version — an
+    /// edition, a channel. Behind a lock for the reason `note` is.
+    edition: RwLock<Option<String>>,
     /// Fixed shortcuts for the Places list — (label, RootId) pairs the
     /// embedder supplies, since it is the side that knows the platform's
     /// home, desktop and drive layout. Only rendered when `app_ui` is set.
@@ -352,7 +365,8 @@ impl Config {
             app_version: None,
             app_commit: None,
             intro: None,
-            note: None,
+            note: RwLock::new(None),
+            edition: RwLock::new(None),
             places: Vec::new(),
             recent: RwLock::new(Arc::new(Vec::new())),
             pinned: RwLock::new(Arc::new(Vec::new())),
@@ -453,6 +467,23 @@ impl Config {
         *self.intro_acts.write().expect("intro acts lock") = Arc::new(acts);
     }
 
+    pub fn note(&self) -> Option<Arc<StartNote>> {
+        self.note.read().expect("note lock").clone()
+    }
+
+    /// Replaces the start page's note. `None`, or empty text, draws nothing —
+    /// not even the rule above it. Every page rendered after this shows it.
+    pub fn set_note(&self, note: Option<StartNote>) {
+        *self.note.write().expect("note lock") = note.map(Arc::new);
+    }
+
+    /// Sets the word [`Config::app_label`] puts after the name. `None` or empty
+    /// puts nothing. The window title and the start page's heading keep the
+    /// name alone: this is for the line a build is identified by.
+    pub fn set_edition(&self, edition: Option<String>) {
+        *self.edition.write().expect("edition lock") = edition.filter(|e| !e.is_empty());
+    }
+
     /// What a shortcut turned out to be. `Unknown` for anything nobody has
     /// looked at, which a page renders as an ordinary entry.
     pub fn root_status(&self, id: &str) -> RootStatus {
@@ -482,10 +513,14 @@ impl Config {
     /// once means neither.
     pub fn app_label(&self) -> String {
         let mut label = format!(
-            "{} v{}",
+            "{}{} v{}",
             self.app_name
                 .clone()
                 .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string()),
+            match &*self.edition.read().expect("edition lock") {
+                Some(e) => format!(" {e}"),
+                None => String::new(),
+            },
             self.app_version
                 .clone()
                 .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())

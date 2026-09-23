@@ -1688,8 +1688,21 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
     lists.push_str("</div>");
     // Under the lists, not beside the title. The ways in are what this page is
     // for; a note here is what is left to say once those are on screen.
-    let note = match state.cfg.note.as_deref() {
-        Some(n) if !n.is_empty() => format!("<p class=\"startnote\">{}</p>", html_escape(n)),
+    // The link finishes the sentence rather than standing under it: a button
+    // of its own would be one more way in, and the ways in are above.
+    let note = match state.cfg.note() {
+        Some(n) if !n.text.is_empty() => format!(
+            "<p class=\"startnote\">{}{}</p>",
+            html_escape(&n.text),
+            match &n.link {
+                Some((label, href)) => format!(
+                    " <a href=\"{}\">{}</a>",
+                    html_escape(href),
+                    html_escape(label)
+                ),
+                None => String::new(),
+            }
+        ),
         _ => String::new(),
     };
 
@@ -1758,7 +1771,7 @@ pub fn error_page(
 mod tests {
     use super::*;
     use crate::hl::Hl;
-    use crate::{Config, PaneEntry, PaneSection, RootStatus};
+    use crate::{Config, PaneEntry, PaneSection, RootStatus, StartNote};
     use std::fs;
     use std::path::PathBuf;
 
@@ -2166,14 +2179,18 @@ mod tests {
         state.cfg.app_version = Some("9.9.9".to_string());
         state.cfg.app_commit = Some("a1b2c3d4+2".to_string());
         state.cfg.intro = Some("A sentence of <its> own.".to_string());
-        state.cfg.note = Some("A note of <its> own.".to_string());
+        state.cfg.set_note(Some(StartNote {
+            text: "A note of <its> own.".to_string(),
+            link: Some(("Do <it>".to_string(), "/x?a=1&b=2".to_string())),
+        }));
+        state.cfg.set_edition(Some("Plus".to_string()));
         let html = start_page(&state, prefs(), "/");
         assert!(html.contains("<h1>downstream</h1>"), "{html}");
         assert!(html.contains("<title>downstream</title>"), "{html}");
         // Said once: the header's crumbs are empty on this page, on purpose.
         assert!(html.contains("<div class=\"crumbs\"></div>"), "{html}");
         assert!(
-            html.contains("downstream v9.9.9 (a1b2c3d4+2)"),
+            html.contains("downstream Plus v9.9.9 (a1b2c3d4+2)"),
             "footer names the app and the commit it was built from: {html}"
         );
         assert!(!html.contains("treeserve v"), "not this crate's name");
@@ -2181,9 +2198,23 @@ mod tests {
         // is the same, and it sits under the lists rather than in the intro.
         assert!(html.contains("A sentence of &lt;its&gt; own."), "{html}");
         assert!(html.contains("A note of &lt;its&gt; own."), "{html}");
+        // Its link on the same line, both halves escaped.
+        assert!(
+            html.contains("own. <a href=\"/x?a=1&amp;b=2\">Do &lt;it&gt;</a></p>"),
+            "{html}"
+        );
+        // The edition is for the build line, and the page's name stays the name.
+        assert!(html.contains("<h1>downstream</h1>"), "{html}");
         let lists_at = html.find("class=\"start\"").expect("lists");
         let note_at = html.find("class=\"startnote\"").expect("note");
         assert!(note_at > lists_at, "the note sits under the lists: {html}");
+        // Taken back, and nothing is left behind — not an empty paragraph with a
+        // rule over it.
+        state.cfg.set_note(None);
+        state.cfg.set_edition(None);
+        let html = start_page(&state, prefs(), "/");
+        assert!(!html.contains("startnote"), "{html}");
+        assert!(html.contains("downstream v9.9.9 (a1b2c3d4+2)"), "{html}");
 
         // No picker on this platform: say so instead of drawing a dead button.
         state.cfg.picker = false;

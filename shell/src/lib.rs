@@ -467,9 +467,16 @@ pub struct ShellExt {
     /// different reasons to exist — telesight browses machines it has a login
     /// for, which is not something this sentence should have to cover.
     pub intro: Option<String>,
-    /// A short note drawn under the start page's lists. Plain text; the page
-    /// escapes it. `None` draws nothing.
-    pub note: Option<String>,
+    /// The note drawn under the start page's lists, with a link to finish it
+    /// if it has one. Asked once, when the server starts — after every plugin
+    /// has set up, so it can read their state; for anything later, call
+    /// `Config::set_note` through [`Serving::state`]. `None` draws nothing.
+    #[allow(clippy::type_complexity)]
+    pub note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
+    /// A word for the status line, between the name and the version. Asked
+    /// when `note` is, and changed later with `Config::set_edition`.
+    #[allow(clippy::type_complexity)]
+    pub edition: Option<Box<dyn Fn(&AppHandle) -> Option<String> + Send + Sync>>,
     /// Replaces the shell's keyboard-shortcut script wholesale. A downstream
     /// page can need the very keys the default script binds, so the guard
     /// belongs to whoever knows about that page.
@@ -580,7 +587,10 @@ struct Ext {
     picker: bool,
     build: BuildInfo,
     intro: Option<String>,
-    note: Option<String>,
+    #[allow(clippy::type_complexity)]
+    note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
+    edition: Option<Box<dyn Fn(&AppHandle) -> Option<String> + Send + Sync>>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
@@ -626,6 +636,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         build: ext.build.unwrap_or(BUILD),
         intro: ext.intro,
         note: ext.note,
+        edition: ext.edition,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
@@ -1391,7 +1402,8 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.app_version = Some(ext.build.version.to_string());
     cfg.app_commit = (!ext.build.commit.is_empty()).then(|| ext.build.commit_mark());
     cfg.intro = ext.intro.clone();
-    cfg.note = ext.note.clone();
+    cfg.set_note(ext.note.as_ref().and_then(|f| f(app)));
+    cfg.set_edition(ext.edition.as_ref().and_then(|f| f(app)));
     cfg.places = places(app)
         .into_iter()
         .map(|(label, dir)| (label, treeserve::util::display_path(&dir)))
