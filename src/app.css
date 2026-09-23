@@ -741,6 +741,24 @@ body.nothing .start .row > a.aside {
   body.nothing .start .row > a.aside:hover { color: var(--link); background: none; }
 }
 body.nothing .start a { padding: .15rem .3rem; border-radius: 4px; color: var(--fg); }
+/* The keyboard's ring, in the page's own accent. Left to the engine, WebKitGTK
+   paints the system accent and WebView2 a dark ring that goes missing on a dark
+   theme. Every page of ours links this sheet, so this is the one place for it. */
+:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+/* The keyboard's ring, drawn inside the link. Both lists clip their rows for the
+   ellipsis, and a ring is drawn outside the box it rings — so Tab walked the
+   links with a ring cut to a line or two, or to nothing. */
+nav.tree a:focus-visible, body.nothing .start a:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: -2px;
+}
+/* Not on a heading's marks: nothing clips a heading, and inside an 18px mark
+   with no padding the ring sat on the icon itself. */
+nav.tree section h2 a.secact:focus-visible,
+body.nothing .start h2 a.secact:focus-visible { outline-offset: 1px; }
 @media (hover: hover) {
   body.nothing .start a:hover { background: var(--border); text-decoration: none; }
 }
