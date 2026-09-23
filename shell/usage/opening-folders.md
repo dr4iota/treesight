@@ -1,67 +1,61 @@
 # Opening folders
 
-The window starts on a page that says what there is to open, and serves nothing
-until you choose. Three ways to choose, and they are different in kind.
+The app opens on the start page, which lists what you can open.
 
 ## Places
 
-The platform's list, resolved when the program starts: your home directory, the
-desktop, documents and downloads where the system has them, the drive letters
-that exist on Windows, and the filesystem root elsewhere. The same rows every
-launch — that is the point of it. Nothing you open is added here.
+Standard folders from the system: your home directory, the desktop,
+documents and downloads where the system has them, the drive letters on Windows,
+and the filesystem root elsewhere. The same rows every launch. Nothing you open
+is added here.
 
-A row that is greyed was asked about after the page was drawn, and the word says
-what came back: *gone* — it answered, and there is nothing there any more —
-*denied*, meaning it is there and would not let you in, or *N/A*, meaning not
-available: a drive that is not ready, a share whose host has gone. It
-stays a link, because the only way to find out whether it is back is to ask for
-it, and clicking one costs whatever that wait costs.
+Each row is checked after the list appears. A greyed row says why:
 
-Where a platform has no folders to browse outside the program's own storage, that
-is the row you get, and it is the one row that is always readable.
+- **gone** — it answered, and there is nothing there any more.
+- **denied** — it is there and would not let you in.
+- **N/A** — it did not answer: a drive that is not ready, or a share whose host
+  is gone.
+
+The row stays a link, so you can try it again.
+
+On a phone, where there are no folders to browse outside the app's own storage,
+that storage is the row, and it is always readable.
 
 ## Pinned
 
-What you chose to keep. The **Files** heading — the one over the tree, naming the
-folder you have open — carries a **Pin** control; press it and that folder gets a
-row of its own, kept across launches, and the control fills in to say so. Press it
-again, or use the cross on the row, and the row goes.
+What you chose to keep. **Pin** is on the **Files** heading, over the tree. It
+pins the folder that is open, not one you have walked into, and the folder gets
+a row of its own, kept across launches. Press it again, or the cross on the row
+(**Unpin this folder**), and the row goes.
 
-It pins the folder that is *open*, not the one you have walked into: the control
-sits on the heading of the root for exactly that reason. To pin something further
-down, make it the root first — every directory row in the tree has the button for
-that — and then pin it.
+To pin a folder further down, start the tree there first — each directory row
+has the button — and then pin it.
 
-Pinning is the only list here you write yourself, which is why it is separate from
-the two you do not: Places is the platform's, and Recent writes itself. A pinned
-row that has gone missing greys and says so like any other, but it is never
-dropped for you — you put it there, so it stays until you take it away.
+A pinned row that has gone missing greys and says so, and stays until you remove
+it.
 
 ## Recent
 
-What you have opened, newest first, kept across launches. This one grows on its
-own, and each row has a button to forget it. An entry whose folder has gone is
-dropped from the list on the next launch rather than while you are looking at it —
-a row vanishing from under the pointer is worse than one that says what is wrong
-with it.
+What you have opened, newest first, kept across launches. Each row has a cross
+(**Forget this folder**). A folder that is gone is dropped on the next launch,
+not while the list is on screen.
 
 ## Open a folder…
 
-The system's own folder dialog, or `Ctrl+O`. Whatever it returns is served and
-remembered in Recent.
+The system's folder dialog, or `Ctrl+O`. The same control is in the status line
+once a folder is open. What you choose is opened and remembered in Recent.
 
 ## Once something is open
 
-The header carries the path, and every directory row in the tree has a button
-that serves *that* folder as the root — which is how you go down without going
-through the dialog again. **Close** puts the window back on the start page; what
-was open is in Recent, so there is nothing to confirm. It is on the **Files**
-heading in the pane, and the header carries it too: at the top of what is open
-there is no folder above you, so **Up** is **Start** there and does the same
-thing — the page above the root is the page you started on. Not *Home*: that is
-your own folder, and it is a row in Places.
+The header shows the path, and each part of it opens that folder. Each directory
+row has a button, **Start the tree at** that folder, so you can open it without
+the dialog.
 
-Back goes the same way, one step at a time: the folders you walked into, and
-then the folder you opened, which leaves you on the start page with it closed.
-On a phone that is the system's own gesture, and it takes one more press to
-leave the app from there.
+**Close** (the cross on the **Files** heading) returns to the start page. At the
+top of the open folder the header button is **Start** and does the same thing.
+Nothing asks you to confirm; the folder is in Recent. **Up** is the parent
+folder.
+
+Back, `Alt+Left` or the phone's gesture, walks through the folders you opened
+and then leaves you on the start page. On a phone, one more press leaves the
+app.

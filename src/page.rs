@@ -783,8 +783,8 @@ fn status_line(state: &State, root: &Root) -> String {
             "pick",
             "/.ts/open",
             &svg_icon(ICON_FOLDER),
-            "Open Folder…",
-            "Open Folder… (Ctrl+O)",
+            "Open a folder…",
+            "Open a folder… (Ctrl+O)",
         )
     } else {
         String::new()

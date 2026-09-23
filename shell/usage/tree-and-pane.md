@@ -1,37 +1,37 @@
 # Tree and pane
 
-Two halves. The tree on the left is the folder you opened; the rest of the
-window is whatever row you are on.
+Two halves. The tree on the left is the folder you opened. The rest of the
+window is the file you selected.
 
 ## The tree
 
-Directories first, then names, case ignored. A directory has a disclosure arrow
-that opens it in place, and which ones you left open is remembered — so the shape
-of the tree survives a navigation and a reload. Files starting with a dot are not
-listed.
+Directories first, then names, ignoring case. A directory has an arrow that
+opens it in place, and which ones you left open is remembered. Files starting
+with a dot are not listed.
 
-Each directory row also carries a button that makes it the served root. It is the
-one move you cannot otherwise make without the folder dialog and a path you
-already have on screen.
+Each directory row has a button that starts the tree at that folder, so you can
+open it without the folder dialog.
 
-The heading over the tree names the open folder and carries two acts on it: **Pin**
-to keep it in the Pinned list, and **Close** to serve nothing and go back to the
-start page. Opening a different folder is in the status line, which is always on
-screen.
+The **Files** heading carries **Pin**, to keep the open folder in Pinned, and
+**Close**, to return to the start page. **Open a folder…** is in the status line,
+which stays on screen.
 
 ## The pane
 
-On the start page it holds the lists — Places, Pinned, Recent, and any list the
-program embedding this one adds. Once a folder is open it is the tree.
+On the start page it holds the lists: Places, Pinned, Recent, and any other list
+the app adds. Once a folder is open, the tree is at the top and those lists stay
+under it.
 
 ## The header
 
-The path, and the controls that act on the window rather than on a file:
+The path, as links, and the controls for the window:
 
-- **Back**, which is the window's own history — every view here is a page.
-  Forward has no button and is `Alt+Right`.
-- **Reload**, which re-reads the folder and keeps your place in it.
-- **Close**, which serves nothing and shows the start page.
-- **Print**, which prints the rendered view.
+- **Refresh** re-reads the folder or file and keeps your place. `F5` and `Ctrl+R` do the
+  same.
+- **Up** goes to the parent folder. At the top of the open folder the button is
+  **Start** and returns to the start page.
+- **Theme**, **line numbers** and **Pane** are in [Preferences](preferences.md).
+- **Print** is on a rendered file or a source view, and prints that view.
 
-The path itself is a row of links: each component serves that folder.
+There is no Back button. `Alt+Left`, and the phone's gesture, go back one step.
+Forward is `Alt+Right`.

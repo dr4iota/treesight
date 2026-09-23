@@ -32,7 +32,7 @@ fn print_flag(state: &State) -> String {
             "/.ts/print",
             &svg_icon(ICON_PRINT),
             "Print",
-            "Print this page (Ctrl+P)",
+            "Print (Ctrl+P)",
         )
     } else {
         String::new()

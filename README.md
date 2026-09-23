@@ -291,7 +291,7 @@ cargo run -p treesight -- [FOLDER]     # dev run
 - **Nothing gets a row it does not earn.** Every control — Back, Source, Raw,
   Download, the flags — spells itself out while there is room and falls back to
   an icon when there is not, and the pane narrows and then goes as the window
-  does. **Open Folder…** therefore lives in the status line rather than the pane,
+  does. **Open a folder…** therefore lives in the status line rather than the pane,
   that being the one line which is always there.
 - **One screen, three regions.** The shell lays itself out as an app rather than
   as a long document: the header and the status line stay where they are, and

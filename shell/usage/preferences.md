@@ -1,24 +1,18 @@
 # Preferences
 
-Three settings, all of them flags in the header, all remembered per window.
+Three settings in the header, remembered on this device.
 
-- **Theme** — light, dark, or following the system, which is the default.
-  Choosing one stores it and puts you back on the page you were reading, drawn
-  again in the palette you chose.
-- **Line numbers** — on or off, for highlighted source.
-- **Pane** — show or hide the left half. Hidden, a file gets the whole window.
-
-They are stored as cookies on the served origin, which is why they survive a
-reload and a relaunch and do not travel to any other program.
+- **Theme** — light, dark, or auto, which follows the system and is the default.
+  Click moves to the next.
+- **Line numbers** (Ln) — on or off, for highlighted source.
+- **Pane** — show or hide the left side. Hidden, the file fills the window.
 
 ## Printing
 
-**Print** in the header, or `Ctrl+P`. The printed page is not the page on
-screen: the header, the pane and the status line come off, and the light palette
-is used whatever the window is showing, because a dark background is not what a
-printer should be asked to do.
+**Print** in the header of a rendered file or a source view, or `Ctrl+P`. The
+printed page drops the header, the pane and the status line, and uses the light
+theme.
 
 ## Hidden files
 
-Dotfiles are not listed. That is the server's setting rather than a flag on the
-page — a folder full of `.git` internals is not what a tree is for.
+Dotfiles are not listed.
