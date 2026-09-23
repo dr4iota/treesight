@@ -637,6 +637,13 @@ body.nothing .intro { margin: 1rem 0 2rem; }
 body.nothing .intro h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 .5rem; }
 body.nothing .intro p { margin: 0 0 1rem; }
 body.nothing .intro .hint { color: var(--muted); font-size: .9rem; }
+/* Under the lists. Smaller and quieter than the opening paragraph, so the
+   ways in stay what the page is for. */
+body.nothing .startnote {
+  margin: 1.75rem 0 .25rem;
+  color: var(--muted);
+  font-size: .9rem;
+}
 /* The ways in, as one wrapping row rather than a stack of paragraphs.
    Two short labels sit together on a phone in portrait, which is where the
    vertical space on this page is worth the most, and anything that does not fit

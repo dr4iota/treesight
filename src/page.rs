@@ -85,10 +85,10 @@ pub fn read_dir_sorted(
 /// three answers send them three different places.
 fn unreadable_msg(why: ResolveError) -> &'static str {
     match why {
-        ResolveError::Missing => "This folder is not there any more.",
-        ResolveError::Denied => "This folder cannot be read with the permissions this login has.",
+        ResolveError::Missing => "This folder no longer exists.",
+        ResolveError::Denied => "Permission denied.",
         ResolveError::Unreachable => {
-            "This folder did not answer. The machine or the connection it is on may be gone."
+            "This folder is not responding."
         }
         // `resolve` got us here, so it cannot have refused the same path — but a
         // sentence is owed whatever happens, and not one that guesses.
@@ -250,10 +250,10 @@ pub fn theme_icon(mode: ThemeMode) -> (&'static str, &'static str) {
     match mode {
         ThemeMode::Auto => (
             ICON_THEME_AUTO,
-            "Theme: following the system — click for light",
+            "Theme: follows the system. Click for light.",
         ),
-        ThemeMode::Light => (ICON_SUN, "Theme: light — click for dark"),
-        ThemeMode::Dark => (ICON_MOON, "Theme: dark — click to follow the system"),
+        ThemeMode::Light => (ICON_SUN, "Theme: light. Click for dark."),
+        ThemeMode::Dark => (ICON_MOON, "Theme: dark. Click to follow the system."),
     }
 }
 
@@ -468,9 +468,9 @@ fn head_and_header(
             &svg_icon(&icon_lineno(prefs.ln)),
             label,
             if prefs.ln {
-                "Line numbers on — click to hide"
+                "Hide line numbers"
             } else {
-                "Line numbers off — click to show"
+                "Show line numbers"
             },
         ));
     }
@@ -479,9 +479,9 @@ fn head_and_header(
     // has the window. A switch for the tree alone would have left an empty
     // column behind, which is neither of the two things anyone wants.
     let (pane_label, pane_val, pane_title) = if prefs.sidebar {
-        ("Pane: on", "0", "Side pane shown — click to hide")
+        ("Pane: on", "0", "Hide the side pane")
     } else {
-        ("Pane: off", "1", "Side pane hidden — click to show")
+        ("Pane: off", "1", "Show the side pane")
     };
     // Not with the flags on the right: the switch and the drawer button are one
     // control in one place, at the left end of the row. Which of the two is on
@@ -554,7 +554,7 @@ fn head_and_header(
                 "/.ts/close",
                 &svg_icon(ICON_START),
                 "Start",
-                "The start page — closes this folder",
+                "Back to the start page",
             )
         ),
         // The top of what is served, with no shell around it: nothing above and
@@ -1165,7 +1165,7 @@ fn as_root_link(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> String {
     }
     let full = vfs.root_id_at(path);
     format!(
-        "<a class=\"asroot\" href=\"/.ts/root?path={}\" title=\"Serve {} as the root\">{}</a>",
+        "<a class=\"asroot\" href=\"/.ts/root?path={}\" title=\"Start the tree at {}\">{}</a>",
         percent_encode(&full),
         html_escape(&full),
         svg_icon(ICON_AS_ROOT)
@@ -1686,6 +1686,12 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         }),
     );
     lists.push_str("</div>");
+    // Under the lists, not beside the title. The ways in are what this page is
+    // for; a note here is what is left to say once those are on screen.
+    let note = match state.cfg.note.as_deref() {
+        Some(n) if !n.is_empty() => format!("<p class=\"startnote\">{}</p>", html_escape(n)),
+        _ => String::new(),
+    };
 
     let said = state.cfg.intro.as_deref().unwrap_or(
         "Browse a folder as a tree: files beside their contents, and nothing \
@@ -1724,11 +1730,11 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             // Nothing this platform can be asked for and nothing the embedder
             // offers: the lists are the way in, and saying so beats an empty row
             // where a button should be.
-            true => "<p class=\"hint\">Open one of the places below to start.</p>".to_string(),
+            true => "<p class=\"hint\">Open one of the places below.</p>".to_string(),
         },
         name = html_escape(&state.cfg.title()),
     );
-    rootless_page(state, prefs, url_now, &format!("{intro}{lists}"))
+    rootless_page(state, prefs, url_now, &format!("{intro}{lists}{note}"))
 }
 
 pub fn error_page(
@@ -1950,7 +1956,7 @@ mod tests {
         let open = [String::from("shut")];
         let prefs = Prefs { sidebar: true, open: &open, ..prefs() };
         let html = listing_page(&state, &root, prefs, &shut, &VfsPath::new(shut.clone()), &[], "/shut/");
-        assert!(html.contains("cannot be read with the permissions"), "{html}");
+        assert!(html.contains("Permission denied."), "{html}");
         assert!(!html.contains("<table class=\"listing\">"), "an empty table for a refusal");
         // And the pane, where the reader has just clicked an arrow to find out
         // which of the two this is.
@@ -1960,7 +1966,7 @@ mod tests {
         // different word in the pane, because they send the reader elsewhere.
         let root = with(std::io::ErrorKind::NotFound);
         let html = listing_page(&state, &root, prefs, &shut, &VfsPath::new(shut.clone()), &[], "/shut/");
-        assert!(html.contains("not there any more"), "{html}");
+        assert!(html.contains("This folder no longer exists"), "{html}");
         assert!(html.contains("<li class=\"more\">gone</li>"), "{html}");
 
         // And a script asking for the same directory is handed the refusal
@@ -2151,6 +2157,7 @@ mod tests {
         }
         // The lists are the pane's rows, so a Recent still offers to be forgotten.
         assert!(html.contains("/.ts/forget?path="), "{html}");
+        assert!(!html.contains("startnote"), "no note until one is set");
 
         // What the page calls itself, and where. The name belongs to whoever
         // embedded this crate — a regression here is a window titled after the
@@ -2159,6 +2166,7 @@ mod tests {
         state.cfg.app_version = Some("9.9.9".to_string());
         state.cfg.app_commit = Some("a1b2c3d4+2".to_string());
         state.cfg.intro = Some("A sentence of <its> own.".to_string());
+        state.cfg.note = Some("A note of <its> own.".to_string());
         let html = start_page(&state, prefs(), "/");
         assert!(html.contains("<h1>downstream</h1>"), "{html}");
         assert!(html.contains("<title>downstream</title>"), "{html}");
@@ -2169,8 +2177,13 @@ mod tests {
             "footer names the app and the commit it was built from: {html}"
         );
         assert!(!html.contains("treeserve v"), "not this crate's name");
-        // The embedder's sentence, escaped: it is text, not markup.
+        // The embedder's sentence, escaped: it is text, not markup. The note
+        // is the same, and it sits under the lists rather than in the intro.
         assert!(html.contains("A sentence of &lt;its&gt; own."), "{html}");
+        assert!(html.contains("A note of &lt;its&gt; own."), "{html}");
+        let lists_at = html.find("class=\"start\"").expect("lists");
+        let note_at = html.find("class=\"startnote\"").expect("note");
+        assert!(note_at > lists_at, "the note sits under the lists: {html}");
 
         // No picker on this platform: say so instead of drawing a dead button.
         state.cfg.picker = false;

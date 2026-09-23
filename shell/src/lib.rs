@@ -467,6 +467,9 @@ pub struct ShellExt {
     /// different reasons to exist — telesight browses machines it has a login
     /// for, which is not something this sentence should have to cover.
     pub intro: Option<String>,
+    /// A short note drawn under the start page's lists. Plain text; the page
+    /// escapes it. `None` draws nothing.
+    pub note: Option<String>,
     /// Replaces the shell's keyboard-shortcut script wholesale. A downstream
     /// page can need the very keys the default script binds, so the guard
     /// belongs to whoever knows about that page.
@@ -577,6 +580,7 @@ struct Ext {
     picker: bool,
     build: BuildInfo,
     intro: Option<String>,
+    note: Option<String>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
@@ -621,6 +625,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         // stamp means this crate's own.
         build: ext.build.unwrap_or(BUILD),
         intro: ext.intro,
+        note: ext.note,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
@@ -996,7 +1001,7 @@ fn cannot_open(dir: &Path, status: RootStatus) -> String {
     let path = treeserve::util::display_path(dir);
     match status {
         RootStatus::Unreachable => {
-            format!("{path} is not available.\n\nThe drive or share did not answer.")
+            format!("{path} did not answer.")
         }
         RootStatus::Denied => {
             format!("{path} would not let you in.\n\nIt is there, and this account may not read it.")
@@ -1386,6 +1391,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.app_version = Some(ext.build.version.to_string());
     cfg.app_commit = (!ext.build.commit.is_empty()).then(|| ext.build.commit_mark());
     cfg.intro = ext.intro.clone();
+    cfg.note = ext.note.clone();
     cfg.places = places(app)
         .into_iter()
         .map(|(label, dir)| (label, treeserve::util::display_path(&dir)))
@@ -1963,7 +1969,7 @@ fn copy_bounded(
         && len > MAX_DOWNLOAD_BYTES
     {
         return Err(io::Error::other(format!(
-            "it is {len} bytes, past the {MAX_DOWNLOAD_BYTES}-byte limit on one download"
+            "too large to download ({len} bytes; limit {MAX_DOWNLOAD_BYTES})"
         )));
     }
     let mut part = dest.as_os_str().to_os_string();
@@ -1986,7 +1992,7 @@ fn copy_bounded(
         let copied = io::copy(&mut from, &mut to)?;
         if copied > MAX_DOWNLOAD_BYTES {
             return Err(io::Error::other(format!(
-                "it is past the {MAX_DOWNLOAD_BYTES}-byte limit on one download"
+                "too large to download (limit {MAX_DOWNLOAD_BYTES} bytes)"
             )));
         }
         // Flushed before the rename: the name is the promise that the bytes are
@@ -2009,7 +2015,7 @@ fn copy_bounded(
 #[cfg(mobile)]
 fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeserve::Root) {
     let Some(dir) = app_storage_dir(app) else {
-        fail(app, "This device gave the app no storage to save into.", false);
+        fail(app, "This device has no place to save files.", false);
         return;
     };
     let name = target.rel.last().cloned().unwrap_or_else(|| "download".into());

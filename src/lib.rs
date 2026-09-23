@@ -278,6 +278,9 @@ pub struct Config {
     /// `None` uses the sentence this crate would write about itself, which is only
     /// right for the program this crate is.
     pub intro: Option<String>,
+    /// A short note under the start page's lists. Plain text, escaped by the
+    /// page. `None` draws nothing.
+    pub note: Option<String>,
     /// Fixed shortcuts for the Places list — (label, RootId) pairs the
     /// embedder supplies, since it is the side that knows the platform's
     /// home, desktop and drive layout. Only rendered when `app_ui` is set.
@@ -349,6 +352,7 @@ impl Config {
             app_version: None,
             app_commit: None,
             intro: None,
+            note: None,
             places: Vec::new(),
             recent: RwLock::new(Arc::new(Vec::new())),
             pinned: RwLock::new(Arc::new(Vec::new())),
