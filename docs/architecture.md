@@ -528,6 +528,35 @@ Safe on the callback: `navigate` and `eval` (posts with no reply channel), every
 tauri-plugin-dialog dialog (its mobile backend wraps each one in a thread of its
 own), and reads of state or files.
 
+### When the last window closes on a phone
+
+tao closes the window when its activity is destroyed, and tauri exits the process
+when the last window goes. On Android that is not always the reader leaving. A
+cached, frozen process is handed the destroy of an activity that finished
+while it slept together with the create of the one a launcher tap just
+started. The exit then kills the new activity after it has drawn: the app
+flashes and is gone, and `dumpsys activity exit-info` records `EXIT_SELF` in
+the foreground.
+
+So `run_with` refuses that exit, waits 300 ms for the destroy to finish
+unregistering its activity, and then `reopen` asks tao whether any activity is
+left. If one is, the window is rebuilt on it (`build_window`, on the start
+page). If none is, the app exits as before. The question has to go to tao's
+activity list (`next_available_activity`, reached through `tauri_runtime_wry` so
+it is always tauri's own tao). A window build is no test: it binds to the
+activity that is being destroyed, and the next launch is blank.
+
+Two reproductions, on a device, after any tauri upgrade:
+
+- **The race.** Background the app, then
+  `adb shell am start -f 0x10008000 -n <pkg>/<activity>`. CLEAR_TASK destroys
+  the old activity and creates the new one together. Pass: the same pid, and
+  the start page drawn.
+- **The reader leaving.** Turn on Developer options › *Don't keep activities*
+  in Settings. `settings put global always_finish_activities` does not reach
+  the activity manager. Then open the app and press Home. Pass: the process
+  exits in the background, and the next launch is a normal cold start.
+
 ---
 
 ## ShellExt

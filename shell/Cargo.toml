@@ -35,6 +35,11 @@ treestamp = { path = "../stamp" }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+# For tao's list of live activities, which `reopen` reads. Through the runtime
+# rather than naming tao, so it is always the tao that tauri itself runs on.
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-runtime-wry = "2"
+
 # For `GetLogicalDrives`, which is the only way to ask which drive letters exist
 # without asking the drives themselves. Already in the tree under tauri, so this
 # is a name for something we were building anyway.

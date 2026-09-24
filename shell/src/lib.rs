@@ -730,8 +730,28 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
             }
             Ok(())
         })
-        .run(context)
-        .expect("error while running treesight");
+        .build(context)
+        .expect("error while running treesight")
+        .run(|app, event| {
+            // The last window closed. See `reopen` for why a phone waits
+            // before taking that as the reader leaving.
+            #[cfg(target_os = "android")]
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
+                api.prevent_exit();
+                let app = app.clone();
+                thread::spawn(move || {
+                    thread::sleep(std::time::Duration::from_millis(300));
+                    let handle = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if !reopen(&handle) {
+                            handle.exit(0);
+                        }
+                    });
+                });
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (app, event);
+        });
 }
 
 /// First argument that names a readable directory.
@@ -1443,6 +1463,58 @@ fn start(app: &AppHandle) -> Result<(), String> {
         at_home: AtomicBool::new(true),
     });
 
+    build_window(app, &home, title)?;
+    check_roots(app);
+    Ok(())
+}
+
+/// Puts the window back on a live activity that has none, instead of exiting.
+///
+/// Android only. The last window closing asks the app to exit, and on a phone
+/// that is not always the reader leaving. A cached process can be handed the
+/// destroy of an activity that finished while it sat frozen in the same breath
+/// as the create of the one a launcher tap just started; exiting then kills the
+/// new activity after it has drawn, and the app flashes and is gone.
+///
+/// So the exit waits a beat, for the destroy to finish unregistering its
+/// activity, and then asks tao whether any activity is left. One is: a window
+/// goes on it. None is: the reader did leave, and false says exit as before.
+/// Asking a window build instead is not the same question — it happily binds
+/// to the activity that is being destroyed, and the next launch is blank.
+#[cfg(target_os = "android")]
+fn reopen(app: &AppHandle) -> bool {
+    use tauri_runtime_wry::tao::platform::android::prelude::next_available_activity;
+    if app.get_webview_window(WINDOW).is_some() {
+        return true;
+    }
+    if next_available_activity().is_none() {
+        return false;
+    }
+    let Some(serving) = app.try_state::<Serving>() else {
+        return false;
+    };
+    let title = window_title(&serving.state().cfg);
+    let Ok(win) = build_window(app, &serving.home, title) else {
+        return false;
+    };
+    // A new webview, on the start page like a cold start and with nothing
+    // committed in it yet.
+    serving.loaded.store(false, Ordering::Relaxed);
+    serving.at_home.store(true, Ordering::Relaxed);
+    show(&win);
+    true
+}
+
+/// The one window, on the start page and hidden, with every handler it carries.
+///
+/// Apart from `start` because a phone can need it twice in one process: see
+/// [`reopen`].
+fn build_window(
+    app: &AppHandle,
+    home: &str,
+    title: String,
+) -> Result<tauri::WebviewWindow, String> {
+    let ext = Arc::clone(&app.state::<SharedExt>().0);
     let win = WebviewWindowBuilder::new(
         app,
         WINDOW,
@@ -1610,8 +1682,6 @@ fn start(app: &AppHandle) -> Result<(), String> {
     .build()
     .map_err(|e| format!("Cannot create the window: {e}"))?;
 
-    check_roots(app);
-
     // Dropping a folder on the window re-roots; dropping a file opens its page.
     win.on_window_event({
         let app = app.clone();
@@ -1624,7 +1694,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
         }
     });
 
-    Ok(())
+    Ok(win)
 }
 
 /// Finds out what the pane's shortcuts actually are, off the critical path.

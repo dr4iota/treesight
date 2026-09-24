@@ -4339,6 +4339,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "tauri-runtime-wry",
  "treeserve",
  "treestamp",
  "windows-sys 0.61.2",
