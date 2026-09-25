@@ -364,6 +364,12 @@ width a word would; with neither, nothing. The dot is named for screen readers
 by `detail`, or by its tone. Faults always have a word: amber and red dots differ
 only by colour, so they are for sparing use.
 
+Pages are static, so a note that changes while one is on screen used to wait for
+the next render. Every row carries `data-root`, and `repaint_notes(app, ids)`
+evaluates a script that swaps those rows' class and note in place, from the same
+renderer the page uses. A page without such rows is untouched, which is what
+makes it safe to send to whatever the window is showing.
+
 Places come from the platform (home, desktop, documents, downloads, drive
 letters or `/`). Recent is `recent.txt` in the app config dir, newest
 first, max 8, RootId strings. Opening a Place does not write Recent.
@@ -601,6 +607,8 @@ Public helpers the embedder is meant to call:
   `<a>` does not copy it (`shell/src/open.rs`)
 - `remember_root_id(app, id)` — Recent, disk, status Ok
 - `Config::set_root_vfs`, `set_sections`, `set_root_status`, `set_root_note`
+- `repaint_notes(app, ids)` — the notes on those rows, updated on the page
+  already showing, without a reload
 - `Config::set_flags(Vec<HeaderFlag>)` — controls of the embedder's own on the
   header's flag row, drawn with Refresh and ahead of the page's own. A mark
   (SVG path data, wrapped in this crate's own box), a word, a title and an href

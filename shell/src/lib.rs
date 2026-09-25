@@ -2528,6 +2528,21 @@ fn js_quoted(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
+/// Brings the notes on `ids` up to date on whatever the window is showing,
+/// without reloading it: a row that is on screen changes, and a page with no
+/// such rows — the embedder's own, say — is left exactly as it was. For a
+/// status that changes after the page went out, which a static page cannot
+/// learn any other way. Any thread.
+pub fn repaint_notes<R: tauri::Runtime>(app: &AppHandle<R>, ids: &[String]) {
+    let Some(serving) = app.try_state::<Serving>() else {
+        return;
+    };
+    let js = treeserve::page::repaint_notes(&serving.state().cfg, ids);
+    if let Some(w) = app.get_webview_window(WINDOW) {
+        let _ = w.eval(&js);
+    }
+}
+
 fn eval(app: &AppHandle, js: &str) {
     if let Some(w) = app.get_webview_window(WINDOW) {
         let _ = w.eval(js);

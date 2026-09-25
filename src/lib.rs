@@ -605,9 +605,9 @@ impl Config {
     }
 
     /// Records what a shortcut turned out to be, with nothing said beyond what
-    /// the status says. Every page rendered after this shows it; the one already
-    /// on screen was static when it left and stays that way, which is the trade
-    /// for having no script in it.
+    /// the status says. Every page rendered after this shows it; one already on
+    /// screen is static and learns it only from [`page::repaint_notes`], which a
+    /// shell evaluates in the window.
     pub fn set_root_status(&self, id: String, status: RootStatus) {
         self.set_root_note(id, status.into());
     }

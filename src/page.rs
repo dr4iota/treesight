@@ -1,7 +1,7 @@
 use crate::md::{render_markdown, RawHtml};
 use crate::util::*;
 use crate::vfs::{ResolveError, Vfs, VfsPath};
-use crate::{Drawn, Root, RootNote, State};
+use crate::{Config, Drawn, Root, RootNote, State};
 
 pub use crate::vfs::Entry;
 
@@ -1057,7 +1057,9 @@ fn note_class(note: &RootNote) -> String {
     class.join(" ")
 }
 
-/// A row's note as markup: the word, or the dot, or nothing.
+/// A row's note as markup: the word, or the dot, or nothing. One renderer for
+/// the page and for [`repaint_notes`], so a row repainted in place is the row
+/// the next render would have drawn.
 fn note_html(note: &RootNote) -> String {
     let class = |tone: crate::Tone, more: &str| {
         let mut c = String::from("why");
@@ -1085,6 +1087,55 @@ fn note_html(note: &RootNote) -> String {
     }
 }
 
+/// A script that brings the notes on `ids` up to date on a page already on
+/// screen, for a shell to evaluate in its window.
+///
+/// The pages are static, and a status that changes while one is showing — a
+/// connection that drops, one that lands — used to wait for the next render.
+/// A reload would fetch it, and would cost the scroll position, re-list the
+/// tree the reader is in, and on a page that is not ours do something else
+/// entirely. This touches only rows that carry `data-root` for one of these
+/// ids, which a page without the pane has none of, so it is safe to send to
+/// whatever is showing.
+pub fn repaint_notes(cfg: &Config, ids: &[String]) -> String {
+    let rows: Vec<String> = ids
+        .iter()
+        .map(|id| {
+            let note = cfg.root_note(id);
+            format!("[{},{},{}]", js_string(id), js_string(&note_class(&note)), js_string(&note_html(&note)))
+        })
+        .collect();
+    format!(
+        "(function(u){{for(const [id,cls,html] of u){{\
+for(const li of document.querySelectorAll('li[data-root]')){{\
+if(li.dataset.root!==id)continue;\
+if(cls)li.className=cls;else li.removeAttribute('class');\
+const was=li.querySelector('.why');if(was)was.remove();\
+if(html)li.querySelector('a').insertAdjacentHTML('afterend',html);\
+}}}}}})([{}]);",
+        rows.join(",")
+    )
+}
+
+/// A JavaScript string literal, safe inside a script evaluated anywhere: the
+/// quotes and backslash, the line breaks JavaScript and JSON disagree on, and
+/// `<` so nothing here can close a `<script>`.
+fn js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '<' | '>' | '&' | '\u{2028}' | '\u{2029}' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn root_list<'a, I: Iterator<Item = Row<'a>>>(
     out: &mut String,
     state: &State,
@@ -1109,7 +1160,8 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
             let why = note_html(&note);
             let class = note_class(&note);
             format!(
-                "<li{}>{}</li>",
+                "<li data-root=\"{}\"{}>{}</li>",
+                html_escape(row.id),
                 if class.is_empty() { String::new() } else { format!(" class=\"{class}\"") },
                 if row.aside.is_empty() {
                     format!("{link}{why}")
@@ -2741,7 +2793,7 @@ mod tests {
         assert!(html.contains(button), "{html}");
         // The Places row is drawn the plain way: no row wrapper, no button.
         let place = concat!(
-            "<li><a href=\"/.ts/place?path=%2Fhome%2Fx\"",
+            "<li data-root=\"/home/x\"><a href=\"/.ts/place?path=%2Fhome%2Fx\"",
             " title=\"/home/x\">Home</a></li>"
         );
         assert!(html.contains(place), "{html}");
@@ -2794,6 +2846,50 @@ mod tests {
             note_html(&told),
             "<span class=\"why\" title=\"Over the &quot;disk&quot; quota\">&lt;quota&gt;</span>"
         );
+    }
+
+    /// A row carries its id, which is what the repaint finds it by, and the
+    /// script says the same markup the page would — escaped for a script,
+    /// since an id is a path and a path may hold anything.
+    #[test]
+    fn a_note_can_be_repainted_on_a_page_already_showing() {
+        use crate::{RootNote, Tone};
+        let dir = tmp_dir("repaint");
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let id = "ssh:prod-web:/var/www";
+        state.cfg.set_sections(vec![PaneSection {
+            class: "servers".to_string(),
+            heading: "Servers".to_string(),
+            heading_acts: Vec::new(),
+            entries: vec![PaneEntry {
+                label: Some("prod-web".to_string()),
+                id: id.to_string(),
+                action: "/x/open".to_string(),
+                aside: Vec::new(),
+            }],
+        }]);
+        let live = RootNote {
+            status: RootStatus::Ok,
+            tone: Some(Tone::Good),
+            detail: Some("Connected".into()),
+            ..RootNote::default()
+        };
+        state.cfg.set_root_note(id.to_string(), live);
+        let prefs = Prefs { sidebar: true, ..prefs() };
+        let root = state.cfg.root().expect("served");
+        let html = listing_page(&state, &root, prefs, &[], &VfsPath::root(), &[], "/");
+        assert!(
+            html.contains("<li data-root=\"ssh:prod-web:/var/www\" class=\"noted\"><a href=\"/x/open?path="),
+            "{html}"
+        );
+        assert!(html.contains("<span class=\"why dot good\""), "{html}");
+
+        let js = repaint_notes(&state.cfg, &[id.to_string(), "/a\"b<c".to_string()]);
+        assert!(js.contains("[\"ssh:prod-web:/var/www\",\"noted\",\"\\u003cspan class=\\\"why dot good\\\""), "{js}");
+        assert!(js.contains("[\"/a\\\"b\\u003cc\",\"\",\"\"]"), "a row with nothing to say is cleared: {js}");
+        assert!(!js.contains('<'), "nothing in it can close a script: {js}");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A section the embedder brought is drawn where Places and Recent are
@@ -2865,7 +2961,7 @@ mod tests {
         );
         assert!(
             html.contains(
-                "<li class=\"noted gone\"><span class=\"row\"><a href=\"/x/open?path=\
+                "<li data-root=\"ssh:prod-web:/var/www\" class=\"noted gone\"><span class=\"row\"><a href=\"/x/open?path=\
                  ssh%3Aprod-web%3A%2Fvar%2Fwww\" title=\"ssh:prod-web:/var/www\">prod-web</a>"
             ),
             "{html}"
