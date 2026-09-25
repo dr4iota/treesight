@@ -565,6 +565,17 @@ activity list (`next_available_activity`, reached through `tauri_runtime_wry` so
 it is always tauri's own tao). A window build is no test: it binds to the
 activity that is being destroyed, and the next launch is blank.
 
+**The window is half of it.** Tauri's Kotlin side does not follow the new
+activity either: `PluginManager` keeps the first one it was shown, with the
+result launchers registered on it, and each plugin was built holding the
+activity of that moment. So after this rebuild the page is back and every
+plugin that uses its activity — a picker, a dialog, an ad, a purchase sheet —
+acts on the dead one and shows nothing. This crate has no Kotlin, so the fix is
+the embedder's: telesight rebinds them in `MainActivity` (`StaleActivity`), and
+iota's apps in the finance plugin. The two fixes need each other — without this
+one the process exits and nothing survives to go stale; without the embedder's,
+it survives with its plugins pointed at an activity that is gone.
+
 Two reproductions, on a device, after any tauri upgrade:
 
 - **The race.** Background the app, then
