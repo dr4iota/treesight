@@ -1736,7 +1736,7 @@ fn check_roots(app: &AppHandle) {
         // that wrote it may simply not be listening yet.
         for id in all.iter().filter(|id| !treeserve::root_id_is_local(id)) {
             if let Some(opener) = opener_for(&app, id) {
-                state.cfg.set_root_status(id.clone(), opener.probe(&app, id));
+                state.cfg.confirm_root_status(id.clone(), opener.probe(&app, id));
             }
         }
         let ids: Vec<String> = all
@@ -2769,7 +2769,7 @@ pub fn remember_root_id(app: &AppHandle, id: &str) {
     if let Some(serving) = app.try_state::<Serving>() {
         // Whoever got this far has already resolved the root, so this one is
         // known good without anybody having to look again.
-        serving.state().cfg.set_root_status(id.to_string(), RootStatus::Ok);
+        serving.state().cfg.confirm_root_status(id.to_string(), RootStatus::Ok);
     }
     save_recent(app, list);
 }

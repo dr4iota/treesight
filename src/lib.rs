@@ -612,6 +612,20 @@ impl Config {
         self.set_root_note(id, status.into());
     }
 
+    /// A verdict this crate reached itself — a root that resolved, a probe —
+    /// written without taking away what an embedder said on top. Where the
+    /// verdict is that the row is fine and the row already says it is, the
+    /// row's tone and word stay: *known good* is not news to a row wearing a
+    /// green dot, and writing a bare `Ok` over it took the dot away on every
+    /// open. A fault is always written.
+    pub fn confirm_root_status(&self, id: String, status: RootStatus) {
+        let mut held = self.status.write().expect("status lock");
+        if !status.is_fault() && held.get(&id).is_some_and(|n| !n.status.is_fault()) {
+            return;
+        }
+        held.insert(id, status.into());
+    }
+
     /// [`Config::set_root_status`], with a tone, a word or a tooltip of the
     /// embedder's own. Replaces whatever the row said before, all of it.
     pub fn set_root_note(&self, id: String, note: RootNote) {
@@ -1682,6 +1696,25 @@ mod tests {
                 _ => panic!("a page is text"),
             }
         }
+    }
+
+    /// This crate's own *known good* leaves an embedder's green dot where it
+    /// is, and its faults still land; the embedder's own writes always do.
+    #[test]
+    fn known_good_does_not_take_an_embedders_note_away() {
+        use super::{RootNote, RootStatus, Tone};
+        let cfg = super::Config::new(std::env::temp_dir());
+        let id = "ssh:box:/srv".to_string();
+        let live = RootNote { status: RootStatus::Ok, tone: Some(Tone::Good), ..RootNote::default() };
+        cfg.set_root_note(id.clone(), live.clone());
+        cfg.confirm_root_status(id.clone(), RootStatus::Ok);
+        assert_eq!(cfg.root_note(&id), live, "still wearing its dot");
+        cfg.confirm_root_status(id.clone(), RootStatus::Unreachable);
+        assert_eq!(cfg.root_note(&id), RootStatus::Unreachable.into(), "a fault is news");
+        cfg.confirm_root_status(id.clone(), RootStatus::Ok);
+        assert_eq!(cfg.root_status(&id), RootStatus::Ok, "and so is coming back");
+        cfg.set_root_status(id.clone(), RootStatus::Ok);
+        assert_eq!(cfg.root_note(&id), RootStatus::Ok.into());
     }
 
     /// The start page's own address: it says the start page whatever is open, and
