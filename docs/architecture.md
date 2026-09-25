@@ -611,6 +611,9 @@ Public helpers the embedder is meant to call:
   its id — sections are built before any `Config` exists to set one on
 - `repaint_notes(app, ids)` — the notes on those rows, updated on the page
   already showing, without a reload
+- `RootOpener::row_label(app, id)` — what a Recent row for a root whose id is
+  not for reading is called (`Documents`, `Thor: /home/pi`), asked when it is
+  remembered and kept in `recent.txt` as `name<TAB>id`; drawn as a path
 - `RootOpener::let_go(app, id)` — called once no row reaches `id` (not pinned,
   not in Recent, not served), including when Recent's overflow pushes it off,
   so an opener can give back what it holds for it: Android folder grants

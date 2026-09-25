@@ -909,6 +909,7 @@ fn pane_html(
             "Places",
             &[],
             state.cfg.places.iter().map(|(l, p)| Row {
+                as_path: false,
                 label: Some(l),
                 id: p,
                 action: "/.ts/place",
@@ -936,6 +937,7 @@ fn pane_html(
             "Pinned",
             &[],
             pinned.iter().zip(&unpin).map(|(p, aside)| Row {
+                as_path: false,
                 label: p.label.as_deref(),
                 id: &p.id,
                 action: "/.ts/place",
@@ -953,6 +955,7 @@ fn pane_html(
                 &sec.heading,
                 &sec.heading_acts,
                 sec.entries.iter().map(|e| Row {
+                    as_path: false,
                     label: e.label.as_deref(),
                     id: &e.id,
                     action: &e.action,
@@ -969,6 +972,7 @@ fn pane_html(
         // root a since-fixed bug wrote down wrong. Each row carries its own way
         // out, in the aside slot an embedder's sections already use.
         let recent = state.cfg.recent();
+        let names: Vec<Option<String>> = recent.iter().map(|p| state.cfg.recent_label(p)).collect();
         let forget: Vec<[(String, String, String); 1]> = recent
             .iter()
             .map(|p| {
@@ -985,8 +989,9 @@ fn pane_html(
             "recent",
             "Recent",
             &[],
-            recent.iter().zip(&forget).map(|(p, aside)| Row {
-                label: None,
+            recent.iter().zip(&forget).zip(&names).map(|((p, aside), name)| Row {
+                label: name.as_deref(),
+                as_path: true,
                 id: p,
                 action: "/.ts/root",
                 aside,
@@ -1004,6 +1009,9 @@ fn pane_html(
 /// embedder brought can send each of its entries somewhere of its own.
 struct Row<'a> {
     label: Option<&'a str>,
+    /// Whether `label` is drawn the way a path is, head and leaf, rather than
+    /// as a name — a Recent row's name is a place, and shortens like one.
+    as_path: bool,
     id: &'a str,
     action: &'a str,
     aside: &'a [(String, String, String)],
@@ -1153,6 +1161,7 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
                 percent_encode(row.id),
                 html_escape(row.id),
                 match row.label {
+                    Some(l) if row.as_path => path_label(l),
                     Some(l) => html_escape(l),
                     None => path_label(row.id),
                 }
@@ -1705,6 +1714,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         "Places",
         &[],
         state.cfg.places.iter().map(|(l, p)| Row {
+            as_path: false,
             label: Some(l),
             id: p,
             action: "/.ts/place",
@@ -1732,6 +1742,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         "Pinned",
         &[],
         pinned.iter().zip(&unpin).map(|(p, aside)| Row {
+            as_path: false,
             label: p.label.as_deref(),
             id: &p.id,
             action: "/.ts/place",
@@ -1746,6 +1757,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             &sec.heading,
             &sec.heading_acts,
             sec.entries.iter().map(|e| Row {
+                as_path: false,
                 label: e.label.as_deref(),
                 id: &e.id,
                 action: &e.action,
@@ -1754,6 +1766,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         );
     }
     let recent = state.cfg.recent();
+    let names: Vec<Option<String>> = recent.iter().map(|p| state.cfg.recent_label(p)).collect();
     let forget: Vec<[(String, String, String); 1]> = recent
         .iter()
         .map(|p| {
@@ -1770,8 +1783,9 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         "recent",
         "Recent",
         &[],
-        recent.iter().zip(&forget).map(|(p, aside)| Row {
-            label: None,
+        recent.iter().zip(&forget).zip(&names).map(|((p, aside), name)| Row {
+            label: name.as_deref(),
+            as_path: true,
             id: p,
             action: "/.ts/root",
             aside,
@@ -2932,6 +2946,35 @@ mod tests {
         let html = listing_page(&state, &root, prefs, &[], &VfsPath::root(), &[], "/");
         assert!(!html.contains("invalid"), "{html}");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A Recent row with a name is drawn under it, the way a path is — and
+    /// its id is still the link and the tooltip. One with none is its id.
+    #[test]
+    fn a_named_recent_row_is_drawn_under_its_name() {
+        let dir = tmp_dir("recent-names");
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        state.cfg.set_recent(vec!["saf:documents-88a9f1f1:/".into(), "ssh:thor:/home/pi".into(), "/home/x".into()]);
+        state.cfg.set_recent_labels(
+            [
+                ("saf:documents-88a9f1f1:/".to_string(), "Documents".to_string()),
+                ("ssh:thor:/home/pi".to_string(), "Thor: /home/pi".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let html = start_page(&state, prefs(), "/");
+        assert!(
+            html.contains("title=\"saf:documents-88a9f1f1:/\"><span class=\"leaf\">Documents</span></a>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("title=\"ssh:thor:/home/pi\"><span class=\"head\">Thor: /home</span><span class=\"leaf\">/pi</span></a>"),
+            "{html}"
+        );
+        assert!(html.contains("<span class=\"head\">/home</span><span class=\"leaf\">/x</span>"), "a local one is its path: {html}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A section the embedder brought is drawn where Places and Recent are

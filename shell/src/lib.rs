@@ -583,6 +583,17 @@ pub trait RootOpener: Send + Sync {
     fn let_go(&self, app: &AppHandle, id: &str) {
         let _ = (app, id);
     }
+
+    /// What a Recent row for `id` is called, where the id is not something a
+    /// person reads. Drawn the way a path is — the part after the last `/`
+    /// kept, the rest shortened — so `Documents/Notes` or `Thor: /home/pi`
+    /// narrows as a path does. Asked when the root is remembered, off the
+    /// thread that answers clicks, and kept in `recent.txt` beside the id.
+    /// `None`, the default, draws the id.
+    fn row_label(&self, app: &AppHandle, id: &str) -> Option<String> {
+        let _ = (app, id);
+        None
+    }
 }
 
 /// The extensions after defaults are resolved, in Tauri's managed state so
@@ -1498,6 +1509,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
         )))
         .collect();
     cfg.set_recent(recent(app));
+    cfg.set_recent_labels(recent_labels(app));
     cfg.set_pinned(pinned(app));
     cfg.set_sections(ext.extra_sections.iter().flat_map(|f| f(app)).collect());
     cfg.set_intro_acts(ext.extra_intro_acts.iter().flat_map(|f| f(app)).collect());
@@ -1800,6 +1812,10 @@ fn check_roots(app: &AppHandle) {
                 state.cfg.confirm_root_status(id.clone(), opener.probe(&app, id));
             }
         }
+        // And names for the Recent rows that were written without one. Here
+        // because this is the one launch-time pass already off the thread that
+        // answers clicks; the next page drawn has them.
+        name_old_recents(&app);
         let ids: Vec<String> = all
             .into_iter()
             .filter(|id| treeserve::root_id_is_local(id))
@@ -1917,7 +1933,9 @@ fn prune_recent(file: &Path, gone: &[String]) {
         .lines()
         .map(str::trim)
         .filter(|l| {
-            let norm = treeserve::util::display_path(Path::new(l));
+            // The id is after the name, where a line has one.
+            let id = l.split_once('\t').map_or(*l, |(_, id)| id);
+            let norm = treeserve::util::display_path(Path::new(id));
             !l.is_empty() && !gone.iter().any(|g| *g == norm)
         })
         .map(|l| format!("{l}\n"))
@@ -2805,12 +2823,43 @@ fn recent(app: &AppHandle) -> Vec<String> {
 /// A remote id passes through untouched: `display_path` only strips a prefix
 /// nothing but Windows produces.
 fn recent_ids(text: &str) -> Vec<String> {
+    recent_entries(text).into_iter().map(|(id, _)| id).collect()
+}
+
+/// The file's lines as (id, name): `<name>\t<id>` where a row has a name
+/// ([`RootOpener::row_label`]), and a bare id where it has not — which is every
+/// line a build before names wrote. Name first, for the reason `pinned.txt`
+/// puts it first: an id may hold a tab, and splitting at the first one hands
+/// the whole of the rest back as the id.
+fn recent_entries(text: &str) -> Vec<(String, Option<String>)> {
     text.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .map(|l| treeserve::util::display_path(Path::new(l)))
+        .map(|l| match l.split_once('\t') {
+            Some((name, id)) if !name.is_empty() => {
+                (treeserve::util::display_path(Path::new(id)), Some(name.to_string()))
+            }
+            _ => (treeserve::util::display_path(Path::new(l)), None),
+        })
         .take(RECENT_MAX)
         .collect()
+}
+
+/// The names the Recent file holds, by id.
+fn recent_labels(app: &AppHandle) -> std::collections::HashMap<String, String> {
+    let Some(text) = recent_file(app).and_then(|f| fs::read_to_string(f).ok()) else {
+        return Default::default();
+    };
+    recent_entries(&text).into_iter().filter_map(|(id, name)| name.map(|n| (id, n))).collect()
+}
+
+/// What `id`'s opener calls it, for a Recent row. Tabs and line breaks become
+/// spaces, since the name shares a line of the file with the id.
+fn row_label_of(app: &AppHandle, id: &str) -> Option<String> {
+    opener_for(app, id)?
+        .row_label(app, id)
+        .map(|n| n.replace(['\t', '\n', '\r'], " "))
+        .filter(|n| !n.trim().is_empty())
 }
 
 /// The Recent list with `id` at the front: an id already in it moves rather
@@ -2830,14 +2879,39 @@ fn with_front(mut list: Vec<String>, id: &str) -> Vec<String> {
 /// the same way local opens are recorded. The id is whatever that backend calls
 /// the root — for a local one, the display-form path.
 pub fn remember_root_id(app: &AppHandle, id: &str) {
+    // Asked before the lock: an opener may cross to the platform to answer.
+    let name = row_label_of(app, id);
     let _io = places_io();
     let list = with_front(recent(app), id);
+    let mut labels = recent_labels(app);
+    if let Some(name) = name {
+        labels.insert(id.to_string(), name);
+    }
     if let Some(serving) = app.try_state::<Serving>() {
         // Whoever got this far has already resolved the root, so this one is
         // known good without anybody having to look again.
         serving.state().cfg.confirm_root_status(id.to_string(), RootStatus::Ok);
     }
-    save_recent(app, list);
+    save_recent_named(app, list, labels);
+}
+
+/// Names for the Recent rows a build before names wrote, asked of their
+/// openers once, at launch, on the thread `check_roots` already runs on. A row
+/// its opener has no name for stays drawn as its id.
+fn name_old_recents(app: &AppHandle) {
+    let missing: Vec<String> = {
+        let named = recent_labels(app);
+        recent(app).into_iter().filter(|id| !named.contains_key(id)).collect()
+    };
+    let found: Vec<(String, String)> =
+        missing.iter().filter_map(|id| row_label_of(app, id).map(|n| (id.clone(), n))).collect();
+    if found.is_empty() {
+        return;
+    }
+    let _io = places_io();
+    let mut labels = recent_labels(app);
+    labels.extend(found);
+    save_recent_named(app, recent(app), labels);
 }
 
 /// The theme the shell's own pages are being drawn with.
@@ -3006,14 +3080,34 @@ fn save_pinned(app: &AppHandle, list: Vec<treeserve::Pin>) {
 /// The list, in the running server and on disk. Both are the same order, and the
 /// pane reads the first of them on the next render.
 fn save_recent(app: &AppHandle, list: Vec<String>) {
+    let labels = recent_labels(app);
+    save_recent_named(app, list, labels);
+}
+
+/// [`save_recent`], with the names to write beside the ids. A name for an id
+/// no longer in the list is dropped with it.
+fn save_recent_named(
+    app: &AppHandle,
+    list: Vec<String>,
+    mut labels: std::collections::HashMap<String, String>,
+) {
     let was = recent(app);
+    labels.retain(|id, _| list.contains(id));
     if let Some(serving) = app.try_state::<Serving>() {
         serving.state().cfg.set_recent(list.clone());
+        serving.state().cfg.set_recent_labels(labels.clone());
     }
     let Some(file) = recent_file(app) else { return };
-    // One id per line, which is the same string the pane shows and the status
-    // map is keyed by, so the three never disagree about which root is which.
-    let text: String = list.iter().map(|id| format!("{id}\n")).collect();
+    // One id per line, which is the same string the pane links to and the
+    // status map is keyed by, so they never disagree about which root is which;
+    // a name, where there is one, goes in front of it.
+    let text: String = list
+        .iter()
+        .map(|id| match labels.get(id) {
+            Some(name) => format!("{name}\t{id}\n"),
+            None => format!("{id}\n"),
+        })
+        .collect();
     write_atomic(&file, &text);
     let_go_of(app, was);
 }
@@ -3308,6 +3402,24 @@ mod tests {
     /// spelled exactly as it went in, and a line written before ids existed
     /// holds a Windows verbatim path, which is the same root under a spelling
     /// nothing else in the app uses.
+    /// A Recent row may carry a name, in front of its id as a pinned row's
+    /// does; a line with none — every line an older build wrote — is an id.
+    #[test]
+    fn a_recent_line_may_name_its_row() {
+        let got = recent_entries("Documents\tsaf:documents-88a9f1f1:/\n/home/x\nThor: /home/pi\tssh:thor:/home/pi\n");
+        assert_eq!(
+            got,
+            vec![
+                ("saf:documents-88a9f1f1:/".to_string(), Some("Documents".to_string())),
+                ("/home/x".to_string(), None),
+                ("ssh:thor:/home/pi".to_string(), Some("Thor: /home/pi".to_string())),
+            ]
+        );
+        // An id with a tab of its own survives, since the name goes first.
+        let tabbed = recent_entries("Odd\t/srv/a\tb\n");
+        assert_eq!(tabbed[0].0, "/srv/a\tb");
+    }
+
     #[test]
     fn recent_is_a_list_of_ids_and_a_reopened_one_moves() {
         let ids = recent_ids("C:\\Users\\x\r\n\\\\?\\C:\\work\n\n  ssh:prod:/var/www  \n");

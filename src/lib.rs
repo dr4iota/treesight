@@ -408,6 +408,9 @@ pub struct Config {
     /// Recently served roots as RootIds, newest first. Behind a lock like
     /// `root`, since it grows while the server runs.
     recent: RwLock<Arc<Vec<String>>>,
+    /// What a Recent row is called where its id is not something to read: a
+    /// granted folder's name, a server's. See [`Config::set_recent_labels`].
+    recent_labels: RwLock<Arc<HashMap<String, String>>>,
     /// Roots the reader pinned, in the order they were pinned. Behind a lock for
     /// the reason `recent` is: pinning happens while the server runs, and the
     /// next page render is where it shows up.
@@ -476,6 +479,7 @@ impl Config {
             edition: RwLock::new(None),
             places: Vec::new(),
             recent: RwLock::new(Arc::new(Vec::new())),
+            recent_labels: RwLock::new(Arc::new(HashMap::new())),
             pinned: RwLock::new(Arc::new(Vec::new())),
             root_name: RwLock::new(None),
             sections: RwLock::new(Arc::new(Vec::new())),
@@ -524,6 +528,21 @@ impl Config {
     /// it re-roots, so the next page render shows the new order.
     pub fn set_recent(&self, recent: Vec<String>) {
         *self.recent.write().expect("recent lock") = Arc::new(recent);
+    }
+
+    /// The name a Recent row is drawn under, where it has one.
+    pub fn recent_label(&self, id: &str) -> Option<String> {
+        self.recent_labels.read().expect("recent labels lock").get(id).cloned()
+    }
+
+    /// Names for Recent rows, by id. A local folder needs none — its path is
+    /// what a person reads — but a root whose id is a scheme and a slug does:
+    /// `saf:documents-88a9f1f1:/` is how the platform's grant is told apart, and
+    /// *Documents* is how the reader does. The name is drawn the way a path is,
+    /// so `Documents/Notes` keeps its last part when the pane is narrow, and the
+    /// id stays the row's link and its tooltip.
+    pub fn set_recent_labels(&self, labels: HashMap<String, String>) {
+        *self.recent_labels.write().expect("recent labels lock") = Arc::new(labels);
     }
 
     pub fn pinned(&self) -> Arc<Vec<Pin>> {
