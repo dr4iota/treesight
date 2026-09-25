@@ -853,9 +853,12 @@ nav.tree .chooser .head, body.nothing .start .head { color: var(--muted); }
    and there is therefore no width at which one line does not fit. Wrapping was
    the first answer and it was the wrong one twice — a flex line breaks on the
    items' natural widths, before any shrinking, so a long path pushed its word to
-   a second line no matter how much room shrinking could have found. */
-nav.tree .chooser li.gone,
-body.nothing .start li.gone {
+   a second line no matter how much room shrinking could have found.
+                                                                       [continued]
+   `noted` is the layout and `gone` the dimming: every fault carries a word, and a
+   healthy row may carry a dot, which wants the same line and not the grey. */
+nav.tree .chooser li.noted,
+body.nothing .start li.noted {
   display: flex;
   align-items: baseline;
 }
@@ -881,10 +884,10 @@ body.nothing .start li.gone > .row > a {
    the next, and the `min-width: 0` took their 2.5rem hit box with it — 16px of
    terminal button on a row with a long name. The greying above still says every
    link; only the width does not. */
-nav.tree .chooser li.gone > a,
-nav.tree .chooser li.gone > .row > a:first-child,
-body.nothing .start li.gone > a,
-body.nothing .start li.gone > .row > a:first-child {
+nav.tree .chooser li.noted > a,
+nav.tree .chooser li.noted > .row > a:first-child,
+body.nothing .start li.noted > a,
+body.nothing .start li.noted > .row > a:first-child {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -895,10 +898,10 @@ body.nothing .start li.gone > .row > a:first-child {
    because the space is reserved either way and a column of bright marks down a
    narrow pane is a column of marks, not a list. */
 nav.tree .chooser .row > a { flex: 1 1 auto; min-width: 0; }
-/* A gone entry's `li` is the flex line that its note sits at the end of, so
+/* A noted entry's `li` is the flex line that its note sits at the end of, so
    when the row is what holds the link, the row is what gives up the width. */
-nav.tree .chooser li.gone > .row,
-body.nothing .start li.gone > .row { flex: 1 1 auto; min-width: 0; }
+nav.tree .chooser li.noted > .row,
+body.nothing .start li.noted > .row { flex: 1 1 auto; min-width: 0; }
 nav.tree .chooser a.aside {
   flex: 0 0 auto;
   padding: 0 .15rem;
@@ -918,6 +921,26 @@ body.nothing .start .why {
   font-size: .7rem;
   color: var(--muted);
 }
+/* An embedder's tone colours the note and only the note: the word, or the dot
+   that stands in for one on a row with nothing wrong to say. The row keeps its
+   own colour, so a pane of healthy servers is a list and not a green wall. */
+nav.tree .chooser .why.good, body.nothing .start .why.good { color: var(--tip); }
+nav.tree .chooser .why.warn, body.nothing .start .why.warn { color: var(--warning); }
+nav.tree .chooser .why.bad, body.nothing .start .why.bad { color: var(--err); }
+/* A dot is the width of a short word's first letter, drawn where the word would
+   sit, so the marks after it stay in their column. `align-self` because the
+   line is aligned on its baseline and an empty box has none to offer. */
+nav.tree .chooser .why.dot::before,
+body.nothing .start .why.dot::before {
+  content: "";
+  display: inline-block;
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+nav.tree .chooser .why.dot,
+body.nothing .start .why.dot { align-self: center; line-height: 0; }
 
 /* The listing keeps clear of a cutout on its own side. Not the left: the pane is
    there, and where the pane is gone the drawer's own padding answers for it. */

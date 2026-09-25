@@ -349,7 +349,20 @@ link). `denied` and not *refused*: a *connection refused* is a socket with
 nothing behind it, which is the third case and the opposite of the one that word
 would be naming. The row abbreviates; `cannot_open` spells each out, and matches
 on every status by name so a fourth cannot fall through to a sentence meant for
-another.
+another. The fourth is `Other` (`error`, *could not be opened*), for an
+embedder whose backend fails in a way none of the three names.
+
+**What logic reads and what is drawn are kept apart.** `RootStatus` is the
+verdict: pruning, `cannot_open`, and an embedder's own bookkeeping all branch on
+it, and a fault (`is_fault`) is dimmed. `RootNote` wraps it with what is only
+drawn — a `Tone` (`Plain`, `Good`, `Warn`, `Bad`, coloured from `--tip`,
+`--warning`, `--err`), a word, and a tooltip (`detail`) — each falling back to the
+status's own when `None`, so `set_root_status` draws what it always did. The row
+shows the word in the tone's colour; with no word and a tone, a dot, which is how
+a healthy row says something good (a connected server) without spending the
+width a word would; with neither, nothing. The dot is named for screen readers
+by `detail`, or by its tone. Faults always have a word: amber and red dots differ
+only by colour, so they are for sparing use.
 
 Places come from the platform (home, desktop, documents, downloads, drive
 letters or `/`). Recent is `recent.txt` in the app config dir, newest
@@ -587,7 +600,7 @@ Public helpers the embedder is meant to call:
   same helper and allowlist `on_navigation` uses, so an embedder with no real
   `<a>` does not copy it (`shell/src/open.rs`)
 - `remember_root_id(app, id)` — Recent, disk, status Ok
-- `Config::set_root_vfs`, `set_sections`, `set_root_status`
+- `Config::set_root_vfs`, `set_sections`, `set_root_status`, `set_root_note`
 - `Config::set_flags(Vec<HeaderFlag>)` — controls of the embedder's own on the
   header's flag row, drawn with Refresh and ahead of the page's own. A mark
   (SVG path data, wrapped in this crate's own box), a word, a title and an href

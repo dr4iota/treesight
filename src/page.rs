@@ -1,7 +1,7 @@
 use crate::md::{render_markdown, RawHtml};
 use crate::util::*;
 use crate::vfs::{ResolveError, Vfs, VfsPath};
-use crate::{Root, State};
+use crate::{Drawn, Root, RootNote, State};
 
 pub use crate::vfs::Entry;
 
@@ -1043,6 +1043,48 @@ fn heading_acts(acts: &[(String, String, String)]) -> String {
     format!("<span class=\"acts\">{links}</span>")
 }
 
+/// The classes on a row's `li`: `noted` when it carries a word or a dot, which
+/// is what lays the note out at the end of the line, and `gone` when it is a
+/// fault, which is what dims it.
+fn note_class(note: &RootNote) -> String {
+    let mut class = Vec::new();
+    if note.drawn() != Drawn::Nothing {
+        class.push("noted");
+    }
+    if note.status.is_fault() {
+        class.push("gone");
+    }
+    class.join(" ")
+}
+
+/// A row's note as markup: the word, or the dot, or nothing.
+fn note_html(note: &RootNote) -> String {
+    let class = |tone: crate::Tone, more: &str| {
+        let mut c = String::from("why");
+        c.push_str(more);
+        if let Some(t) = tone.class() {
+            c.push(' ');
+            c.push_str(t);
+        }
+        c
+    };
+    match note.drawn() {
+        Drawn::Nothing => String::new(),
+        Drawn::Word { word, tone, detail } => format!(
+            "<span class=\"{}\"{}>{}</span>",
+            class(tone, ""),
+            detail.map(|d| format!(" title=\"{}\"", html_escape(d))).unwrap_or_default(),
+            html_escape(word)
+        ),
+        // `role="img"` because a label on a bare span is one most readers skip.
+        Drawn::Dot { tone, label } => format!(
+            "<span class=\"{}\" role=\"img\" title=\"{l}\" aria-label=\"{l}\"></span>",
+            class(tone, " dot"),
+            l = html_escape(label)
+        ),
+    }
+}
+
 fn root_list<'a, I: Iterator<Item = Row<'a>>>(
     out: &mut String,
     state: &State,
@@ -1053,7 +1095,7 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
 ) {
     let links: String = items
         .map(|row| {
-            let note = state.cfg.root_status(row.id).note();
+            let note = state.cfg.root_note(row.id);
             let link = format!(
                 "<a href=\"{}?path={}\" title=\"{}\">{}</a>",
                 row.action,
@@ -1064,13 +1106,11 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
                     None => path_label(row.id),
                 }
             );
-            let why = match note {
-                Some(n) => format!("<span class=\"why\">{n}</span>"),
-                None => String::new(),
-            };
+            let why = note_html(&note);
+            let class = note_class(&note);
             format!(
                 "<li{}>{}</li>",
-                if note.is_some() { " class=\"gone\"" } else { "" },
+                if class.is_empty() { String::new() } else { format!(" class=\"{class}\"") },
                 if row.aside.is_empty() {
                     format!("{link}{why}")
                 } else {
@@ -2710,6 +2750,52 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The rule, in all its cases: a word if there is one, coloured by the
+    /// tone; a dot if there is only a tone; nothing if there is neither. And a
+    /// bare status draws what it always drew, so nothing that only ever set one
+    /// looks any different.
+    #[test]
+    fn a_note_is_a_word_a_dot_or_nothing() {
+        use crate::{RootNote, Tone};
+        let bare = |s: RootStatus| note_html(&s.into());
+        assert_eq!(bare(RootStatus::Ok), "");
+        assert_eq!(bare(RootStatus::Unknown), "");
+        assert_eq!(bare(RootStatus::Missing), "<span class=\"why\">gone</span>");
+        assert_eq!(bare(RootStatus::Unreachable), "<span class=\"why\">N/A</span>");
+        assert_eq!(bare(RootStatus::Other), "<span class=\"why\">error</span>");
+        assert_eq!(note_class(&RootStatus::Ok.into()), "");
+        assert_eq!(note_class(&RootStatus::Denied.into()), "noted gone");
+
+        let live = RootNote {
+            status: RootStatus::Ok,
+            tone: Some(Tone::Good),
+            detail: Some("Connected".into()),
+            ..RootNote::default()
+        };
+        assert_eq!(
+            note_html(&live),
+            "<span class=\"why dot good\" role=\"img\" title=\"Connected\" aria-label=\"Connected\"></span>"
+        );
+        assert_eq!(note_class(&live), "noted", "a dot lays out like a word, and is not dimmed");
+
+        let unnamed = RootNote { tone: Some(Tone::Warn), ..RootNote::default() };
+        assert!(note_html(&unnamed).contains("aria-label=\"Warning\""), "a dot is never nameless");
+
+        let refused = RootNote { status: RootStatus::Denied, tone: Some(Tone::Bad), ..RootNote::default() };
+        assert_eq!(note_html(&refused), "<span class=\"why bad\">denied</span>", "a fault keeps its word");
+
+        let told = RootNote {
+            status: RootStatus::Other,
+            text: Some("<quota>".into()),
+            detail: Some("Over the \"disk\" quota".into()),
+            ..RootNote::default()
+        };
+        assert_eq!(
+            note_html(&told),
+            "<span class=\"why\" title=\"Over the &quot;disk&quot; quota\">&lt;quota&gt;</span>"
+        );
+    }
+
     /// A section the embedder brought is drawn where Places and Recent are
     /// drawn, out of the same parts: an entry that links somewhere the shell
     /// knows, a note when its check came back badly, and — this being the part
@@ -2779,7 +2865,7 @@ mod tests {
         );
         assert!(
             html.contains(
-                "<li class=\"gone\"><span class=\"row\"><a href=\"/x/open?path=\
+                "<li class=\"noted gone\"><span class=\"row\"><a href=\"/x/open?path=\
                  ssh%3Aprod-web%3A%2Fvar%2Fwww\" title=\"ssh:prod-web:/var/www\">prod-web</a>"
             ),
             "{html}"

@@ -76,8 +76,9 @@ const MATH_CSS: &str = include_str!("math.css");
 /// checking a path is a syscall that can block for as long as a network drive
 /// takes to give up. An entry says nothing about itself until there is something
 /// true to say.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RootStatus {
+    #[default]
     Unknown,
     Ok,
     /// It answered, and there is nothing there any more.
@@ -89,6 +90,12 @@ pub enum RootStatus {
     Denied,
     /// It did not answer: a drive that is not ready, a share whose host has gone.
     Unreachable,
+    /// Something went wrong that none of the above names. A fault like the
+    /// rest — dimmed, and pruned from Recent — for an embedder whose backend
+    /// fails in ways a folder does not. Say what in [`RootNote::text`] or
+    /// [`RootNote::detail`]; if one kind of `Other` becomes common, it has
+    /// earned a variant of its own.
+    Other,
 }
 
 impl RootStatus {
@@ -110,6 +117,102 @@ impl RootStatus {
             RootStatus::Missing => Some("gone"),
             RootStatus::Denied => Some("denied"),
             RootStatus::Unreachable => Some("N/A"),
+            RootStatus::Other => Some("error"),
+        }
+    }
+
+    /// Whether this is a fault: the row is dimmed, and Recent lets it go.
+    /// `Unknown` and `Ok` are the two that are not, and they draw the same.
+    pub fn is_fault(self) -> bool {
+        !matches!(self, RootStatus::Unknown | RootStatus::Ok)
+    }
+}
+
+/// How a row's note is coloured. Display only: nothing decides anything on it,
+/// which is what [`RootStatus`] is for.
+///
+/// The colour goes on the note, never the whole row, so a pane of ten healthy
+/// servers is not a green wall. `Good` is the one meant to be common; `Warn`
+/// and `Bad` differ from each other only by colour, so a fault should say its
+/// word rather than lean on a dot.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Tone {
+    #[default]
+    Plain,
+    Good,
+    Warn,
+    Bad,
+}
+
+impl Tone {
+    /// The class the stylesheet colours by, `None` for the muted default.
+    pub fn class(self) -> Option<&'static str> {
+        match self {
+            Tone::Plain => None,
+            Tone::Good => Some("good"),
+            Tone::Warn => Some("warn"),
+            Tone::Bad => Some("bad"),
+        }
+    }
+
+    /// What a dot says to a screen reader when the embedder gave no `detail`.
+    fn spoken(self) -> &'static str {
+        match self {
+            Tone::Plain => "",
+            Tone::Good => "OK",
+            Tone::Warn => "Warning",
+            Tone::Bad => "Error",
+        }
+    }
+}
+
+/// Everything a row says about itself: the status logic reads, and how it is
+/// drawn. Anything left `None` falls back to what the status says on its own,
+/// so `RootNote::from(status)` draws exactly what `status` always drew.
+///
+/// **The rule for what is drawn.** A word if there is one, in the tone's
+/// colour; otherwise a dot in the tone's colour, if the tone is not `Plain`;
+/// otherwise nothing. The faults all have a default word, so a dot is what an
+/// `Ok` or `Unknown` row with a tone looks like — a connected server, say.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct RootNote {
+    pub status: RootStatus,
+    pub tone: Option<Tone>,
+    /// The short word at the end of the row. A word, not a sentence: it rides
+    /// at the end of a row that is mostly somebody's path.
+    pub text: Option<String>,
+    /// The sentence, if there is one: the note's tooltip, and what a screen
+    /// reader says for a dot.
+    pub detail: Option<String>,
+}
+
+impl From<RootStatus> for RootNote {
+    fn from(status: RootStatus) -> Self {
+        RootNote { status, ..RootNote::default() }
+    }
+}
+
+/// What a row's note comes to once the defaults are in: a word, a dot, or
+/// nothing, and the colour and tooltip that go with it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Drawn<'a> {
+    Nothing,
+    Word { word: &'a str, tone: Tone, detail: Option<&'a str> },
+    Dot { tone: Tone, label: &'a str },
+}
+
+impl RootNote {
+    pub fn tone(&self) -> Tone {
+        self.tone.unwrap_or_default()
+    }
+
+    pub fn drawn(&self) -> Drawn<'_> {
+        let tone = self.tone();
+        let detail = self.detail.as_deref().filter(|d| !d.is_empty());
+        match self.text.as_deref().filter(|t| !t.is_empty()).or(self.status.note()) {
+            Some(word) => Drawn::Word { word, tone, detail },
+            None if tone == Tone::Plain => Drawn::Nothing,
+            None => Drawn::Dot { tone, label: detail.unwrap_or(tone.spoken()) },
         }
     }
 }
@@ -326,7 +429,7 @@ pub struct Config {
     /// has got round to looking at. Written by the embedder as its answers come
     /// in and read while a page renders, which is the whole point of it being
     /// separate from the two lists: they go out immediately and this catches up.
-    status: RwLock<HashMap<String, RootStatus>>,
+    status: RwLock<HashMap<String, RootNote>>,
 }
 
 impl Config {
@@ -491,15 +594,28 @@ impl Config {
             .read()
             .expect("status lock")
             .get(id)
-            .copied()
+            .map(|n| n.status)
             .unwrap_or(RootStatus::Unknown)
     }
 
-    /// Records what a shortcut turned out to be. Every page rendered after this
-    /// shows it; the one already on screen was static when it left and stays
-    /// that way, which is the trade for having no script in it.
+    /// The whole of what a row says: its status, and the tone, word and
+    /// tooltip an embedder may have given it.
+    pub fn root_note(&self, id: &str) -> RootNote {
+        self.status.read().expect("status lock").get(id).cloned().unwrap_or_default()
+    }
+
+    /// Records what a shortcut turned out to be, with nothing said beyond what
+    /// the status says. Every page rendered after this shows it; the one already
+    /// on screen was static when it left and stays that way, which is the trade
+    /// for having no script in it.
     pub fn set_root_status(&self, id: String, status: RootStatus) {
-        self.status.write().expect("status lock").insert(id, status);
+        self.set_root_note(id, status.into());
+    }
+
+    /// [`Config::set_root_status`], with a tone, a word or a tooltip of the
+    /// embedder's own. Replaces whatever the row said before, all of it.
+    pub fn set_root_note(&self, id: String, note: RootNote) {
+        self.status.write().expect("status lock").insert(id, note);
     }
 
     /// The site title as of now. Rootless, that is the product's own name — there

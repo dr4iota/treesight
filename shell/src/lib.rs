@@ -1037,6 +1037,7 @@ fn cannot_open(dir: &Path, status: RootStatus) -> String {
         RootStatus::Denied => {
             format!("{path} would not let you in.\n\nIt is there, and this account may not read it.")
         }
+        RootStatus::Other => format!("{path} could not be opened."),
         _ => format!("{path} is no longer there."),
     }
 }
