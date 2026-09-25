@@ -611,6 +611,9 @@ Public helpers the embedder is meant to call:
   its id — sections are built before any `Config` exists to set one on
 - `repaint_notes(app, ids)` — the notes on those rows, updated on the page
   already showing, without a reload
+- `RootOpener::let_go(app, id)` — called once no row reaches `id` (not pinned,
+  not in Recent, not served), including when Recent's overflow pushes it off,
+  so an opener can give back what it holds for it: Android folder grants
 - `DialogTurn::take()` — the one file dialog the window may have open, desktop
   only; an embedder's own pickers take it too, and ignore a press that finds it
   held. Android guards the same thing in the plugin that launches the picker,

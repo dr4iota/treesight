@@ -570,6 +570,19 @@ pub trait RootOpener: Send + Sync {
     /// know: a row that is wrong about being fine costs a click, and a launch
     /// that hangs costs the app.
     fn probe(&self, app: &AppHandle, id: &str) -> RootStatus;
+
+    /// Nothing refers to `id` any more — it is not pinned, it is not in
+    /// Recent, and it is not the root being served — so whatever the opener
+    /// holds for it can go: a folder grant the platform keeps on the app's
+    /// behalf, say, which would otherwise outlive every row that could reach it
+    /// and could only be taken back in the system's own settings.
+    ///
+    /// Called on a thread of its own, once per id per removal. Recent's own
+    /// overflow counts: an id pushed off its end has left as surely as one
+    /// forgotten. The default holds nothing and does nothing.
+    fn let_go(&self, app: &AppHandle, id: &str) {
+        let _ = (app, id);
+    }
 }
 
 /// The extensions after defaults are resolved, in Tauri's managed state so
@@ -2974,6 +2987,7 @@ pub fn unpin_root_id(app: &AppHandle, id: &str) {
 }
 
 fn save_pinned(app: &AppHandle, list: Vec<treeserve::Pin>) {
+    let was: Vec<String> = pinned(app).into_iter().map(|p| p.id).collect();
     let text: String = list
         .iter()
         .map(|p| match &p.label {
@@ -2986,11 +3000,13 @@ fn save_pinned(app: &AppHandle, list: Vec<treeserve::Pin>) {
     }
     let Some(file) = pinned_file(app) else { return };
     write_atomic(&file, &text);
+    let_go_of(app, was);
 }
 
 /// The list, in the running server and on disk. Both are the same order, and the
 /// pane reads the first of them on the next render.
 fn save_recent(app: &AppHandle, list: Vec<String>) {
+    let was = recent(app);
     if let Some(serving) = app.try_state::<Serving>() {
         serving.state().cfg.set_recent(list.clone());
     }
@@ -2999,6 +3015,31 @@ fn save_recent(app: &AppHandle, list: Vec<String>) {
     // map is keyed by, so the three never disagree about which root is which.
     let text: String = list.iter().map(|id| format!("{id}\n")).collect();
     write_atomic(&file, &text);
+    let_go_of(app, was);
+}
+
+/// Of the ids a list held before it was saved, the ones no list holds now and
+/// the window is not serving, handed to their openers to let go of
+/// ([`RootOpener::let_go`]). Read back from the files just written, with the
+/// same `places_io` guard the writer holds, so a pin and a Recent row of one
+/// folder are one reference and not two.
+fn let_go_of(app: &AppHandle, was: Vec<String>) {
+    let (recent, pinned) = (recent(app), pinned(app));
+    let served = app
+        .try_state::<Serving>()
+        .and_then(|s| s.state().cfg.root().map(|r| r.id.clone()));
+    for id in was {
+        if recent.contains(&id) || pinned.iter().any(|p| p.id == id) || served.as_deref() == Some(id.as_str()) {
+            continue;
+        }
+        let Some(opener) = opener_for(app, &id) else {
+            continue;
+        };
+        let app = app.clone();
+        // Off the caller: a list is saved from wherever a click was answered,
+        // and letting go may be a call across to the platform.
+        thread::spawn(move || opener.let_go(&app, &id));
+    }
 }
 
 #[cfg(test)]
