@@ -1101,7 +1101,7 @@ pub fn repaint_notes(cfg: &Config, ids: &[String]) -> String {
     let rows: Vec<String> = ids
         .iter()
         .map(|id| {
-            let note = cfg.root_note(id);
+            let note = cfg.row_note(id);
             format!("[{},{},{}]", js_string(id), js_string(&note_class(&note)), js_string(&note_html(&note)))
         })
         .collect();
@@ -1146,7 +1146,7 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
 ) {
     let links: String = items
         .map(|row| {
-            let note = state.cfg.root_note(row.id);
+            let note = state.cfg.row_note(row.id);
             let link = format!(
                 "<a href=\"{}?path={}\" title=\"{}\">{}</a>",
                 row.action,
@@ -2250,6 +2250,7 @@ mod tests {
                 id: "ssh:iota:~".to_string(),
                 action: "/x/open".to_string(),
                 aside: Vec::new(),
+                note: None,
             }],
         }]);
         let html = start_page(&state, prefs(), "/");
@@ -2867,6 +2868,7 @@ mod tests {
                 id: id.to_string(),
                 action: "/x/open".to_string(),
                 aside: Vec::new(),
+                note: None,
             }],
         }]);
         let live = RootNote {
@@ -2889,6 +2891,46 @@ mod tests {
         assert!(js.contains("[\"ssh:prod-web:/var/www\",\"noted\",\"\\u003cspan class=\\\"why dot good\\\""), "{js}");
         assert!(js.contains("[\"/a\\\"b\\u003cc\",\"\",\"\"]"), "a row with nothing to say is cleared: {js}");
         assert!(!js.contains('<'), "nothing in it can close a script: {js}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An entry can arrive with its note already on it — before anything is
+    /// checked, which is the only moment an embedder's section is built — and
+    /// a status set for its id afterwards is the newer news and wins.
+    #[test]
+    fn an_entry_brings_its_own_note_until_a_status_is_set() {
+        use crate::RootNote;
+        let dir = tmp_dir("entry-note");
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let id = "ssh:bad:~";
+        state.cfg.set_sections(vec![PaneSection {
+            class: "servers".to_string(),
+            heading: "Servers".to_string(),
+            heading_acts: Vec::new(),
+            entries: vec![PaneEntry {
+                label: Some("Bad".to_string()),
+                id: id.to_string(),
+                action: "/x/fix".to_string(),
+                aside: Vec::new(),
+                note: Some(RootNote {
+                    status: RootStatus::Other,
+                    text: Some("invalid".into()),
+                    detail: Some("remote_command: a tab".into()),
+                    ..RootNote::default()
+                }),
+            }],
+        }]);
+        let prefs = Prefs { sidebar: true, ..prefs() };
+        let root = state.cfg.root().expect("served");
+        let html = listing_page(&state, &root, prefs, &[], &VfsPath::root(), &[], "/");
+        assert!(html.contains("class=\"noted gone\""), "{html}");
+        assert!(html.contains("<span class=\"why\" title=\"remote_command: a tab\">invalid</span>"), "{html}");
+        assert!(repaint_notes(&state.cfg, &[id.to_string()]).contains("invalid"), "the repaint agrees");
+
+        state.cfg.set_root_status(id.to_string(), RootStatus::Ok);
+        let html = listing_page(&state, &root, prefs, &[], &VfsPath::root(), &[], "/");
+        assert!(!html.contains("invalid"), "{html}");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -2929,6 +2971,7 @@ mod tests {
                     ICON_PLUS.to_string(),
                     "Edit prod-web".to_string(),
                 )],
+                note: None,
             }],
         }]);
         state.cfg.set_root_status(id.to_string(), RootStatus::Missing);

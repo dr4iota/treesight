@@ -606,7 +606,9 @@ Public helpers the embedder is meant to call:
   same helper and allowlist `on_navigation` uses, so an embedder with no real
   `<a>` does not copy it (`shell/src/open.rs`)
 - `remember_root_id(app, id)` — Recent, disk, status Ok
-- `Config::set_root_vfs`, `set_sections`, `set_root_status`, `set_root_note`
+- `Config::set_root_vfs`, `set_sections`, `set_root_status`, `set_root_note`;
+  a `PaneEntry` may carry a `note` of its own, drawn until a status is set for
+  its id — sections are built before any `Config` exists to set one on
 - `repaint_notes(app, ids)` — the notes on those rows, updated on the page
   already showing, without a reload
 - `DialogTurn::take()` — the one file dialog the window may have open, desktop

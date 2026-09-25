@@ -337,6 +337,10 @@ pub struct PaneEntry {
     /// Smaller links on the row, shown on hover like the tree's re-root
     /// button: (href, svg icon paths, title).
     pub aside: Vec<(String, String, String)>,
+    /// What the row says about itself from the moment it is drawn, for an
+    /// embedder that knows before anything is checked — an entry it read and
+    /// could not use, say. A status set for the id later wins over it.
+    pub note: Option<RootNote>,
 }
 
 pub struct Config {
@@ -602,6 +606,21 @@ impl Config {
     /// tooltip an embedder may have given it.
     pub fn root_note(&self, id: &str) -> RootNote {
         self.status.read().expect("status lock").get(id).cloned().unwrap_or_default()
+    }
+
+    /// What the row for `id` draws: a status set for it, or else the note an
+    /// embedder's section gave the entry, or else nothing. The page and
+    /// [`page::repaint_notes`] both ask this, so the two cannot disagree.
+    pub fn row_note(&self, id: &str) -> RootNote {
+        if let Some(set) = self.status.read().expect("status lock").get(id) {
+            return set.clone();
+        }
+        self.sections()
+            .iter()
+            .flat_map(|sec| sec.entries.iter())
+            .find(|e| e.id == id)
+            .and_then(|e| e.note.clone())
+            .unwrap_or_default()
     }
 
     /// Records what a shortcut turned out to be, with nothing said beyond what
