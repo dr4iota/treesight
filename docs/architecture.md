@@ -609,6 +609,10 @@ Public helpers the embedder is meant to call:
 - `Config::set_root_vfs`, `set_sections`, `set_root_status`, `set_root_note`
 - `repaint_notes(app, ids)` — the notes on those rows, updated on the page
   already showing, without a reload
+- `DialogTurn::take()` — the one file dialog the window may have open, desktop
+  only; an embedder's own pickers take it too, and ignore a press that finds it
+  held. Android guards the same thing in the plugin that launches the picker,
+  since a turn held in the process could outlive an activity recreated under it
 - `Config::set_flags(Vec<HeaderFlag>)` — controls of the embedder's own on the
   header's flag row, drawn with Refresh and ahead of the page's own. A mark
   (SVG path data, wrapped in this crate's own box), a word, a title and an href

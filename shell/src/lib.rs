@@ -791,10 +791,55 @@ fn picker_start_dir(app: &AppHandle) -> Option<PathBuf> {
     }
 }
 
+/// The one file dialog the window may have open at a time, across this shell
+/// and an embedder's own.
+///
+/// A dialog is not modal to the page under it everywhere — on Linux the portal
+/// draws one the window still takes clicks through — so a second press opened
+/// a second dialog over the first, and every button that raises one could be
+/// pressed again. Held for as long as a dialog is up and let go when its answer
+/// arrives, which on a desktop it always does.
+///
+/// **Desktop only, on purpose.** Android's pickers are activities, and an
+/// activity recreated under an open picker can lose the answer: a turn held in
+/// the process would then outlive it and refuse every picker until a restart.
+/// The Android side guards the same thing where the answer lives, in the plugin
+/// that launched the picker.
+#[cfg(desktop)]
+#[must_use = "the turn is the dialog: drop it when the answer arrives"]
+pub struct DialogTurn(());
+
+#[cfg(desktop)]
+static DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
+
+#[cfg(desktop)]
+impl DialogTurn {
+    /// The turn, or `None` while another dialog is open.
+    pub fn take() -> Option<DialogTurn> {
+        DIALOG_OPEN
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| DialogTurn(()))
+    }
+}
+
+#[cfg(desktop)]
+impl Drop for DialogTurn {
+    fn drop(&mut self) {
+        DIALOG_OPEN.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Native folder picker. Non-blocking: the blocking variant would deadlock the
 /// event loop when called from `setup` or from a navigation handler.
 #[cfg(desktop)]
 fn ask_for_folder(app: AppHandle, exit_if_cancelled: bool) {
+    // A second press while the picker is up is ignored: the one on screen is
+    // the answer to it. Taken here, before the thread, so two presses in the
+    // same instant cannot both get past.
+    let Some(turn) = DialogTurn::take() else {
+        return;
+    };
     // The probe inside `picker_start_dir` is on its own thread, but the wait
     // for it was on the caller — a navigation callback, frozen for up to half
     // a second by exactly the case the probe exists for: a dead mapped drive
@@ -816,15 +861,18 @@ fn ask_for_folder(app: AppHandle, exit_if_cancelled: bool) {
                 dialog = dialog.set_parent(&win);
             }
             let app = back.clone();
-            dialog.pick_folder(move |picked| match picked {
-                Some(path) => match path.into_path() {
-                    Ok(dir) => open_root(&app, dir, true),
-                    Err(e) => {
-                        fail(&app, &format!("Cannot use that folder: {e}"), exit_if_cancelled)
-                    }
-                },
-                None if exit_if_cancelled => app.exit(0),
-                None => {}
+            dialog.pick_folder(move |picked| {
+                drop(turn);
+                match picked {
+                    Some(path) => match path.into_path() {
+                        Ok(dir) => open_root(&app, dir, true),
+                        Err(e) => {
+                            fail(&app, &format!("Cannot use that folder: {e}"), exit_if_cancelled)
+                        }
+                    },
+                    None if exit_if_cancelled => app.exit(0),
+                    None => {}
+                }
             });
         });
     });
@@ -1962,6 +2010,10 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
     let vfs = Arc::clone(&root.vfs);
     let src = target.path;
     let back = app.clone();
+    // One dialog at a time, as `ask_for_folder` has it.
+    let Some(turn) = DialogTurn::take() else {
+        return;
+    };
     let _ = app.run_on_main_thread(move || {
     let app = back.clone();
     let mut dialog = back
@@ -1979,6 +2031,7 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
         dialog = dialog.set_parent(&win);
     }
     dialog.save_file(move |dest| {
+        drop(turn);
         let Some(dest) = dest.and_then(|d| d.into_path().ok()) else {
             return; // cancelled
         };
@@ -2951,6 +3004,18 @@ fn save_recent(app: &AppHandle, list: Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One dialog at a time, and the turn comes back when the answer does —
+    /// including an answer that never got as far as the dialog.
+    #[test]
+    #[cfg(desktop)]
+    fn a_second_dialog_waits_for_the_first_to_answer() {
+        let first = DialogTurn::take().expect("nothing is open yet");
+        assert!(DialogTurn::take().is_none(), "a second press while one is up");
+        drop(first);
+        let again = DialogTurn::take().expect("free once it answered");
+        drop(again);
+    }
 
     /// Which of the two addresses a page is, from the string a caller is about
     /// to show. The tree's is every other URL in the window, including the root
