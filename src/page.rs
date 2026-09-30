@@ -1841,8 +1841,18 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             html_escape(label)
         ));
     }
+    // Beside the name rather than among the ways in: it is about the program,
+    // not somewhere in the tree, so it stays out of the button row.
+    let title_link = match &state.cfg.title_link {
+        Some((label, href)) => format!(
+            "<a class=\"titlelink\" href=\"{}\">{}</a>",
+            html_escape(href),
+            html_escape(label)
+        ),
+        None => String::new(),
+    };
     let intro = format!(
-        "<div class=\"intro\"><h1>{name}</h1><p>{}</p>{}</div>",
+        "<div class=\"intro\"><div class=\"title\"><h1>{name}</h1>{title_link}</div><p>{}</p>{}</div>",
         html_escape(said),
         match ways.is_empty() {
             false => format!("<div class=\"ways\">{ways}</div>"),
@@ -2236,6 +2246,25 @@ mod tests {
         assert!(html.contains("Manage &lt;servers&gt;"), "{html}");
         assert!(!html.contains("Manage <servers>"));
         assert!(html.contains("/x?q=1&amp;z=2"), "{html}");
+    }
+
+    /// The heading's link sits on the heading's line, escaped, and is not
+    /// there at all when nobody asked for one.
+    #[test]
+    fn the_title_link_sits_beside_the_heading() {
+        let mut state = State {
+            cfg: Config::rootless(),
+            hl: Hl::for_tests(),
+        };
+        state.cfg.app_ui = true;
+        let html = start_page(&state, prefs(), "/");
+        assert!(!html.contains("titlelink"), "{html}");
+        state.cfg.title_link = Some(("New <build>".into(), "https://x.test/?a=1&b=2".into()));
+        let html = start_page(&state, prefs(), "/");
+        assert!(
+            html.contains("</h1><a class=\"titlelink\" href=\"https://x.test/?a=1&amp;b=2\">New &lt;build&gt;</a></div>"),
+            "{html}"
+        );
     }
 
     /// Rootless on purpose, and with no temporary directory: this is the one page

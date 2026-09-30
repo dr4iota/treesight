@@ -467,6 +467,10 @@ pub struct ShellExt {
     /// different reasons to exist — telesight browses machines it has a login
     /// for, which is not something this sentence should have to cover.
     pub intro: Option<String>,
+    /// A link at the right end of the start page's heading: **(label, href)**.
+    /// An address off the served origin leaves for the OS browser, like any
+    /// link out of the tree. `None` draws nothing.
+    pub title_link: Option<(String, String)>,
     /// The note drawn under the start page's lists, with a link to finish it
     /// if it has one. Asked once, when the server starts — after every plugin
     /// has set up, so it can read their state; for anything later, call
@@ -611,6 +615,7 @@ struct Ext {
     picker: bool,
     build: BuildInfo,
     intro: Option<String>,
+    title_link: Option<(String, String)>,
     #[allow(clippy::type_complexity)]
     note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
@@ -659,6 +664,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         // stamp means this crate's own.
         build: ext.build.unwrap_or(BUILD),
         intro: ext.intro,
+        title_link: ext.title_link,
         note: ext.note,
         edition: ext.edition,
         allowed_origins: ext.allowed_origins,
@@ -1495,6 +1501,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.app_version = Some(ext.build.version.to_string());
     cfg.app_commit = (!ext.build.commit.is_empty()).then(|| ext.build.commit_mark());
     cfg.intro = ext.intro.clone();
+    cfg.title_link = ext.title_link.clone();
     cfg.set_note(ext.note.as_ref().and_then(|f| f(app)));
     cfg.set_edition(ext.edition.as_ref().and_then(|f| f(app)));
     cfg.places = places(app)

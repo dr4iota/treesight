@@ -394,6 +394,10 @@ pub struct Config {
     /// `None` uses the sentence this crate would write about itself, which is only
     /// right for the program this crate is.
     pub intro: Option<String>,
+    /// A link drawn at the right end of the start page's heading, on its line:
+    /// **(label, href)**. For something about the program rather than a way
+    /// into the tree — where to get a newer build, say. `None` draws nothing.
+    pub title_link: Option<(String, String)>,
     /// A short note under the start page's lists. Behind a lock, because what
     /// an embedder has to say there can change while it runs; see
     /// [`Config::set_note`].
@@ -475,6 +479,7 @@ impl Config {
             app_version: None,
             app_commit: None,
             intro: None,
+            title_link: None,
             note: RwLock::new(None),
             edition: RwLock::new(None),
             places: Vec::new(),
