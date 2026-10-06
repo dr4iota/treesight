@@ -1273,6 +1273,9 @@ fn as_root_link(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> String {
     )
 }
 
+/// Why the arrow of a directory you are inside does nothing.
+const ON_PATH: &str = "Open while you are inside it";
+
 /// The disclosure arrow.
 ///
 /// It used to be a character inside the name's own link, which is why clicking it
@@ -1282,12 +1285,15 @@ fn as_root_link(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> String {
 ///
 /// A directory on the way to the current one has no link at all. It is open
 /// because you are standing in it, and an arrow that could shut it would hide
-/// where you are.
+/// where you are. So it is hollow, where the arrows that do something are
+/// filled; it says why to a pointer that rests on it; and `app.css` keeps it
+/// from reading as text — a bare span drew the text cursor over the arrow.
 fn twisty(open: bool, on_path: bool, key: &str, back: &str) -> String {
     const DOWN: &str = "&#x25BE;";
     const RIGHT: &str = "&#x25B8;";
+    const HOLLOW_DOWN: &str = "&#x25BF;";
     if on_path {
-        return format!("<span class=\"twisty\">{DOWN}</span>");
+        return format!("<span class=\"twisty\" title=\"{ON_PATH}\">{HOLLOW_DOWN}</span>");
     }
     let (param, mark, what) = match open {
         true => ("shut", DOWN, "Collapse"),
@@ -1947,7 +1953,7 @@ mod tests {
         assert!(!html.contains(">deep/</a>"), "{html}");
         // The current directory is open with no control on it, and its child is
         // drawn — that is the implicit chain, which no cookie carries.
-        assert!(html.contains("<span class=\"twisty\">"), "{html}");
+        assert!(html.contains(&format!("<span class=\"twisty\" title=\"{ON_PATH}\">&#x25BF;</span>")), "{html}");
         assert!(html.contains(">inner/</a>"), "{html}");
 
         // Opened by hand: the children appear, and the arrow now offers to shut.

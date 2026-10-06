@@ -481,6 +481,18 @@ pub struct ShellExt {
     /// when `note` is, and changed later with `Config::set_edition`.
     #[allow(clippy::type_complexity)]
     pub edition: Option<Box<dyn Fn(&AppHandle) -> Option<String> + Send + Sync>>,
+    /// The window's title for a page of the embedder's own — one on an
+    /// `allowed_origins` origin, which this crate does not serve and so cannot
+    /// name. Asked each time such a page finishes loading, the same moment the
+    /// shell names its own pages after the served root; `None` leaves the title
+    /// as it is.
+    ///
+    /// The embedder used to set its title when its action claimed the link,
+    /// which loses on Windows: WebView2 reports the cancelled navigation as a
+    /// finished load of the shell's page, the shell renamed the window after
+    /// the folder, and a terminal kept that name.
+    #[allow(clippy::type_complexity)]
+    pub page_title: Option<Box<dyn Fn(&AppHandle, &tauri::Url) -> Option<String> + Send + Sync>>,
     /// Replaces the shell's keyboard-shortcut script wholesale. A downstream
     /// page can need the very keys the default script binds, so the guard
     /// belongs to whoever knows about that page.
@@ -620,6 +632,8 @@ struct Ext {
     note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
     edition: Option<Box<dyn Fn(&AppHandle) -> Option<String> + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
+    page_title: Option<Box<dyn Fn(&AppHandle, &tauri::Url) -> Option<String> + Send + Sync>>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
@@ -667,6 +681,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         title_link: ext.title_link,
         note: ext.note,
         edition: ext.edition,
+        page_title: ext.page_title,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
@@ -1620,6 +1635,7 @@ fn build_window(
     .on_page_load({
         let app = app.clone();
         let shell = shell_origins();
+        let ext = Arc::clone(&ext);
         move |win, payload| {
             let Some(serving) = app.try_state::<Serving>() else {
                 return;
@@ -1642,12 +1658,16 @@ fn build_window(
             serving
                 .at_home
                 .store(payload.url().path() == treeserve::HOME_PATH, Ordering::Relaxed);
-            // The rest is only for a page this server answered. An embedder's own
-            // page — a terminal, a config editor — carries its own title, and
-            // retitling the window from the served root left it named after a
+            // A page this server answered is named after the served root. An
+            // embedder's own page — a terminal, a config editor — is named by
+            // the embedder: retitling it from the root left it named after a
             // folder that page has nothing to do with.
             if origin_allowed(&shell, payload.url()) {
                 let _ = win.set_title(&window_title(&serving.state().cfg));
+            } else if origin_allowed(&ext.allowed_origins, payload.url())
+                && let Some(title) = ext.page_title.as_ref().and_then(|f| f(&app, payload.url()))
+            {
+                let _ = win.set_title(&title);
             }
         }
     })

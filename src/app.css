@@ -590,6 +590,10 @@ nav.tree .row > .twisty {
 @media (hover: hover) {
   nav.tree .row > a.twisty:hover { color: var(--link); }
 }
+/* The arrow of a directory you are inside is not a control (`page::twisty`):
+   no link, and no text to select either — a bare span drew the I-beam over it,
+   which offered a selection where there is only a mark. */
+nav.tree .row > span.twisty { cursor: default; user-select: none; -webkit-user-select: none; }
 nav.tree li .row > a.dir {
   flex: 1 1 auto;
   min-width: 0;
