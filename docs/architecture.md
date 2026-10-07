@@ -643,6 +643,17 @@ Public helpers the embedder is meant to call:
   pages are inside the binary already), `LocalFs` yes except on Android, where
   the only local roots are the app's own directories. False draws no control, no
   sentence in a panel, and turns a typed `?dl=1` back into the ordinary view.
+- `page_window(app, label, url, title)` — desktop only: a second window for a
+  page of the embedder's own (a terminal), built hidden at the main window's
+  size with the same init script. It carries none of the main window's state —
+  no re-root, no drops, no start-page bookkeeping — and its navigation is its
+  own: the allowed origins' pages load in it, `/.ts/` and tree links go to the
+  main window (navigated and focused there, since the actions are typed to the
+  main window's runtime), anything else opens outside, and new windows are
+  refused. The caller positions and shows it. On Windows call it from an async
+  command, not a synchronous one: those run on the main thread, and building a
+  webview there waits on the same thread. The embedder's capability must name
+  the new label, or the page's IPC is refused.
 - `replace_page(app, url)` — **use this rather than `WebviewWindow::navigate`**
   for anything the shell puts on screen itself: a re-root, a wait page, putting
   back the page a cancelled action came from. Every page of this window wears

@@ -1601,6 +1601,80 @@ fn reopen(app: &AppHandle) -> bool {
     true
 }
 
+/// A second window for one page of the embedder's own — a terminal of its own,
+/// say — beside the main one, and none of the main one's duties.
+///
+/// [`build_window`]'s handlers are the tree's: its navigation handler runs the
+/// embedder's actions and the shell's chrome against *the main window*, its
+/// page-load hook keeps the main window's start-page state (`Serving::loaded`,
+/// `at_home`), and a drop re-roots the tree. None of that belongs to a page
+/// window. What it shares is the init script and the allowlist: the embedder's
+/// own pages load here; the tree, and any `/.ts/` link — the shell's chrome,
+/// an embedder's action — are the main window's business, so they are handed
+/// to the main window, whose own handler answers them, and it is brought to
+/// the front; anything else goes to the browser. Built hidden, at the main
+/// window's size, with the title it is given; the embedder places and shows it.
+/// A desktop's: a phone has one window.
+#[cfg(desktop)]
+pub fn page_window<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    label: &str,
+    url: &str,
+    title: &str,
+) -> Result<tauri::WebviewWindow<R>, String> {
+    let ext = Arc::clone(&app.state::<SharedExt>().0);
+    let size = app
+        .get_webview_window(WINDOW)
+        .and_then(|w| Some((w.inner_size().ok()?, w.scale_factor().ok()?)))
+        .map(|(s, k)| (f64::from(s.width) / k, f64::from(s.height) / k))
+        .unwrap_or((1200.0, 850.0));
+    fn to_main<R: tauri::Runtime>(app: &AppHandle<R>, url: &tauri::Url) {
+        if let Some(main) = app.get_webview_window(WINDOW) {
+            let _ = main.navigate(url.clone());
+            let _ = main.unminimize();
+            let _ = main.set_focus();
+        }
+    }
+    let answer = {
+        let ext = Arc::clone(&ext);
+        let shell = shell_origins();
+        let app = app.clone();
+        move |url: &tauri::Url| -> bool {
+            let ours = origin_allowed(&ext.allowed_origins, url);
+            if ours && !url.path().starts_with("/.ts/") {
+                return true;
+            }
+            if ours || origin_allowed(&shell, url) {
+                to_main(&app, url);
+            } else {
+                open::open_externally(&app, url);
+            }
+            false
+        }
+    };
+    let on_new = answer.clone();
+    WebviewWindowBuilder::new(
+        app,
+        label,
+        WebviewUrl::CustomProtocol(url.parse().map_err(|e| format!("bad url: {e}"))?),
+    )
+    .title(title)
+    .inner_size(size.0, size.1)
+    .min_inner_size(480.0, 360.0)
+    .visible(false)
+    .initialization_script(ext.init_script.as_str())
+    .on_navigation(move |url| answer(url))
+    // A page of ours asking for a window of its own is not answered with one:
+    // this window is the one it has. Everything else is answered as a link is.
+    .on_new_window(move |url, _features| {
+        let _ = on_new(&url);
+        tauri::webview::NewWindowResponse::Deny
+    })
+    .build()
+    .map_err(|e| format!("Cannot create the window: {e}"))
+}
+
+/// The one window, on the start page and hidden, with every handler it carries.
 /// The one window, on the start page and hidden, with every handler it carries.
 ///
 /// Apart from `start` because a phone can need it twice in one process: see
