@@ -652,8 +652,11 @@ Public helpers the embedder is meant to call:
   size with the same init script. It carries none of the main window's state —
   no re-root, no drops, no start-page bookkeeping — and its navigation is its
   own: the allowed origins' pages load in it, `/.ts/` and tree links go to the
-  main window (navigated and focused there, since the actions are typed to the
-  main window's runtime), anything else opens outside, and new windows are
+  main window (navigated, restored and focused there from a spawned thread,
+  never from inside the navigation callback, where restoring a window would
+  re-enter WebView2 from its own callback — the freeze `window_main` hit on
+  Windows; and handed over at all because the actions are typed to the main
+  window's runtime), anything else opens outside, and new windows are
   refused. The caller positions and shows it. On Windows call it from an async
   command, not a synchronous one: those run on the main thread, and building a
   webview there waits on the same thread. The embedder's capability must name

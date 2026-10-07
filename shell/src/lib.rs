@@ -1628,12 +1628,21 @@ pub fn page_window<R: tauri::Runtime>(
         .and_then(|w| Some((w.inner_size().ok()?, w.scale_factor().ok()?)))
         .map(|(s, k)| (f64::from(s.width) / k, f64::from(s.height) / k))
         .unwrap_or((1200.0, 850.0));
+    // Off the callback, as `off_the_callback` does for the main window's own
+    // links: restoring and focusing a window from inside a webview's navigation
+    // handler re-enters WebView2 from its own callback, and on Windows the app
+    // stops responding. From another thread each call is posted to the event
+    // loop instead. Generic here, where that helper is not.
     fn to_main<R: tauri::Runtime>(app: &AppHandle<R>, url: &tauri::Url) {
-        if let Some(main) = app.get_webview_window(WINDOW) {
-            let _ = main.navigate(url.clone());
-            let _ = main.unminimize();
-            let _ = main.set_focus();
-        }
+        let app = app.clone();
+        let url = url.clone();
+        thread::spawn(move || {
+            if let Some(main) = app.get_webview_window(WINDOW) {
+                let _ = main.navigate(url);
+                let _ = main.unminimize();
+                let _ = main.set_focus();
+            }
+        });
     }
     let answer = {
         let ext = Arc::clone(&ext);
