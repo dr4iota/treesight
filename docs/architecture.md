@@ -362,7 +362,11 @@ shows the word in the tone's colour; with no word and a tone, a dot, which is ho
 a healthy row says something good (a connected server) without spending the
 width a word would; with neither, nothing. The dot is named for screen readers
 by `detail`, or by its tone. Faults always have a word: amber and red dots differ
-only by colour, so they are for sparing use.
+only by colour, so they are for sparing use. A dot may carry a `count`, drawn
+beside it in its colour (`data-count`, by the stylesheet): how many of something
+the row holds — kept terminals, say. A word never does — it already says what it says — and
+nothing to count draws no number. `detail` should say the number too, since that
+is what a screen reader hears.
 
 Pages are static, so a note that changes while one is on screen used to wait for
 the next render. Every row carries `data-root`, and `repaint_notes(app, ids)`

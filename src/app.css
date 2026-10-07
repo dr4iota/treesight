@@ -957,6 +957,16 @@ body.nothing .start .why.dot::before {
 }
 nav.tree .chooser .why.dot,
 body.nothing .start .why.dot { align-self: center; line-height: 0; }
+/* And a count beside it, from the embedder: in the dot's colour, at the note's
+   size, on the line the dot sits on. */
+nav.tree .chooser .why.dot[data-count]::after,
+body.nothing .start .why.dot[data-count]::after {
+  content: attr(data-count);
+  margin-left: .25rem;
+  line-height: 1;
+  vertical-align: middle;
+  font-weight: 600;
+}
 
 /* The listing keeps clear of a cutout on its own side. Not the left: the pane is
    there, and where the pane is gone the drawer's own padding answers for it. */

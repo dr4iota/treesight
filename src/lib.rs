@@ -184,6 +184,9 @@ pub struct RootNote {
     /// The sentence, if there is one: the note's tooltip, and what a screen
     /// reader says for a dot.
     pub detail: Option<String>,
+    /// A small number beside the dot — how many of something the row holds,
+    /// kept terminals, say. Drawn only with a dot: a word already says what it says.
+    pub count: Option<u32>,
 }
 
 impl From<RootStatus> for RootNote {
@@ -198,7 +201,7 @@ impl From<RootStatus> for RootNote {
 pub enum Drawn<'a> {
     Nothing,
     Word { word: &'a str, tone: Tone, detail: Option<&'a str> },
-    Dot { tone: Tone, label: &'a str },
+    Dot { tone: Tone, label: &'a str, count: Option<u32> },
 }
 
 impl RootNote {
@@ -212,7 +215,11 @@ impl RootNote {
         match self.text.as_deref().filter(|t| !t.is_empty()).or(self.status.note()) {
             Some(word) => Drawn::Word { word, tone, detail },
             None if tone == Tone::Plain => Drawn::Nothing,
-            None => Drawn::Dot { tone, label: detail.unwrap_or(tone.spoken()) },
+            None => Drawn::Dot {
+                tone,
+                label: detail.unwrap_or(tone.spoken()),
+                count: self.count.filter(|&n| n > 0),
+            },
         }
     }
 }

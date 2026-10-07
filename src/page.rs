@@ -1087,10 +1087,13 @@ fn note_html(note: &RootNote) -> String {
             html_escape(word)
         ),
         // `role="img"` because a label on a bare span is one most readers skip.
-        Drawn::Dot { tone, label } => format!(
-            "<span class=\"{}\" role=\"img\" title=\"{l}\" aria-label=\"{l}\"></span>",
+        // The count is an attribute the stylesheet draws, not text: the label
+        // is what is read out, and it should already say the number.
+        Drawn::Dot { tone, label, count } => format!(
+            "<span class=\"{}\" role=\"img\" title=\"{l}\" aria-label=\"{l}\"{n}></span>",
             class(tone, " dot"),
-            l = html_escape(label)
+            l = html_escape(label),
+            n = count.map(|n| format!(" data-count=\"{n}\"")).unwrap_or_default(),
         ),
     }
 }
@@ -2879,6 +2882,17 @@ mod tests {
             "<span class=\"why dot good\" role=\"img\" title=\"Connected\" aria-label=\"Connected\"></span>"
         );
         assert_eq!(note_class(&live), "noted", "a dot lays out like a word, and is not dimmed");
+
+        let counted = RootNote { count: Some(2), detail: Some("Connected · 2 terminals kept".into()), ..live.clone() };
+        assert_eq!(
+            note_html(&counted),
+            "<span class=\"why dot good\" role=\"img\" title=\"Connected · 2 terminals kept\" \
+             aria-label=\"Connected · 2 terminals kept\" data-count=\"2\"></span>"
+        );
+        let none = RootNote { count: Some(0), ..live.clone() };
+        assert!(!note_html(&none).contains("data-count"), "nothing to count draws no number");
+        let worded = RootNote { count: Some(2), status: RootStatus::Missing, ..live.clone() };
+        assert!(!note_html(&worded).contains("data-count"), "a word stands alone");
 
         let unnamed = RootNote { tone: Some(Tone::Warn), ..RootNote::default() };
         assert!(note_html(&unnamed).contains("aria-label=\"Warning\""), "a dot is never nameless");
