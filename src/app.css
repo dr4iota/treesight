@@ -1019,18 +1019,22 @@ table.listing td.size, table.listing td.time, table.listing th.size, table.listi
   text-align: right;
 }
 /* A handset held upright: 1.5rem of side padding per cell was a fifth of the
-   row across four columns, and with the download column the table no longer
+   row across four columns, and with the actions column the table no longer
    fit 360px — the whole page scrolled sideways by a sliver. Tighter cells
-   give it back, and the names the room they were wrapping for. */
+   give it back, and the names the room they were wrapping for. Modified goes
+   too: a row's strip says it, in the short form, when ⋯ is opened. */
 @media (max-width: 30rem) {
   table.listing th, table.listing td { padding-left: .4rem; padding-right: .4rem; }
-  table.listing td.dl, table.listing th.dl { padding: 0; }
+  table.listing td.act, table.listing th.act { padding: 0; }
+  table.listing td.time, table.listing th.time { display: none; }
 }
-/* A file's own Download, at the row's far end: a mark in a box the row's
-   height, narrow enough that the column costs little and wide enough to aim
-   at. The cell's padding goes, since the box inside is the target. */
-table.listing td.dl, table.listing th.dl { width: 2.75rem; padding: 0; text-align: center; }
-table.listing td.dl a {
+/* A row's ⋯, at its far end: a mark in a box the row's height, narrow enough
+   that the column costs little and wide enough to aim at. A `<details>` with
+   nothing inside, so the page needs no script to open it; what it opens is the
+   strip in the next row, below. */
+table.listing td.act, table.listing th.act { width: 2.75rem; padding: 0; text-align: center; }
+details.more summary {
+  list-style: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1038,10 +1042,95 @@ table.listing td.dl a {
   min-height: var(--row-min);
   border-radius: 8px;
   color: var(--muted);
+  cursor: pointer;
+}
+details.more summary::-webkit-details-marker { display: none; }
+details.more[open] summary {
+  color: var(--link);
+  background: color-mix(in srgb, var(--link) var(--on-tint), transparent);
 }
 @media (hover: hover) {
-  table.listing td.dl a:hover { color: var(--link); background: var(--bg); }
+  details.more summary:hover { color: var(--link); background: var(--bg-subtle); }
 }
+/* The strip, shown only under a row whose ⋯ is open. Written as a hide, so an
+   engine without `:has` shows every strip rather than none of them. */
+table.listing tr:not(:has(details.more[open])) + tr.strip { display: none; }
+table.listing tr.strip td {
+  padding: .3rem .75rem .5rem 2.1rem;
+  background: color-mix(in srgb, var(--link) 6%, transparent);
+}
+tr.strip .acts { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+/* What is known first, then what can be done: the words, then the buttons in
+   their fixed order. Wide, one line; narrow, the words take a line of their
+   own and the buttons wrap under them — and Delete keeps the far end. */
+tr.strip .info { color: var(--muted); font-size: .85rem; margin-right: .4rem; }
+tr.strip .info .narrow { display: none; }
+tr.strip .warn {
+  font-size: .75rem;
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  border-radius: 9px;
+  padding: 0 .4rem;
+  white-space: nowrap;
+}
+@media (max-width: 30rem) {
+  table.listing tr.strip td { padding-left: .6rem; padding-right: .6rem; }
+  tr.strip .info { flex-basis: 100%; }
+  tr.strip .info .wide { display: none; }
+  tr.strip .info .narrow { display: inline; }
+}
+tr.strip a.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-height: 2.25rem;
+  padding: 0 .7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: .9rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+tr.strip a.btn.on {
+  color: var(--link);
+  border-color: var(--link);
+  background: color-mix(in srgb, var(--link) var(--on-tint), var(--bg));
+}
+tr.strip a.btn.danger { color: var(--err); margin-left: auto; }
+@media (hover: hover) {
+  tr.strip a.btn:hover { border-color: var(--link); }
+  tr.strip a.btn.danger:hover { border-color: var(--err); }
+}
+/* The one state of a row worth showing before ⋯ is opened — a copy kept on
+   this device, say — as a filled mark after its name. */
+.rowmark { color: var(--link); margin-left: .3rem; }
+.rowmark svg { vertical-align: -2px; }
+/* A row with nothing behind it that can be served now: greyed, and its name is
+   not a link. */
+table.listing tr.miss td, table.listing tr.miss .icon { color: var(--muted); }
+table.listing tr.miss td:first-child span:not(.icon) { opacity: .7; }
+/* A page that is not what it seems — a copy, served while its source does not
+   answer — says so over its content. */
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .3rem .8rem;
+  max-width: 60rem;
+  margin: 0 0 1rem;
+  padding: .5rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  font-size: .9rem;
+}
+.notice.warn {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg));
+}
+.notice a.again { margin-left: auto; }
 /* Drawn icons, so they take a colour: muted for a file, link-coloured for a
    directory, which is the same distinction the names already make. */
 .icon { display: inline-block; width: 1.4rem; color: var(--muted); }
@@ -1742,7 +1831,8 @@ body.nothing .start .row > a.aside {
     --caution: #cf222e;
   }
   header, footer, nav.tree, form.filter, .matchnote,
-  .drawer-toggle, .drawer-btn, .drawer-scrim { display: none; }
+  .drawer-toggle, .drawer-btn, .drawer-scrim,
+  table.listing .act, table.listing tr.strip { display: none; }
   body {
     display: block;
     height: auto;

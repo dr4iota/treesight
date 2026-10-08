@@ -178,6 +178,77 @@ pub trait WriteFile: io::Write + Send {
     fn finish(self: Box<Self>) -> io::Result<Option<String>>;
 }
 
+/// What a backend can say about one row of a listing beyond its name, size
+/// and time — asked through [`Vfs::row_info`]: a line of its own words, verbs
+/// of its own on the row. The page draws all of it in the row's strip, under
+/// ⋯, and gives none of it a meaning: what the words say and what the verbs do
+/// are the backend's.
+#[derive(Clone, Debug, Default)]
+pub struct RowInfo {
+    /// The strip's first line, in the backend's words.
+    pub line: Option<RowLine>,
+    /// Short words that need the reader's attention, drawn as warning pills
+    /// after the line.
+    pub warn: Vec<String>,
+    /// A filled mark after the row's name, with this title. The one state of a
+    /// row worth showing before ⋯ is opened.
+    pub mark: Option<String>,
+    /// The backend's own verbs, in order. Download and Delete are the page's
+    /// and come after them.
+    pub actions: Vec<RowAction>,
+    /// False draws the row greyed and without a link: there is nothing behind
+    /// it the backend can serve now.
+    pub unreachable: bool,
+}
+
+/// The first line of a row's strip, in two lengths: the page shows one by its
+/// width, and on a narrow page puts the row's modified time before it, since
+/// the narrow table has no column for that. Plain text; the page escapes it.
+#[derive(Clone, Debug, Default)]
+pub struct RowLine {
+    pub wide: String,
+    pub narrow: String,
+}
+
+/// One of a backend's verbs on a row, carried out by [`Vfs::act`] when the
+/// shell is handed its link.
+#[derive(Clone, Debug)]
+pub struct RowAction {
+    /// What [`Vfs::act`] is told. Letters, digits and `-` only: it rides in a
+    /// link.
+    pub id: String,
+    /// SVG path data, as [`crate::HeaderFlag::icon`] is.
+    pub icon: String,
+    pub label: String,
+    pub title: String,
+    /// A toggle that is on, drawn lit.
+    pub on: bool,
+    /// Asked before it is done, in a native box.
+    pub confirm: Option<Confirm>,
+    /// Also a pill on the file's own page, after Download.
+    pub on_file_page: bool,
+}
+
+/// A question asked before a verb is carried out.
+#[derive(Clone, Debug)]
+pub struct Confirm {
+    pub message: String,
+    /// The button that goes ahead.
+    pub ok: String,
+}
+
+/// A line under the header of a page — a folder or a file — that says what
+/// the page is when it is not what it seems: a copy, served while the place it
+/// came from does not answer.
+#[derive(Clone, Debug)]
+pub struct Notice {
+    pub warn: bool,
+    /// Plain text; the page escapes it.
+    pub text: String,
+    /// A link at the line's end: (words, href).
+    pub link: Option<(String, String)>,
+}
+
 /// `name` as the name of a new file or folder, or why it cannot be one.
 ///
 /// One rule for every backend, so a name refused over SSH is refused on a
@@ -322,6 +393,52 @@ pub trait Vfs: Send + Sync {
     /// a refusal is a broken box with nothing to read in it. Past this, the page
     /// says so in words instead.
     fn open_limit(&self) -> Option<u64> {
+        None
+    }
+
+    /// What to draw in the strip under `path`'s row, beyond the page's own
+    /// Download and Delete. `None` — the default — is a backend with nothing to
+    /// add.
+    fn row_info(&self, _path: &VfsPath) -> Option<RowInfo> {
+        None
+    }
+
+    /// [`Self::row_info`] for every row of one listing, asked once per page so a
+    /// backend can answer a whole folder from one look. `entries` are the
+    /// rows' names under `dir`, in the order the answer comes back in.
+    fn row_infos(&self, dir: &VfsPath, entries: &[Entry]) -> Vec<Option<RowInfo>> {
+        entries.iter().map(|e| self.row_info(&dir.join(&e.name))).collect()
+    }
+
+    /// A line under the header of `path`'s page. See [`Notice`].
+    fn notice(&self, _path: &VfsPath) -> Option<Notice> {
+        None
+    }
+
+    /// Carries out the verb `id` of one of [`Self::row_info`]'s actions on
+    /// `path`. Called by the shell, off the navigation callback and after any
+    /// [`Confirm`] was answered yes; `progress` is told bytes done and the
+    /// whole where the verb moves any. `Ok(Some(words))` is something to tell
+    /// the reader.
+    fn act(
+        &self,
+        _path: &VfsPath,
+        _id: &str,
+        _progress: &mut dyn FnMut(u64, Option<u64>),
+    ) -> io::Result<Option<String>> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// Deletes the file at `path`, or the folder there if it is empty —
+    /// `DirectoryNotEmpty` if it is not; nothing is ever deleted recursively.
+    /// Offered where [`Self::writable`] is.
+    fn remove(&self, _path: &VfsPath) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// A last line for the question Delete asks about `path` — what the
+    /// backend keeps of it after, say.
+    fn remove_note(&self, _path: &VfsPath) -> Option<String> {
         None
     }
 

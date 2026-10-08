@@ -35,7 +35,10 @@ use two_face::theme::EmbeddedThemeName;
 use hl::Hl;
 use page::{Prefs, ThemeMode};
 use util::*;
-pub use vfs::{new_name, Entry, LocalFs, Meta, ReadSeek, ResolveError, Vfs, VfsPath, WriteFile};
+pub use vfs::{
+    new_name, Confirm, Entry, LocalFs, Meta, Notice, ReadSeek, ResolveError, RowAction, RowInfo, RowLine,
+    Vfs, VfsPath, WriteFile,
+};
 
 /// glibc keeps giving the single-precision math functions new symbol versions
 /// — `hypotf` in 2.35, `atan2f` in 2.43 — so a binary built on a host that has
@@ -770,8 +773,9 @@ impl Config {
             None => match leaf_of(&root.id) {
                 Some(n) => n.to_string(),
                 // A drive, a share or `/` has no last component to show, so
-                // name it by the whole id rather than by nothing.
-                None => root.id.clone(),
+                // name it by the name the embedder gave it — `Cache` for
+                // `cache:/` — or else by the whole id rather than by nothing.
+                None => self.root_name().unwrap_or_else(|| root.id.clone()),
             },
         }
     }

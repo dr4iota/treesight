@@ -298,6 +298,54 @@ pub fn fmt_time(t: SystemTime) -> String {
     )
 }
 
+/// [`fmt_time`] for a narrow page: `MM-DD HH:MM` in `now`'s year, and the
+/// date alone, `YYYY-MM-DD`, in any other.
+pub fn fmt_time_short(t: SystemTime, now: SystemTime) -> String {
+    let long = fmt_time(t);
+    match fmt_time(now).get(..4) == long.get(..4) {
+        true => long[5..].to_string(),
+        false => long[..10].to_string(),
+    }
+}
+
+/// How long ago `t` was, in words: *just now*, *2 minutes ago*, *1 day ago*.
+/// A time after `now` is *just now* — a clock a little ahead is not news.
+pub fn fmt_age(t: SystemTime, now: SystemTime) -> String {
+    match age_parts(t, now) {
+        (0, _) => "just now".to_string(),
+        (1, unit) => format!("1 {unit} ago"),
+        (n, unit) => format!("{n} {unit}s ago"),
+    }
+}
+
+/// [`fmt_age`] for a narrow page: *now*, *2m ago*, *5h ago*, *1d ago*, *3w ago*.
+pub fn fmt_age_short(t: SystemTime, now: SystemTime) -> String {
+    match age_parts(t, now) {
+        (0, _) => "now".to_string(),
+        (n, "month") => format!("{n}mo ago"),
+        (n, unit) => format!("{n}{} ago", &unit[..1]),
+    }
+}
+
+/// The age as a count of its largest whole unit. Zero is under a minute.
+fn age_parts(t: SystemTime, now: SystemTime) -> (u64, &'static str) {
+    let secs = now.duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    const UNITS: [(u64, &str); 6] = [
+        (365 * 86400, "year"),
+        (30 * 86400, "month"),
+        (7 * 86400, "week"),
+        (86400, "day"),
+        (3600, "hour"),
+        (60, "minute"),
+    ];
+    for (size, unit) in UNITS {
+        if secs >= size {
+            return (secs / size, unit);
+        }
+    }
+    (0, "minute")
+}
+
 // Howard Hinnant's civil_from_days.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719468;
@@ -339,6 +387,33 @@ mod tests {
         assert_eq!(percent_decode("a%20b%2Fc"), "a b/c");
         assert_eq!(percent_encode("a b/c"), "a%20b%2Fc");
         assert_eq!(percent_decode("100%"), "100%");
+    }
+
+    #[test]
+    fn short_times_and_ages() {
+        use std::time::Duration;
+        let at = |secs: u64| UNIX_EPOCH + Duration::from_secs(secs);
+        // 2026-10-07 09:40 UTC, and a moment in the same year and another.
+        let t = at(1_791_366_000);
+        assert_eq!(fmt_time(t), "2026-10-07 09:40");
+        assert_eq!(fmt_time_short(t, at(1_791_366_000 + 86400)), "10-07 09:40");
+        assert_eq!(fmt_time_short(t, at(1_791_366_000 + 120 * 86400)), "2026-10-07");
+        let ago = |secs: u64| fmt_age(t, at(1_791_366_000 + secs));
+        let short = |secs: u64| fmt_age_short(t, at(1_791_366_000 + secs));
+        assert_eq!(ago(30), "just now");
+        assert_eq!(short(30), "now");
+        assert_eq!(ago(60), "1 minute ago");
+        assert_eq!(ago(150), "2 minutes ago");
+        assert_eq!(short(150), "2m ago");
+        assert_eq!(ago(5 * 3600), "5 hours ago");
+        assert_eq!(short(5 * 3600), "5h ago");
+        assert_eq!(ago(86400), "1 day ago");
+        assert_eq!(short(86400), "1d ago");
+        assert_eq!(short(21 * 86400), "3w ago");
+        assert_eq!(short(70 * 86400), "2mo ago");
+        assert_eq!(ago(400 * 86400), "1 year ago");
+        // A clock a little ahead.
+        assert_eq!(fmt_age(at(10), at(5)), "just now");
     }
 
     #[test]

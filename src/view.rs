@@ -39,10 +39,10 @@ fn print_flag(state: &State) -> String {
     }
 }
 
-fn std_controls(rel: &[String], vfs: &dyn Vfs) -> String {
+fn std_controls(state: &State, rel: &[String], vfs: &dyn Vfs) -> String {
     let base = href_path(rel);
     format!(
-        "{}{}",
+        "{}{}{}",
         flag(
             "",
             &format!("{base}?raw=1"),
@@ -50,8 +50,40 @@ fn std_controls(rel: &[String], vfs: &dyn Vfs) -> String {
             "Raw",
             "The file as it is on disk"
         ),
-        download_flag(&base, vfs)
+        download_flag(&base, vfs),
+        file_actions(state, rel, vfs)
     )
+}
+
+/// The backend's verbs that belong on a file's own page as well as under its
+/// row — Keep offline, say — after Download, lit when on. Links the shell
+/// claims, so only in the app; the token is the page's.
+fn file_actions(state: &State, rel: &[String], vfs: &dyn Vfs) -> String {
+    if !state.cfg.app_ui {
+        return String::new();
+    }
+    let Some(info) = vfs.row_info(&VfsPath::new(rel.to_vec())) else {
+        return String::new();
+    };
+    let token = &state.cfg.action_token;
+    info.actions
+        .iter()
+        .filter(|a| a.on_file_page)
+        .map(|a| {
+            flag(
+                if a.on { "on" } else { "" },
+                &format!(
+                    "/.ts/act?path={}&a={}&t={}",
+                    crate::util::percent_encode(&href_path(rel)),
+                    crate::util::percent_encode(&a.id),
+                    token
+                ),
+                &svg_icon(&a.icon),
+                &a.label,
+                &a.title,
+            )
+        })
+        .collect()
 }
 
 /// The same, in a sentence rather than on the flag row: a finished link, or
@@ -170,7 +202,7 @@ pub fn file_page(
             html_escape(&raw_href(rel)),
             html_escape(name)
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
     }
     if VIDEO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -178,7 +210,7 @@ pub fn file_page(
             meta_line(size, mtime, "video"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
     }
     if AUDIO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -186,7 +218,7 @@ pub fn file_page(
             meta_line(size, mtime, "audio"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
     }
     if ext == "pdf" {
         let content = format!(
@@ -194,7 +226,7 @@ pub fn file_page(
             meta_line(size, mtime, "pdf"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
     }
 
     // Text-ish content from here on.
@@ -209,7 +241,7 @@ pub fn file_page(
             meta_line(size, mtime, "large file"),
             human_size(size)
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
     }
 
     let Ok(bytes) = vfs.read(canon) else {
@@ -225,7 +257,7 @@ pub fn file_page(
                 .map(|dl| format!("<p>{dl}</p>"))
                 .unwrap_or_default()
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
     }
 
     let text = String::from_utf8_lossy(&bytes);
@@ -255,7 +287,7 @@ pub fn file_page(
                     "Source",
                     "Highlighted source instead"
                 ),
-                std_controls(rel, vfs)
+                std_controls(state, rel, vfs)
             );
             let content = format!("<div class=\"md\">{}</div>", body);
             return layout(state, root, prefs, rel, url_now, &controls, false, &content);
@@ -289,7 +321,7 @@ pub fn file_page(
             "Rendered view instead",
         ));
     }
-    controls.push_str(&std_controls(rel, vfs));
+    controls.push_str(&std_controls(state, rel, vfs));
 
     let content = format!(
         "{}<div class=\"codewrap\">{}<pre class=\"hl-code\"><code>{}</code></pre></div>",

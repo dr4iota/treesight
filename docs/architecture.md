@@ -244,6 +244,19 @@ page never gets a title from one root and a tree from another.
 `root_id_at(path)` is what the tree's “serve this folder as the root” link
 puts in `?path=`. For `LocalFs` that is `display_path` of the host path.
 
+**A backend may say more about a row than its name, size and time.** Each row
+of a listing ends in **⋯**, a `<details>` that opens a strip under it — no
+script — and the strip is, in order: the backend's line about the row and its
+warnings (`Vfs::row_info`, asked once per listing through `row_infos`), the
+backend's own verbs, Download where `downloadable`, and Delete where
+`writable`. A verb is a link to `/.ts/act` and Delete one to `/.ts/remove`,
+both with the page's token; the shell asks the verb's `Confirm` in a native
+box, then calls `Vfs::act` or `Vfs::remove` off the callback and reloads.
+A verb marked `on_file_page` is a pill on the file's own page too, and
+`Vfs::notice` is a line over any page — a copy served while its source does not
+answer, say. Nothing in these names a remote: the embedder's cache is the first
+user, and the words on screen are its own.
+
 ---
 
 ## treesight
