@@ -471,6 +471,10 @@ pub struct ShellExt {
     /// An address off the served origin leaves for the OS browser, like any
     /// link out of the tree. `None` draws nothing.
     pub title_link: Option<(String, String)>,
+    /// A pill in the start page's left slot, where Up and Start stand on the
+    /// tree's pages (`treeserve::Config::home_slot`). An address off the served
+    /// origin leaves for the OS browser. `None` leaves the slot empty.
+    pub home_slot: Option<treeserve::HeaderFlag>,
     /// The note drawn under the start page's lists, with a link to finish it
     /// if it has one. Asked once, when the server starts — after every plugin
     /// has set up, so it can read their state; for anything later, call
@@ -628,6 +632,7 @@ struct Ext {
     build: BuildInfo,
     intro: Option<String>,
     title_link: Option<(String, String)>,
+    home_slot: Option<treeserve::HeaderFlag>,
     #[allow(clippy::type_complexity)]
     note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
@@ -679,6 +684,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         build: ext.build.unwrap_or(BUILD),
         intro: ext.intro,
         title_link: ext.title_link,
+        home_slot: ext.home_slot,
         note: ext.note,
         edition: ext.edition,
         page_title: ext.page_title,
@@ -1517,6 +1523,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.app_commit = (!ext.build.commit.is_empty()).then(|| ext.build.commit_mark());
     cfg.intro = ext.intro.clone();
     cfg.title_link = ext.title_link.clone();
+    cfg.home_slot = ext.home_slot.clone();
     cfg.set_note(ext.note.as_ref().and_then(|f| f(app)));
     cfg.set_edition(ext.edition.as_ref().and_then(|f| f(app)));
     cfg.places = places(app)

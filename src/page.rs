@@ -838,6 +838,13 @@ fn head_and_header(
 /// chosen is chrome pretending there is something to do with it. What stays is
 /// the name, the theme, and the way in.
 fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) -> String {
+    // The left slot, which a root fills with Up or Start and home leaves to
+    // the embedder (`Config::home_slot`). Class `up`: the same slot and the
+    // same pill.
+    let slot = match &state.cfg.home_slot {
+        Some(f) => format!("\n  {}", flag("up", &f.href, &svg_icon(&f.icon), &f.label, &f.title)),
+        None => String::new(),
+    };
     let mut controls = String::new();
     controls.push_str(&theme_flag(prefs.theme, url_now));
     let data_theme = match prefs.theme {
@@ -855,7 +862,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
 <link rel="stylesheet" href="/.ts/app.css">
 </head>
 <body class="app nothing">
-<header>
+<header>{slot}
   <div class="crumbs"></div>
   <div class="controls">{controls}</div>
 </header>
@@ -870,6 +877,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
 "#,
         data_theme = data_theme,
         title = html_escape(&state.cfg.title()),
+        slot = slot,
         controls = controls,
         content = content,
         app = html_escape(&state.cfg.app_label()),
@@ -2454,6 +2462,30 @@ mod tests {
             html.contains("</h1><a class=\"titlelink\" href=\"https://x.test/?a=1&amp;b=2\">New &lt;build&gt;</a></div>"),
             "{html}"
         );
+    }
+
+    /// Home's header slot is the embedder's: empty unless it brings a pill,
+    /// and then the pill stands where Up and Start do on the tree's pages.
+    #[test]
+    fn the_home_slot_is_the_embedders() {
+        let mut state = State {
+            cfg: Config::rootless(),
+            hl: Hl::for_tests(),
+        };
+        state.cfg.app_ui = true;
+        let html = start_page(&state, prefs(), "/");
+        assert!(html.contains("<header>\n  <div class=\"crumbs\">"), "{html}");
+        state.cfg.home_slot = Some(crate::HeaderFlag {
+            href: "https://x.test/app".into(),
+            icon: "<path d=\"M2 8h12\"/>".into(),
+            label: "Website".into(),
+            title: "The app's website".into(),
+            roots: None,
+        });
+        let html = start_page(&state, prefs(), "/");
+        let slot = html.find("<a class=\"up\" href=\"https://x.test/app\"").expect(&html);
+        assert!(slot < html.find("class=\"crumbs\"").unwrap(), "{html}");
+        assert!(html.contains("<span class=\"lbl\">Website</span>"), "{html}");
     }
 
     /// Rootless on purpose, and with no temporary directory: this is the one page

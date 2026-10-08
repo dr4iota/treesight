@@ -405,6 +405,12 @@ pub struct Config {
     /// **(label, href)**. For something about the program rather than a way
     /// into the tree — where to get a newer build, say. `None` draws nothing.
     pub title_link: Option<(String, String)>,
+    /// What the start page draws in the header's left slot — the one that is
+    /// **Up** in a folder and **Start** at a root, and is empty at home. A pill
+    /// like the rest: mark, word, and tooltip; `roots` is not read, since the
+    /// start page has no root. For a link off the program rather than into the
+    /// tree — its website, say. `None` leaves the slot empty.
+    pub home_slot: Option<HeaderFlag>,
     /// A short note under the start page's lists. Behind a lock, because what
     /// an embedder has to say there can change while it runs; see
     /// [`Config::set_note`].
@@ -487,6 +493,7 @@ impl Config {
             app_commit: None,
             intro: None,
             title_link: None,
+            home_slot: None,
             note: RwLock::new(None),
             edition: RwLock::new(None),
             places: Vec::new(),
