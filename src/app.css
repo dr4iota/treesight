@@ -629,18 +629,6 @@ nav.tree li .row > a.dir {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-nav.tree a.asroot {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding: 0 .15rem;
-  line-height: 1;
-  color: var(--muted);
-  opacity: .4;
-}
-@media (hover: hover) {
-  nav.tree .row:hover a.asroot { opacity: 1; }
-  nav.tree a.asroot:hover { color: var(--link); background: none; }
-}
 /* The row wrapper sits between the `li` and its link on a directory, so the
    current one is reached through either shape. */
 nav.tree .cur > a, nav.tree .cur > .row > a { font-weight: 700; background: var(--border); }
@@ -1017,6 +1005,10 @@ table.listing th {
    by a quarter inch sideways — and the heading keeps its own padding, since a
    heading is not something anybody aims at. */
 table.listing td { padding: var(--row-air) .75rem; border-bottom: 1px solid var(--border); }
+/* A name with nowhere to break — a backup's timestamp, a hash — set the
+   table's narrowest width by itself and pushed Size and Modified off a phone's
+   screen. Broken anywhere, it takes the lines it needs in its own column. */
+table.listing td:first-child a { overflow-wrap: anywhere; }
 @media (hover: hover) {
   table.listing tr:hover td { background: var(--bg-subtle); }
 }
@@ -1025,6 +1017,30 @@ table.listing td.size, table.listing td.time, table.listing th.size, table.listi
   color: var(--muted);
   font-size: .85rem;
   text-align: right;
+}
+/* A handset held upright: 1.5rem of side padding per cell was a fifth of the
+   row across four columns, and with the download column the table no longer
+   fit 360px — the whole page scrolled sideways by a sliver. Tighter cells
+   give it back, and the names the room they were wrapping for. */
+@media (max-width: 30rem) {
+  table.listing th, table.listing td { padding-left: .4rem; padding-right: .4rem; }
+  table.listing td.dl, table.listing th.dl { padding: 0; }
+}
+/* A file's own Download, at the row's far end: a mark in a box the row's
+   height, narrow enough that the column costs little and wide enough to aim
+   at. The cell's padding goes, since the box inside is the target. */
+table.listing td.dl, table.listing th.dl { width: 2.75rem; padding: 0; text-align: center; }
+table.listing td.dl a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  min-height: var(--row-min);
+  border-radius: 8px;
+  color: var(--muted);
+}
+@media (hover: hover) {
+  table.listing td.dl a:hover { color: var(--link); background: var(--bg); }
 }
 /* Drawn icons, so they take a colour: muted for a file, link-coloured for a
    directory, which is the same distinction the names already make. */
@@ -1481,7 +1497,6 @@ nav.tree li .row { min-height: var(--row-min); }
 nav.tree .chooser .row,
 body.nothing .start .row { gap: .3rem; }
 nav.tree li .row { gap: 0; }
-nav.tree li .row > a.asroot { margin-left: .3rem; }
   /* The chooser's lists and the start page's are the other shape: those links are
      already flex — the head-and-leaf shrinking above depends on it — so they take
      a minimum height directly, and the line needs centring inside it because the
@@ -1498,7 +1513,6 @@ body.nothing .start .row > a:first-child {
   /* Every mark that is its own control: a box big enough to hit, the mark
      centred in it, and the drawing untouched. Only the pane's own marks take
      `padding: 0` — they are never words. */
-nav.tree a.asroot,
 nav.tree .chooser a.aside,
 nav.tree section h2 a.secact,
 body.nothing .start .row > a.aside,
@@ -1545,7 +1559,6 @@ body.nothing .start h2 a.secact::after {
      sits on, which is more than a cursor needs, and a finger's rows are
      unchanged at 40. The header's pills keep the flat 2.5rem below: they are one
      row rather than a column, so nothing there is crowding anything. */
-nav.tree a.asroot,
 nav.tree .chooser a.aside,
 body.nothing .start .row > a.aside { min-height: var(--row-min); }
   /* The header's pills grow the same way, but keep their own padding: in word
@@ -1596,7 +1609,6 @@ footer a.pick svg {
     width: 24px;
     height: 24px;
   }
-nav.tree a.asroot svg,
 nav.tree .chooser a.aside svg,
 nav.tree section h2 a.secact svg,
 body.nothing .start h2 a.secact svg,
@@ -1614,7 +1626,6 @@ nav.tree section h2 .acts,
 body.nothing .start h2 .acts { gap: .5rem; }
   /* Opacity is a pointer's affordance: there is no hover on a finger, so a
      control that waits to be hovered is a control that is never found. */
-nav.tree a.asroot,
 nav.tree .chooser a.aside,
 body.nothing .start .row > a.aside {
     opacity: .75;

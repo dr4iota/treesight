@@ -30,6 +30,7 @@ The path, as links, and the controls for the window:
   same.
 - **Up** goes to the parent folder. At the top of the open folder the button is
   **Start** and returns to the start page.
+- **As root**, in a folder below the top, starts the tree at that folder.
 - **Theme**, **line numbers** and **Sidebar** are in [Preferences](preferences.md).
 - **Print** is on a rendered file or a source view, and prints that view.
 

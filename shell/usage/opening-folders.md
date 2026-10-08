@@ -28,8 +28,8 @@ pins the folder that is open, not one you have walked into, and the folder gets
 a row of its own, kept across launches. Press it again, or the cross on the row
 (**Unpin this folder**), and the row goes.
 
-To pin a folder further down, start the tree there first — each directory row
-has the button — and then pin it.
+To pin a folder further down, start the tree there first — open it, then
+**As root** in its header — and then pin it.
 
 A pinned row that has gone missing greys and says so, and stays until you remove
 it.
@@ -47,9 +47,9 @@ once a folder is open. What you choose is opened and remembered in Recent.
 
 ## Once something is open
 
-The header shows the path, and each part of it opens that folder. Each directory
-row has a button, **Start the tree at** that folder, so you can open it without
-the dialog.
+The header shows the path, and each part of it opens that folder. In a folder
+below the top, **As root** starts the tree at that folder, so you can open it
+without the dialog.
 
 **Close** (the cross on the **Files** heading) returns to the start page. At the
 top of the open folder the header button is **Start** and does the same thing.

@@ -15,7 +15,8 @@ On Markdown and diagrams, **Source** shows the highlighted source, and
 **Rendered** switches back.
 
 **Raw** shows the file itself, with the header still shown, so you can get
-back. **Download** saves a copy.
+back. **Download** saves a copy. A folder's table has the same download mark at
+the end of each file's row, so a file can be saved without opening it.
 
 ## Big files
 

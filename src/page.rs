@@ -1442,25 +1442,34 @@ fn path_label(full: &str) -> String {
     }
 }
 
-/// The "serve this folder instead" button on a directory row in the tree.
+/// **As root**, in a folder's header: serve this folder instead of the root it
+/// is under.
 ///
-/// Clicking the name walks into a directory; this re-roots to it, which is the
+/// Walking into a folder keeps the root; this re-roots to it, which is the
 /// thing you cannot otherwise do without the picker and a path you have already
 /// got on screen. It goes through `/.ts/root`, the same link a Recent uses, so the
-/// shell remembers it in Recent exactly as it would any other opened root.
+/// shell remembers it in Recent exactly as it would any other opened root. It
+/// was a mark on every directory row of the pane, the smallest target there,
+/// for something done rarely; one pill on the folder itself is enough.
 ///
-/// Only in the shell. Nothing else can act on it: the server has no such route,
-/// and a page served over a network has no business offering one.
-fn as_root_link(state: &State, vfs: &dyn Vfs, path: &VfsPath) -> String {
-    if !state.cfg.app_ui {
+/// Only in the shell — the server has no such route, and a page served over a
+/// network has no business offering one — and only where it would change
+/// something: not at the root, and not where the backend has no root of its
+/// own for a folder inside it (an Android grant is one root, whole).
+fn as_root_flag(state: &State, root: &Root, rel: &[String], path: &VfsPath) -> String {
+    if !state.cfg.app_ui || rel.is_empty() {
         return String::new();
     }
-    let full = vfs.root_id_at(path);
-    format!(
-        "<a class=\"asroot\" href=\"/.ts/root?path={}\" title=\"Start the tree at {}\">{}</a>",
-        percent_encode(&full),
-        html_escape(&full),
-        svg_icon(ICON_AS_ROOT)
+    let full = root.vfs.root_id_at(path);
+    if full == root.id {
+        return String::new();
+    }
+    flag(
+        "",
+        &format!("/.ts/root?path={}", percent_encode(&full)),
+        &svg_icon(ICON_AS_ROOT),
+        "As root",
+        &format!("Start the tree at {full}"),
     )
 }
 
@@ -1546,18 +1555,17 @@ fn tree_dir(
             // Two sources, and the row is open if either says so: the chain to
             // where you are, and the set you opened by hand.
             let open = on_path || prefs.open.iter().any(|p| p == &key);
-            let child = VfsPath::new(rel.clone());
-            // The name and the button share a row of their own, so an expanded
-            // directory's children hang below it rather than beside the button,
-            // and a long name ellipsises against the button instead of pushing it
-            // off the pane.
+            // The arrow and the name share a row of their own, so an expanded
+            // directory's children hang below it rather than beside the arrow.
+            // No button at the end: starting the tree here is the folder's
+            // own header's **As root** (`as_root_flag`), not a mark on every
+            // row of the pane.
             out.push_str(&format!(
-                "<li{}><span class=\"row\">{}<a class=\"dir\" href=\"{}/\">{}/</a>{}</span>",
+                "<li{}><span class=\"row\">{}<a class=\"dir\" href=\"{}/\">{}/</a></span>",
                 cls,
                 twisty(open, on_path, &key, url_now),
                 html_escape(&href),
                 html_escape(&e.name),
-                as_root_link(state, vfs, &child)
             ));
             if open {
                 tree_dir(state, vfs, rel, cur, prefs, url_now, out);
@@ -1625,7 +1633,8 @@ pub fn listing_page(
         content.push_str(&search_results(state, vfs, rel, canon, q, recursive));
     }
 
-    layout(state, root, prefs, rel, url_now, "", false, &content)
+    let controls = as_root_flag(state, root, rel, canon);
+    layout(state, root, prefs, rel, url_now, &controls, false, &content)
 }
 
 const README_NAMES: &[&str] = &["README.md", "README.markdown", "README.mdown", "README.mkd"];
@@ -1672,11 +1681,19 @@ fn entries_table(state: &State, vfs: &dyn Vfs, rel: &[String], canon: &VfsPath) 
             );
         }
     };
+    // A file can be saved from its row, without opening it first: the same
+    // `?dl=1` its own page links, so the shell saves it the same way. Only where
+    // the backend offers a copy at all, and then as a column of its own at the
+    // row's far end — a target away from the name, so a thumb aiming for one
+    // does not land on the other. Where there is no copy to offer there is no
+    // column, heading and all.
+    let dl = vfs.downloadable();
+    let blank = if dl { "<td class=\"dl\"></td>" } else { "" };
     let mut rows = String::new();
     if !rel.is_empty() {
         let parent = &rel[..rel.len() - 1];
         rows.push_str(&format!(
-            "<tr><td>{}<a href=\"{}/\">..</a></td><td class=\"size\"></td><td class=\"time\"></td></tr>",
+            "<tr><td>{}<a href=\"{}/\">..</a></td><td class=\"size\"></td><td class=\"time\"></td>{blank}</tr>",
             icon_cell(true, ICON_UP),
             html_escape(href_path(parent).trim_end_matches('/'))
         ));
@@ -1690,8 +1707,18 @@ fn entries_table(state: &State, vfs: &dyn Vfs, rel: &[String], canon: &VfsPath) 
         if e.is_dir {
             href.push('/');
         }
+        let save = match (dl, e.is_dir) {
+            (true, false) => format!(
+                "<td class=\"dl\"><a href=\"{}?dl=1\" title=\"Download {name}\" aria-label=\"Download {name}\">{}</a></td>",
+                html_escape(&href),
+                svg_icon(ICON_DOWNLOAD),
+                name = html_escape(&e.name),
+            ),
+            (true, true) => blank.to_string(),
+            (false, _) => String::new(),
+        };
         rows.push_str(&format!(
-            "<tr><td>{}<a href=\"{}\"{}>{}</a></td><td class=\"size\">{}</td><td class=\"time\">{}</td></tr>",
+            "<tr><td>{}<a href=\"{}\"{}>{}</a></td><td class=\"size\">{}</td><td class=\"time\">{}</td>{save}</tr>",
             entry_icon(&e.name, e.is_dir),
             html_escape(&href),
             if e.is_dir { " class=\"dir\"" } else { "" },
@@ -1705,10 +1732,14 @@ fn entries_table(state: &State, vfs: &dyn Vfs, rel: &[String], canon: &VfsPath) 
         ));
     }
     if entries.is_empty() {
-        rows.push_str("<tr><td colspan=\"3\"><em>empty directory</em></td></tr>");
+        rows.push_str(&format!(
+            "<tr><td colspan=\"{}\"><em>empty directory</em></td></tr>",
+            if dl { 4 } else { 3 }
+        ));
     }
     format!(
-        "<table class=\"listing\"><tr><th>Name</th><th class=\"size\">Size</th><th class=\"time\">Modified</th></tr>{}</table>",
+        "<table class=\"listing\"><tr><th>Name</th><th class=\"size\">Size</th><th class=\"time\">Modified</th>{}</tr>{}</table>",
+        if dl { "<th class=\"dl\"></th>" } else { "" },
         rows
     )
 }
