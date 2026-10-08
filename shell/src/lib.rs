@@ -2462,6 +2462,9 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // A folder's New folder, its form sent; its Upload; and the status
         // line's Cancel for either an upload or a download. See `transfer`.
         "/.ts/mkdir" => transfer::mkdir(app, url),
+        // A row's strip: Delete, and the backend's own verbs on the row.
+        "/.ts/remove" => transfer::remove(app, url),
+        "/.ts/act" => transfer::act(app, url),
         "/.ts/upload" => transfer::upload(app, url),
         "/.ts/cancel" => transfer::cancel(),
         // The theme / line-number / pane toggles, and the tree's disclosure

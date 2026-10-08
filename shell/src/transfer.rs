@@ -1,5 +1,6 @@
 //! Writing into the served tree, and moving bytes with the status line
-//! saying so: **New folder**, **Upload**, and the progress Download shares.
+//! saying so: **New folder**, **Upload**, **Delete**, a backend's own verbs on
+//! a row, and the progress Download shares.
 //!
 //! Every write starts here, from a link the shell claims — the server has no
 //! route that writes, so a page served over a network can never do it. Each
@@ -24,7 +25,7 @@ use tauri::{AppHandle, Manager};
 use treeserve::util::percent_encode;
 use treeserve::{Vfs, VfsPath};
 
-use crate::{committed, fail, js_quoted, replace_page, Serving, WINDOW};
+use crate::{committed, eval, fail, js_quoted, notify, replace_page, Serving, WINDOW};
 
 /// One transfer at a time: two would share one status line and one Cancel.
 static BUSY: AtomicBool = AtomicBool::new(false);
@@ -529,4 +530,156 @@ mod tests {
         drop(turn);
         assert!(!treeserve::vfs::cancel::asked());
     }
+}
+
+/// The row a row link names, checked as [`target`] checks a folder: this run's
+/// token, and an address inside the served root.
+struct Row {
+    vfs: std::sync::Arc<dyn Vfs>,
+    path: VfsPath,
+    name: String,
+    is_dir: bool,
+}
+
+fn row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
+    let serving = app.try_state::<Serving>().ok_or(None)?;
+    let cfg = &serving.state().cfg;
+    if param(url, "t").as_deref() != Some(cfg.action_token.as_str()) {
+        return Err(Some("That link did not come from this window.".into()));
+    }
+    let root = cfg.root().ok_or(None)?;
+    let href = param(url, "path").ok_or(None)?;
+    let resolved = treeserve::resolve_in_root(root.vfs.as_ref(), &href)
+        .map_err(|_| Some(format!("{href} is not in this folder.")))?;
+    let is_dir = root
+        .vfs
+        .metadata(&resolved.path)
+        .map(|m| m.is_dir)
+        .map_err(|e| Some(format!("{href}: {e}")))?;
+    Ok(Row {
+        vfs: std::sync::Arc::clone(&root.vfs),
+        name: resolved.path.segments().last().cloned().unwrap_or_default(),
+        path: resolved.path,
+        is_dir,
+    })
+}
+
+/// A native question with a button that goes ahead and Cancel. True is yes.
+fn ask(app: &AppHandle, title: &str, message: &str, ok: &str) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    #[cfg_attr(mobile, allow(unused_mut))]
+    let mut ask = app
+        .dialog()
+        .message(message)
+        .title(title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(ok.into(), "Cancel".into()));
+    #[cfg(desktop)]
+    if let Some(win) = app.get_webview_window(WINDOW) {
+        ask = ask.parent(&win);
+    }
+    ask.blocking_show()
+}
+
+/// `/.ts/act`: one of the backend's own verbs on a row (`Vfs::row_info`) —
+/// asked about first where the verb says so, carried out by `Vfs::act` with the
+/// status line saying how far it has got, and the page drawn again.
+///
+/// The verb is looked up again here rather than trusted from the link: the
+/// question it asks and whether it is on offer at all are the backend's answer
+/// *now*, not when the page was drawn.
+pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
+    let app = app.clone();
+    let url = url.clone();
+    thread::spawn(move || {
+        let r = match row(&app, &url) {
+            Ok(r) => r,
+            Err(Some(why)) => return fail(&app, &why, false),
+            Err(None) => return,
+        };
+        let id = param(&url, "a").unwrap_or_default();
+        let Some(action) = r
+            .vfs
+            .row_info(&r.path)
+            .and_then(|i| i.actions.into_iter().find(|a| a.id == id))
+        else {
+            return fail(&app, &format!("That cannot be done to {} now.", r.name), false);
+        };
+        if let Some(c) = &action.confirm
+            && !ask(&app, &action.label, &c.message, &c.ok)
+        {
+            return;
+        }
+        let Some(_turn) = Turn::take() else {
+            return fail(&app, BUSY_SAYS, false);
+        };
+        let what = format!("{} · {}", action.label, r.name);
+        let mut last = Instant::now() - TICK;
+        let done = r.vfs.act(&r.path, &id, &mut |done, total| {
+            if last.elapsed() < TICK {
+                return;
+            }
+            last = Instant::now();
+            let line = match total {
+                Some(t) if t > 0 => (format!("{what} · {} of {} MB", mb(done), mb(t)), done as f64 / t as f64),
+                _ => (format!("{what} · {} MB", mb(done)), 0.0),
+            };
+            progress(&app, Some((&line.0, line.1)));
+        });
+        progress(&app, None);
+        match done {
+            Ok(said) => {
+                eval(&app, "location.reload()");
+                if let Some(said) = said {
+                    notify(&app, &said);
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => fail(&app, &format!("{}: {}: {e}", action.label, r.name), false),
+        }
+    });
+}
+
+/// `/.ts/remove`: **Delete**, from a row's strip — a file, or a folder with
+/// nothing in it. Asked every time; never recursive. The backend may add a
+/// line to the question (`Vfs::remove_note`).
+pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
+    let app = app.clone();
+    let url = url.clone();
+    thread::spawn(move || {
+        let r = match row(&app, &url) {
+            Ok(r) => r,
+            Err(Some(why)) => return fail(&app, &why, false),
+            Err(None) => return,
+        };
+        if !r.vfs.writable() || r.path.segments().is_empty() {
+            return fail(&app, &format!("{} cannot be deleted here.", r.name), false);
+        }
+        if r.is_dir && r.vfs.read_dir(&r.path).is_ok_and(|v| !v.is_empty()) {
+            return fail(&app, &format!("{} is not empty; delete what is in it first.", r.name), false);
+        }
+        let place = app
+            .try_state::<Serving>()
+            .and_then(|s| s.state().cfg.root_name())
+            .map(|n| format!(" from {n}"))
+            .unwrap_or_default();
+        let head = match r.is_dir {
+            true => format!("Delete the empty folder {}{place}?", r.name),
+            false => format!("Delete {}{place}?", r.name),
+        };
+        let mut message = format!("{head}\n\nIt cannot be brought back from here.");
+        if let Some(note) = r.vfs.remove_note(&r.path) {
+            message.push_str(&format!("\n\n{note}"));
+        }
+        if !ask(&app, "Delete", &message, "Delete") {
+            return;
+        }
+        match r.vfs.remove(&r.path) {
+            Ok(()) => eval(&app, "location.reload()"),
+            Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {
+                fail(&app, &format!("{} is not empty; delete what is in it first.", r.name), false)
+            }
+            Err(e) => fail(&app, &format!("Could not delete {}: {e}", r.name), false),
+        }
+    });
 }
