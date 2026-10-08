@@ -172,7 +172,7 @@ Example: `treeserve -p 9000 ~/projects/notes`
   `/.ts/set` and redirect back.
 - **File tree side pane.** Rendered on the server; directories on the current
   path are expanded, everything else is a link, so no JS is needed for
-  expansion. “Pane” in the header switches the whole pane, not the tree within
+  expansion. “Sidebar” in the header switches the whole pane, not the tree within
   it: the tree is what the pane is for, so turning it off gives the listing the
   full window rather than leaving an empty column.
 - **Drawn icons, not typed ones.** Listing rows and header controls use inline

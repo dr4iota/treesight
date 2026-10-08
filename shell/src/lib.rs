@@ -3386,7 +3386,7 @@ mod tests {
         // needs something to slide in, and only the stylesheet knows whether
         // this window is wide enough for the switch to have meant anything — so
         // the class on the body is where the answer is.
-        assert!(after.contains("class=\"app nopane\""), "{after}");
+        assert!(after.contains("class=\"app fitted nopane\""), "{after}");
 
         fs::remove_dir_all(&dir).unwrap();
     }

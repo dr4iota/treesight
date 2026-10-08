@@ -28,6 +28,15 @@ impl ThemeMode {
             ThemeMode::Dark => "dark",
         }
     }
+    /// The theme flag's word: the mode alone. The mark beside it is the
+    /// mode's too, so *Theme:* in front said nothing the pill did not.
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeMode::Auto => "Auto",
+            ThemeMode::Light => "Light",
+            ThemeMode::Dark => "Dark",
+        }
+    }
     pub fn next(self) -> ThemeMode {
         match self {
             ThemeMode::Auto => ThemeMode::Light,
@@ -321,18 +330,187 @@ fn set_href(key: &str, val: &str, back: &str) -> String {
 /// character that would do instead brings its own metrics, and a row of pills is
 /// only tidy when the thing inside each one measures the same.
 pub(crate) fn flag(class: &str, href: &str, icon: &str, label: &str, title: &str) -> String {
+    named_flag(class, href, icon, label, "", title)
+}
+
+/// A flag whose word is not the whole of its name. A switch's word is only
+/// what it switches — *Ln*, *Sidebar* — and the theme's only the choice —
+/// *Light* — because the paint and the mark say the rest to an eye. They say
+/// nothing to a screen reader: the mark is `aria-hidden`, and the title is not
+/// the name while there is a word. So `name` is the whole of it, *Ln, line
+/// numbers: on*, and it starts with the word on screen so that a reader who
+/// says "Ln" to a voice control still lands on it. Empty for no `aria-label`.
+pub(crate) fn named_flag(
+    class: &str,
+    href: &str,
+    icon: &str,
+    label: &str,
+    name: &str,
+    title: &str,
+) -> String {
     let class = if class.is_empty() {
         String::new()
     } else {
         format!(" class=\"{class}\"")
     };
+    let name = if name.is_empty() {
+        String::new()
+    } else {
+        format!(" aria-label=\"{}\"", html_escape(name))
+    };
     format!(
-        "<a{} href=\"{}\" title=\"{}\"><span class=\"ico\">{}</span><span class=\"lbl\">{}</span></a>",
+        "<a{} href=\"{}\"{} title=\"{}\"><span class=\"ico\">{}</span><span class=\"lbl\">{}</span></a>",
         class,
         html_escape(href),
+        name,
         html_escape(title),
         icon,
         html_escape(label)
+    )
+}
+
+/// The theme's flag, on every page that has a header: the choice in the word,
+/// the setting in the name (`named_flag`).
+fn theme_flag(theme: ThemeMode, url_now: &str) -> String {
+    let (mark, why) = theme_icon(theme);
+    named_flag(
+        "",
+        &set_href("theme", theme.next().as_str(), url_now),
+        &svg_icon(mark),
+        theme.label(),
+        &format!("{}, theme", theme.label()),
+        why,
+    )
+}
+
+/// The words on a row of pills: what each `<span class="lbl">` holds. Read
+/// back off the markup rather than collected as the pills are made, because an
+/// embedder's flags and a page's own arrive as markup too.
+fn pill_words(html: &str) -> Vec<String> {
+    const OPEN: &str = "<span class=\"lbl\">";
+    html.match_indices(OPEN)
+        .filter_map(|(i, _)| {
+            let rest = &html[i + OPEN.len()..];
+            rest.find("</span>").map(|end| unescape(&rest[..end]))
+        })
+        .collect()
+}
+
+/// What `html_escape` wrote, read back: a word's width is its characters',
+/// not its entities'.
+fn unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
+/// How wide `text` draws at `px`, a little over: each character priced by its
+/// kind in a proportional system font, then 8% on top.
+///
+/// One flat width per character priced every letter as an `m`: the path
+/// `pi / telechore-emu-test` came out 57px wider than it draws, and a small
+/// phone held sideways lost a whole row to a path that fitted. Still an
+/// estimate, and still erring wide — the header wraps where it is short.
+fn text_px(text: &str, px: f32) -> f32 {
+    let em: f32 = text
+        .chars()
+        .map(|c| match c {
+            'i' | 'j' | 'l' | '.' | ',' | ':' | ';' | '\'' | '|' | '!' | 'I' => 0.28,
+            'f' | 'r' | 't' | '/' | '\\' | ' ' | '-' | '(' | ')' | '[' | ']' => 0.38,
+            'm' | 'w' => 0.86,
+            'M' | 'W' => 0.95,
+            'A'..='Z' => 0.7,
+            '0'..='9' => 0.58,
+            c if c.is_ascii() => 0.56,
+            // Pictographs: emoji, at their usual one-and-a-bit.
+            c if (c as u32) >= 0x1F000 => 1.3,
+            // East Asian scripts, full-width.
+            c if ('\u{1100}'..='\u{FFEF}').contains(&c) && !('\u{1E00}'..='\u{2BFF}').contains(&c) => 1.0,
+            _ => 0.62,
+        })
+        .sum();
+    em * px * 1.08
+}
+
+/// When a tree page's header gives up its words, and when its path goes to a
+/// row of its own: two widths, estimated here from what is actually on the
+/// line and written into the page as the media queries that say so.
+///
+/// A stylesheet can only count pills, and a count is a poor guess at a width:
+/// *Ln* and *Download* are both one pill, and a path can be four characters or
+/// sixty. This side knows every word, so it adds them up — generously, at a
+/// character width a little over what a system font draws, since an estimate
+/// that comes out long costs a few pixels of words given up early and one that
+/// comes out short costs a header wrapped in the wrong place. Both are only an
+/// estimate: the header wraps (`flex-wrap`) wherever this is wrong anyway.
+///
+/// In order: everything with its words, if the line holds it; otherwise the
+/// same with marks only; otherwise marks, and the path under them. Rem, not px,
+/// so a reader who sets a larger text size gets widths that grew with it.
+fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) -> String {
+    // Pixels at a 16px rem. The numbers are `app.css`'s: a pill's word is
+    // `.8rem` (12.8px) with `.55rem` of padding a side, a 1px border, the
+    // 24px header mark and a `.3rem` gap; a mark alone is the `2.5rem` box.
+    const PILL_TEXT: f32 = 12.8;
+    const PILL_WORD: f32 = 17.6 + 2.0 + 24.0 + 4.8;
+    const PILL_MARK: f32 = 40.0;
+    const PILL_GAP: f32 = 5.6; // `.controls` gap, `.35rem`
+    const GAP: f32 = 16.0; // the header's own, `1rem`
+    const PAD: f32 = 32.0; // `1rem` a side
+    const SLACK: f32 = 12.0; // insets and rounding
+    // The sidebar's control stands closer to Up than the header's gap:
+    // `margin-right: calc(.35rem - 1rem)` on `.paneflag` and `.drawer-btn`.
+    const PANE_GAP: f32 = 5.6;
+    // The path: 15px at weight 500, and each separator's `.15rem` a side.
+    const CRUMB_TEXT: f32 = 15.0 * 1.03;
+    const SEP: f32 = 6.0 + 4.8;
+    const CRUMBS_MIN: f32 = 128.0; // `.crumbs { min-width: 8rem }`
+    // The tag: `.75rem` monospace, `.4rem` padding a side and after.
+    const TAG_CHAR: f32 = 7.2;
+    const TAG_BOX: f32 = 12.8 + 2.0 + 6.4;
+
+    let row = |words: &[String], with_words: bool| -> f32 {
+        let pills: f32 = words
+            .iter()
+            .map(|w| match with_words {
+                true => PILL_WORD + text_px(w, PILL_TEXT),
+                false => PILL_MARK,
+            })
+            .sum();
+        pills + PILL_GAP * words.len().saturating_sub(1) as f32
+    };
+    let left_words = pill_words(left);
+    let control_words = pill_words(controls);
+    let text: f32 = crumbs.iter().map(|c| text_px(c, CRUMB_TEXT)).sum();
+    let path = (text + crumbs.len().saturating_sub(1) as f32 * SEP).max(CRUMBS_MIN);
+    let tag = tag.map_or(0.0, |t| t.chars().count() as f32 * TAG_CHAR + TAG_BOX + GAP);
+    // Up is followed by the header's gap; the sidebar's control beside it by
+    // its own closer one. The path is followed by the gap too, and the
+    // controls end the line.
+    let line = |with_words: bool| {
+        let left = left_words
+            .iter()
+            .map(|w| row(std::slice::from_ref(w), with_words))
+            .sum::<f32>()
+            + match left_words.len() {
+                0 => 0.0,
+                1 => GAP,
+                n => GAP + PANE_GAP * (n - 1) as f32,
+            };
+        PAD + SLACK + left + tag + path + GAP + row(&control_words, with_words)
+    };
+    let rem = |px: f32| (px / 16.0 * 4.0).ceil() / 4.0;
+    format!(
+        "<style>\
+         @media (max-width: {words}rem) {{ body.fitted {{ --lbl: none; --ctl-display: inline-flex; \
+         --pill: 1.7rem; --pill-pad: 0; }} }}\n\
+         @media (max-width: {marks}rem) {{ body.fitted {{ --crumbs-order: 3; --crumbs-basis: 100%; \
+         --crumbs-min: 0; --crumbs-size: .85rem; }} }}\
+         </style>",
+        words = rem(line(true)),
+        marks = rem(line(false)),
     )
 }
 
@@ -461,27 +639,30 @@ fn head_and_header(
     }
     controls.push_str(extra_controls);
     if show_ln_toggle {
-        let (label, val) = if prefs.ln { ("Ln: on", "0") } else { ("Ln: off", "1") };
-        controls.push_str(&flag(
-            "",
+        // The word is the switch's name and the paint (`.on`) is its state, as
+        // for every switch: see `.controls .on` in `app.css`.
+        let (class, val, name, title) = if prefs.ln {
+            ("on", "0", "Ln, line numbers: on", "Line numbers: on. Click to hide them.")
+        } else {
+            ("", "1", "Ln, line numbers: off", "Line numbers: off. Click to show them.")
+        };
+        controls.push_str(&named_flag(
+            class,
             &set_href("ln", val, url_now),
             &svg_icon(&icon_lineno(prefs.ln)),
-            label,
-            if prefs.ln {
-                "Hide line numbers"
-            } else {
-                "Show line numbers"
-            },
+            "Ln",
+            name,
+            title,
         ));
     }
     // The switch is the pane, not the tree inside it: with the pane on, the tree
     // is what it is for and is always there, and with the pane off the listing
     // has the window. A switch for the tree alone would have left an empty
     // column behind, which is neither of the two things anyone wants.
-    let (pane_label, pane_val, pane_title) = if prefs.sidebar {
-        ("Pane: on", "0", "Hide the side pane")
+    let (pane_class, pane_val, pane_name, pane_title) = if prefs.sidebar {
+        ("paneflag on", "0", "Sidebar: on", "Sidebar: on. Click to hide it.")
     } else {
-        ("Pane: off", "1", "Show the side pane")
+        ("paneflag", "1", "Sidebar: off", "Sidebar: off. Click to show it.")
     };
     // Not with the flags on the right: the switch and the drawer button are one
     // control in one place, at the left end of the row. Which of the two is on
@@ -494,11 +675,12 @@ fn head_and_header(
     let pane_flag = match show_pane_flag {
         true => format!(
             "\n  {}",
-            flag(
-                "paneflag",
+            named_flag(
+                pane_class,
                 &set_href("sidebar", pane_val, url_now),
                 &svg_icon(&icon_pane(prefs.sidebar)),
-                pane_label,
+                "Sidebar",
+                pane_name,
                 pane_title,
             )
         ),
@@ -506,14 +688,7 @@ fn head_and_header(
         // of, at any width.
         false => String::new(),
     };
-    let (mark, why) = theme_icon(prefs.theme);
-    controls.push_str(&flag(
-        "",
-        &set_href("theme", prefs.theme.next().as_str(), url_now),
-        &svg_icon(mark),
-        &format!("Theme: {}", prefs.theme.as_str()),
-        why,
-    ));
+    controls.push_str(&theme_flag(prefs.theme, url_now));
 
     // Up, the way a file manager means it: the folder that contains this one.
     //
@@ -591,25 +766,35 @@ fn head_and_header(
     };
     let drawer_btn = if drawer {
         format!(
-            "\n  <label for=\"ts-drawer\" class=\"drawer-btn\" title=\"Tree and places\">{}</label>",
+            "\n  <label for=\"ts-drawer\" class=\"drawer-btn\" title=\"Open the sidebar\">\
+             <span class=\"ico\">{}</span><span class=\"lbl\">Sidebar</span></label>",
             svg_icon(ICON_MENU)
         )
     } else {
         String::new()
     };
 
-    // `nopane` rather than leaving the markup out: see the pane above.
+    // `nopane` rather than leaving the markup out: see the pane above. `fitted`
+    // because this header's widths are its own (`header_fit`), and the
+    // stylesheet's fixed bands are for the pages that have none.
     let off = match prefs.sidebar {
         true => "",
         false => " nopane",
     };
     let classes = match (state.cfg.app_ui, extra_body_class) {
-        (true, "") => format!(" class=\"app{off}\""),
-        (true, c) => format!(" class=\"app {c}{off}\""),
-        (false, "") if off.is_empty() => String::new(),
-        (false, "") => format!(" class=\"{}\"", off.trim()),
-        (false, c) => format!(" class=\"{c}{off}\""),
+        (true, "") => format!(" class=\"app fitted{off}\""),
+        (true, c) => format!(" class=\"app {c} fitted{off}\""),
+        (false, "") => format!(" class=\"fitted{off}\""),
+        (false, c) => format!(" class=\"{c} fitted{off}\""),
     };
+    let mut path: Vec<&str> = vec![site_title.as_str()];
+    path.extend(rel.iter().map(String::as_str));
+    let fit = header_fit(
+        &format!("{up}{pane_flag}"),
+        crate::root_id_bookmark(&root.id),
+        &path,
+        &controls,
+    );
 
     format!(
         r#"<!DOCTYPE html>
@@ -622,6 +807,7 @@ fn head_and_header(
 <link rel="stylesheet" href="/.ts/app.css">
 <link rel="stylesheet" href="/.ts/math.css">
 {syntax_css}
+{fit}
 </head>
 <body{classes}>
 {drawer_toggle}<header>{up}{drawer_btn}{pane_flag}{tag}
@@ -631,6 +817,7 @@ fn head_and_header(
         data_theme = data_theme,
         title = html_escape(&title),
         syntax_css = syntax_css,
+        fit = fit,
         classes = classes,
         drawer_toggle = drawer_toggle,
         up = up,
@@ -652,14 +839,7 @@ fn head_and_header(
 /// the name, the theme, and the way in.
 fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) -> String {
     let mut controls = String::new();
-    let (mark, why) = theme_icon(prefs.theme);
-    controls.push_str(&flag(
-        "",
-        &set_href("theme", prefs.theme.next().as_str(), url_now),
-        &svg_icon(mark),
-        &format!("Theme: {}", prefs.theme.as_str()),
-        why,
-    ));
+    controls.push_str(&theme_flag(prefs.theme, url_now));
     let data_theme = match prefs.theme {
         ThemeMode::Auto => String::new(),
         m => format!(" data-theme=\"{}\"", m.as_str()),
@@ -2028,7 +2208,7 @@ mod tests {
         // whole width of the window, which is the one thing the pane used to
         // stop. No `nopane`, because the pane is *on* here — it is this page that
         // does not draw one.
-        assert!(html.contains("<body class=\"app waiting\">"), "{html}");
+        assert!(html.contains("<body class=\"app waiting fitted\">"), "{html}");
         // The pane is not there, and neither is anything that opens one — a
         // switch or a drawer button onto nothing is worse than no button.
         assert!(!html.contains("<nav class=\"tree\">"), "{html}");
@@ -2452,22 +2632,22 @@ mod tests {
     /// A bar with six controls on it needs the words off sooner than a bar with
     /// three, so the count picks the width rather than one width serving both.
     ///
-    /// Words or marks is one answer for the whole row: the bands say when it
+    /// Words or not is one answer for the whole row: the bands say when it
     /// flips and set it in one place, and everything wearing a pill reads it
-    /// from there. Half a band — words off without marks on — is a row of empty
-    /// buttons, which is what the first cut of this did.
+    /// from there. The mark is not part of the answer: it is on at every width,
+    /// so a band can never leave a row of empty buttons.
     #[test]
     fn a_crowded_header_drops_its_words_sooner() {
         let sheet = crate::app_css();
-        // Who reads the answer. Without these the bands set variables nothing
+        // Who reads the answer. Without this the bands set a variable nothing
         // consults, and every control keeps its words at every width.
         assert!(sheet.contains(".lbl { display: var(--lbl, inline); }"), "{sheet}");
-        assert!(sheet.contains(".ico { display: var(--ico, none); }"), "{sheet}");
+        assert!(sheet.contains(".ico { display: inline-flex; }"), "{sheet}");
         // The base band, and the two the count reaches for above it.
         for (width, selector) in [
-            (46, "body".to_string()),
-            (56, "body:has(header .controls > :nth-child(4))".to_string()),
-            (68, "body:has(header .controls > :nth-child(6))".to_string()),
+            (46, "body:not(.fitted)".to_string()),
+            (56, "body:not(.fitted):has(header .controls > :nth-child(4))".to_string()),
+            (68, "body:not(.fitted):has(header .controls > :nth-child(6))".to_string()),
         ] {
             let at = format!("@media (max-width: {width}rem) {{");
             let from = sheet.find(&at).unwrap_or_else(|| panic!("no {at}"));
@@ -2476,10 +2656,70 @@ mod tests {
                 .find(&format!("{selector} {{"))
                 .map(|i| &block[i..])
                 .unwrap_or_else(|| panic!("{width}rem: no {selector}"));
-            for decl in ["--lbl: none;", "--ico: flex;", "--pill: 1.7rem;"] {
+            for decl in ["--lbl: none;", "--pill: 1.7rem;"] {
                 assert!(rule.contains(decl), "{width}rem: no {decl}");
             }
         }
+    }
+
+    /// A tree page's header widths are its own, from its own words and path:
+    /// a short path gives up its words later than a long one, words go before
+    /// the path moves, and the bands that count pills leave the page alone.
+    #[test]
+    fn a_tree_header_fits_its_own_words_and_path() {
+        let widths = |html: &str| -> (f32, f32) {
+            let at = |var: &str| {
+                let i = html.find(var).unwrap_or_else(|| panic!("no {var}: {html}"));
+                let from = html[..i].rfind("(max-width: ").expect("a band") + 12;
+                html[from..].split("rem").next().unwrap().parse::<f32>().unwrap()
+            };
+            (at("--lbl: none"), at("--crumbs-order: 3"))
+        };
+        let controls = format!(
+            "{}{}",
+            flag("", "#", "", "Raw", ""),
+            flag("", "#", "", "Download", "")
+        );
+        let up = flag("up", "#", "", "Up", "");
+        let short = widths(&header_fit(&up, None, &["src"], &controls));
+        let long = widths(&header_fit(
+            &up,
+            Some("prod"),
+            &["telechore", "vendor", "treesight", "src", "a-rather-long-file-name.rs"],
+            &controls,
+        ));
+        assert!(short.0 > short.1, "words go before the path moves: {short:?}");
+        assert!(long.0 > short.0 && long.1 > short.1, "{short:?} {long:?}");
+        // The words of *Download* cost what the mark does not.
+        let more = widths(&header_fit(&up, None, &["src"], &format!("{controls}{controls}")));
+        assert!(more.0 - short.0 > more.1 - short.1, "{short:?} {more:?}");
+
+        // Measured on a 640x360 phone held sideways (8 Oct 2026): Up and the
+        // sidebar's button, the `lab` tag, `pi / telechore-emu-test` and six
+        // marks need about 639px with the path inline at its own size — too
+        // close to 640 to risk it, so the path rightly goes below. A flat width
+        // per character priced it at 708; this is to stay over the truth and
+        // near it.
+        let phone = header_fit(
+            &format!("{up}{}", flag("paneflag", "#", "", "Sidebar", "")),
+            Some("lab"),
+            &["pi", "telechore-emu-test"],
+            &["Refresh", "Terminal", "As root", "Upload", "New folder", "Auto"]
+                .map(|w| flag("", "#", "", w, ""))
+                .concat(),
+        );
+        let (_, marks) = widths(&phone);
+        assert!(marks * 16.0 >= 639.0, "never priced under what it draws: {marks}rem");
+        assert!(marks * 16.0 <= 680.0, "and within a few characters of it: {marks}rem");
+
+        // On the page, under the class that takes it out of the counted bands.
+        let dir = tmp_dir("fit");
+        let state = state_at(dir.clone());
+        let root = state.cfg.root().expect("these tests always serve one");
+        let html = listing_page(&state, &root, prefs(), &[], &VfsPath::root(), &[], "/");
+        assert!(html.contains("<body class=\"fitted nopane\">"), "{html}");
+        widths(&html);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A copy of a file is worth offering where the reader does not have one,
@@ -2764,6 +3004,47 @@ mod tests {
             let shut = sheet[..i].rfind("\n}");
             assert!(open > shut, "a pane-switch sizing rule the width swap cannot beat: {}", &sheet[i..i + 80]);
         }
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A switch's word is its name and its paint is its state: the word goes
+    /// with the room and the mark need not change shape, so `: on` in the word
+    /// left a narrow window with nothing to say whether the pane was on.
+    #[test]
+    fn a_switch_is_named_and_painted_on() {
+        let dir = tmp_dir("switches");
+        let state = state_at(dir.clone());
+        let root = state.cfg.root().expect("these tests always serve one");
+        let at = |sidebar| {
+            let p = Prefs { sidebar, ..prefs() };
+            listing_page(&state, &root, p, &[], &VfsPath::root(), &[], "/")
+        };
+        let (on, off) = (at(true), at(false));
+        assert!(on.contains("<a class=\"paneflag on\""), "{on}");
+        assert!(off.contains("<a class=\"paneflag\""), "{off}");
+        // And the state is in the name, where a screen reader finds it: the
+        // paint does not reach one.
+        assert!(on.contains("aria-label=\"Sidebar: on\""), "{on}");
+        assert!(off.contains("aria-label=\"Sidebar: off\""), "{off}");
+        assert!(on.contains("aria-label=\"Light, theme\""), "{on}");
+        // The drawer is the same control at a narrow width, under the same word.
+        assert!(on.contains("class=\"drawer-btn\" title=\"Open the sidebar\"><span class=\"ico\">"), "{on}");
+        // Ln the same way, on the pages that offer it: the word is the name,
+        // the paint and the name carry whether it is on.
+        let ln = |ln| layout(&state, &root, Prefs { ln, ..prefs() }, &[], "/", "", true, "");
+        let (on, off) = (ln(true), ln(false));
+        assert!(on.contains("<a class=\"on\" href=\"/.ts/set?ln=0&amp;back=%2F\" aria-label=\"Ln, line numbers: on\""), "{on}");
+        assert!(off.contains("aria-label=\"Ln, line numbers: off\""), "{off}");
+        assert!(off.contains("<span class=\"lbl\">Ln</span>"), "{off}");
+        for html in [&on, &off] {
+            assert!(html.contains("<span class=\"lbl\">Sidebar</span>"), "{html}");
+            // The theme is a choice of three, not a switch: its word is the
+            // choice, and it is never painted on.
+            assert!(html.contains("<span class=\"lbl\">Light</span>"), "{html}");
+            assert!(!html.contains(": on<") && !html.contains(": off<"), "{html}");
+        }
+        assert!(crate::app_css().contains(".controls .on, .paneflag.on, .controls button[aria-pressed=\"true\"] {"));
 
         fs::remove_dir_all(&dir).unwrap();
     }

@@ -2,10 +2,14 @@
 
 Three settings in the header, remembered on this device.
 
-- **Theme** — light, dark, or auto, which follows the system and is the default.
-  Click moves to the next.
+- **Theme** — **Light**, **Dark**, or **Auto**, which follows the system and is
+  the default. The button shows the one chosen; click moves to the next.
 - **Line numbers** (Ln) — on or off, for highlighted source.
-- **Pane** — show or hide the left side. Hidden, the file fills the window.
+- **Sidebar** — show or hide the left side. Hidden, the file fills the window.
+  On a narrow window the same button slides the sidebar over the page instead.
+
+A switch that is on is lit; its word does not change. On a narrow window the
+buttons show only their marks.
 
 ## Printing
 

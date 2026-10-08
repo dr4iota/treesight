@@ -20,6 +20,9 @@
   --important: #8250df;
   --warning: #9a6700;
   --caution: #cf222e;
+  /* How much of `--link` a switch that is on is filled with. More in dark,
+     where 14% of a blue over near-black was a fill nobody could see. */
+  --on-tint: 14%;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -38,6 +41,7 @@
     --important: #ab7df8;
     --warning: #d29922;
     --caution: #f85149;
+    --on-tint: 28%;
   }
 }
 :root[data-theme="dark"] {
@@ -56,6 +60,7 @@
   --important: #ab7df8;
   --warning: #d29922;
   --caution: #f85149;
+  --on-tint: 28%;
 }
 
 * { box-sizing: border-box; }
@@ -171,7 +176,25 @@ header {
     text-decoration: none;
   }
 }
-.crumbs { flex: 1; min-width: 8rem; font-weight: 500; overflow-wrap: anywhere; }
+/* The path on the line with the buttons, or on a row of its own under them —
+   once a tree page's server says the line cannot hold both. The four
+   `--crumbs-*` are that answer, and `header_fit` in `page.rs` is the one place
+   that sets them, at a width it estimates from this page's own words and
+   path. Not at a fixed width and not on every page: a fixed 46rem sent an embedder's one-word title — the
+   Servers page's — under two buttons with the whole row empty beside it.
+   Below, it wraps rather than scrolls: the row is the path's, so a path longer
+   than one line of it takes two — the same `overflow-wrap: anywhere` the pane
+   uses to keep a long name inside itself. And should the estimate come out
+   short anyway, the header wraps (`flex-wrap`), so the worst it does is take a
+   second line it did not plan. */
+.crumbs {
+  order: var(--crumbs-order, 0);
+  flex: 1 1 var(--crumbs-basis, 0%);
+  min-width: var(--crumbs-min, 8rem);
+  font-size: var(--crumbs-size, 1em);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
 /* The two on the left are the ways *out* — the menu and Back — and everything
    else acts on the page, so it belongs at the other end. With the path on a row
    of its own there is nothing between them to push them apart, and they ended up
@@ -218,18 +241,33 @@ header > .tag { order: 0; flex: 0 0 auto; }
 @media (hover: hover) {
   .controls a:hover, .controls button:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
 }
-/* Each flag carries a symbol as well as its words, and drops the words when
-   the header runs out of room. Deliberately not emoji: those are colour glyphs
-   that some Linux font stacks have nothing for, and a missing-glyph box next to
-   the path is worse than no icon at all. */
-/* Words or marks is one answer for the whole row, and these four properties are
-   it. The bands below say *when* it flips; everything that wears a pill reads
-   the answer here and nowhere else, which is what stops one control — the pane
+/* A switch that is on says so by its paint, the same at every width, and its
+   word is only its name: *Ln*, not *Ln: on*. The word comes and goes with the
+   room and the mark may not change shape, so neither could carry the state on
+   its own. A link says it with `.on`, a button with `aria-pressed`. The tint is
+   there so it does not rest on hue alone, beside an action pill in the same
+   colours; `--bg-subtle` first for an engine without `color-mix()`. */
+.controls .on, .paneflag.on, .controls button[aria-pressed="true"] {
+  color: var(--link);
+  border-color: var(--link);
+  background: var(--bg-subtle);
+  background: color-mix(in srgb, var(--link) var(--on-tint), transparent);
+}
+/* Each flag carries a mark, always, and its word beside it while the header
+   has room. Deliberately not emoji: those are colour glyphs that some Linux
+   font stacks have nothing for, and a missing-glyph box next to the path is
+   worse than no icon at all.
+   The mark is the constant and the word a caption: a pill used to be one or
+   the other, so what a reader learned from *Raw* on a wide window was a
+   different control from the mark the same pill became on a phone. */
+/* Words or not is one answer for the whole row, and these properties are it.
+   The bands below say *when* it flips; everything that wears a pill reads the
+   answer here and nowhere else, which is what stops one control — the pane
    switch was it — quietly keeping words the rest had given up.
    `--pill-pad` is read where each control sets its own padding, since their
-   resting values differ and only the icon form is shared. */
+   resting values differ and only the mark form is shared. */
 .lbl { display: var(--lbl, inline); }
-.ico { display: var(--ico, none); }
+.ico { display: inline-flex; }
 /* How big a drawn mark is, in one place.
 
    Eighteen pixels, and the number is not a taste: a pill's word form is
@@ -329,6 +367,7 @@ svg.mark {
   display: var(--ctl-display, inline);
   align-items: center;
   justify-content: center;
+  gap: .3rem;
   width: var(--pill, auto);
   height: var(--pill, auto);
 }
@@ -343,20 +382,24 @@ svg.mark {
    counts. Only the right-hand group is counted: the left is Back and the pane
    control, at most two, and always there in the shell — so the total is this
    plus two. Set on `body` rather than on `header` because the footer's picker
-   wears the same pill and has to hear the same answer. */
+   wears the same pill and has to hear the same answer.
+   **Not on a tree page** (`body.fitted`): a count cannot see how long the words
+   are or how long the path is, and that page's server can. It writes its own
+   two widths into the page — words to marks, then the path to a row of its
+   own — from an estimate of everything on the line (`header_fit` in
+   `page.rs`). These bands are for the pages that bring a few fixed controls
+   and a short title: an embedder's own, and the start page. */
 @media (max-width: 56rem) {
-  body:has(header .controls > :nth-child(4)) {
+  body:not(.fitted):has(header .controls > :nth-child(4)) {
     --lbl: none;
-    --ico: flex;
     --ctl-display: inline-flex;
     --pill: 1.7rem;
     --pill-pad: 0;
   }
 }
 @media (max-width: 68rem) {
-  body:has(header .controls > :nth-child(6)) {
+  body:not(.fitted):has(header .controls > :nth-child(6)) {
     --lbl: none;
-    --ico: flex;
     --ctl-display: inline-flex;
     --pill: 1.7rem;
     --pill-pad: 0;
@@ -370,26 +413,11 @@ svg.mark {
      glyph is exactly what these are not. A fixed square makes every pill the
      same circle whatever it contains — including the shell's Back, which as a
      piece of header chrome keeps its own padding otherwise. */
-  body {
+  body:not(.fitted) {
     --lbl: none;
-    --ico: flex;
     --ctl-display: inline-flex;
     --pill: 1.7rem;
     --pill-pad: 0;
-  }
-  /* The path gets its own line, under the buttons rather than squeezed between
-     them: at this width there is room for the controls or for the path, and
-     sharing the row left it three characters and them no room.
-     Wrapping, not scrolling. The row is the path's now, so a path longer than one
-     line of it should take two — the same `overflow-wrap: anywhere` the pane uses
-     to keep a long name inside itself. It scrolled for a while instead, on the
-     grounds that an ellipsis would cut the leaf off; but nothing here is being
-     clipped, so the reason not to wrap went with the squeeze. */
-  header .crumbs {
-    order: 3;
-    flex: 1 1 100%;
-    min-width: 0;
-    font-size: .85rem;
   }
   /* The status line is down to one line's worth of room, and the served folder
      is worth more of it than our own version number — so from here down the
@@ -1351,9 +1379,9 @@ nav.tree {
    the tree for was to go somewhere, and you are now there. */
 @media (max-width: 50rem) {
   nav.tree { display: none; }
-  /* The icon-only pill the header's other controls become at 46rem, taken
-     early: this one has no words to lose, so there is no width at which it
-     would have had any. */
+  /* A pill like the rest, word and all: it stands in the slot the Sidebar
+     switch had, under the same word, and drops it when the row does. A mark
+     alone here, in a row still showing words, read as a stray. */
   .drawer-btn {
     /* Touch sizing is applied below, not here: a narrow *desktop* window has this
        button too, and giving it a finger's box there left one control half again
@@ -1367,8 +1395,13 @@ nav.tree {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.7rem;
-    height: 1.7rem;
+    gap: .3rem;
+    width: var(--pill, auto);
+    height: var(--pill, auto);
+    padding: var(--pill-pad, .15rem .55rem);
+    font-size: .8rem;
+    line-height: 1.4;
+    white-space: nowrap;
     border: 1px solid var(--border);
     border-radius: 1rem;
     color: var(--muted);

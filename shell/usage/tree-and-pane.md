@@ -30,7 +30,7 @@ The path, as links, and the controls for the window:
   same.
 - **Up** goes to the parent folder. At the top of the open folder the button is
   **Start** and returns to the start page.
-- **Theme**, **line numbers** and **Pane** are in [Preferences](preferences.md).
+- **Theme**, **line numbers** and **Sidebar** are in [Preferences](preferences.md).
 - **Print** is on a rendered file or a source view, and prints that view.
 
 There is no Back button. `Alt+Left`, and the phone's gesture, go back one step.
