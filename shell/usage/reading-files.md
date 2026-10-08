@@ -18,6 +18,9 @@ On Markdown and diagrams, **Source** shows the highlighted source, and
 back. **Download** saves a copy. A folder's table has the same download mark at
 the end of each file's row, so a file can be saved without opening it.
 
+While a copy is saved, the status line at the bottom says how far it has got,
+with **Cancel**.
+
 ## Big files
 
 A text file over 2 MB is not rendered. The pane says it is too large, and

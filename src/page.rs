@@ -125,6 +125,12 @@ const ICON_FILE: &str = "<path d=\"M3.6 2.4h5.6l3.2 3.2v8H3.6z\"/><path d=\"M9.2
 /// The file exactly as it is on disk, so: leaving for it.
 pub const ICON_RAW: &str =
     "<path d=\"M9.6 3.4h3v3\"/><path d=\"M12.6 3.4L8.2 7.8\"/><path d=\"M12 9.4v3.2H3.4V4h3.2\"/>";
+/// Download's mark turned upward: the bytes leaving for the tree.
+pub const ICON_UPLOAD: &str =
+    "<path d=\"M8 10.2V3.5\"/><path d=\"M5.2 6.1L8 3.3l2.8 2.8\"/><path d=\"M3.2 13.1h9.6\"/>";
+/// The folder mark with a plus in it.
+pub const ICON_NEW_FOLDER: &str = "<path d=\"M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 \
+     .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z\"/><path d=\"M8 7.4v3.8M6.1 9.3h3.8\"/>";
 pub const ICON_DOWNLOAD: &str =
     "<path d=\"M8 2.9v6.7\"/><path d=\"M5.2 7l2.8 2.8L10.8 7\"/><path d=\"M3.2 13.1h9.6\"/>";
 pub const ICON_SOURCE: &str = "<path d=\"M6.2 4.4L2.7 8l3.5 3.6\"/><path d=\"M9.8 4.4L13.3 8l-3.5 3.6\"/>";
@@ -1442,6 +1448,85 @@ fn path_label(full: &str) -> String {
     }
 }
 
+/// **Upload** and **New folder**, in the header of a folder the tree can write
+/// to ([`Vfs::writable`]) — and in the shell, which is the only thing that
+/// acts on either.
+///
+/// Upload is a link the shell claims (`/.ts/upload`): it asks the system for
+/// files and sends them. New folder is a link to this same page with the form
+/// row open (`?new=folder`), which needs nothing of the shell until the form
+/// is sent. Upload also needs a shell that can carry one
+/// ([`Config::uploads`]); the token proves the link came from this page.
+fn write_flags(state: &State, root: &Root, rel: &[String]) -> String {
+    if !state.cfg.app_ui || !root.vfs.writable() {
+        return String::new();
+    }
+    let folder = rel.last().map(String::as_str).unwrap_or("this folder");
+    let mut out = String::new();
+    if state.cfg.uploads {
+        out.push_str(&flag(
+            "",
+            &format!(
+                "/.ts/upload?dir={}&t={}",
+                percent_encode(&dir_href(rel)),
+                state.cfg.action_token
+            ),
+            &svg_icon(ICON_UPLOAD),
+            "Upload",
+            &format!("Upload files into {folder}"),
+        ));
+    }
+    out.push_str(&flag(
+        "",
+        "?new=folder",
+        &svg_icon(ICON_NEW_FOLDER),
+        "New folder",
+        &format!("Make a folder in {folder}"),
+    ));
+    out
+}
+
+/// A folder's own address, with the slash a directory URL carries.
+fn dir_href(rel: &[String]) -> String {
+    format!("{}/", href_path(rel).trim_end_matches('/'))
+}
+
+/// The form New folder opens, as rows at the top of the folder's table: the
+/// name box with **Create** and **Cancel**, and under it, when the shell sent
+/// the name back refused, the reason (`?err=`) with the name kept (`?name=`).
+///
+/// A row and not a dialog: the tree's pages run no script, and a native
+/// message box has no text field anywhere. A form needs neither. It is sent as
+/// a link to `/.ts/mkdir`, which only the shell answers, and the shell comes
+/// back here — with the new folder's row lit, or with this row again.
+fn new_folder_rows(state: &State, rel: &[String], query: &[(String, String)], cols: usize) -> String {
+    if !state.cfg.app_ui || query_get(query, "new") != Some("folder") {
+        return String::new();
+    }
+    let kept = query_get(query, "name").unwrap_or("");
+    let err = query_get(query, "err").map(|e| {
+        format!(
+            "<tr class=\"newdir-err\"><td colspan=\"{cols}\" role=\"alert\">{}</td></tr>",
+            html_escape(e)
+        )
+    });
+    format!(
+        "<tr class=\"newdir\"><td colspan=\"{cols}\"><form method=\"get\" action=\"/.ts/mkdir\">\
+         <span class=\"icon dir\">{icon}</span>\
+         <input type=\"hidden\" name=\"dir\" value=\"{dir}\">\
+         <input type=\"hidden\" name=\"t\" value=\"{token}\">\
+         <input type=\"text\" name=\"name\" value=\"{kept}\" placeholder=\"Name of the new folder\" \
+         aria-label=\"Name of the new folder\" maxlength=\"255\" autocomplete=\"off\" autofocus>\
+         <button class=\"primary\">Create</button><a class=\"cancel\" href=\"./\">Cancel</a>\
+         </form></td></tr>{err}",
+        icon = svg_icon(ICON_NEW_FOLDER),
+        dir = html_escape(&dir_href(rel)),
+        token = state.cfg.action_token,
+        kept = html_escape(kept),
+        err = err.unwrap_or_default(),
+    )
+}
+
 /// **As root**, in a folder's header: serve this folder instead of the root it
 /// is under.
 ///
@@ -1627,13 +1712,17 @@ pub fn listing_page(
     );
 
     if q.is_empty() {
-        content.push_str(&entries_table(state, vfs, rel, canon));
+        content.push_str(&entries_table(state, root, rel, canon, query));
         content.push_str(&listing_readme(state, vfs, canon));
     } else {
         content.push_str(&search_results(state, vfs, rel, canon, q, recursive));
     }
 
-    let controls = as_root_flag(state, root, rel, canon);
+    let controls = format!(
+        "{}{}",
+        as_root_flag(state, root, rel, canon),
+        write_flags(state, root, rel)
+    );
     layout(state, root, prefs, rel, url_now, &controls, false, &content)
 }
 
@@ -1665,7 +1754,21 @@ fn listing_readme(state: &State, vfs: &dyn Vfs, dir: &VfsPath) -> String {
     String::new()
 }
 
-fn entries_table(state: &State, vfs: &dyn Vfs, rel: &[String], canon: &VfsPath) -> String {
+fn entries_table(
+    state: &State,
+    root: &Root,
+    rel: &[String],
+    canon: &VfsPath,
+    query: &[(String, String)],
+) -> String {
+    let vfs = root.vfs.as_ref();
+    // What the shell just made here — a new folder, uploaded files — named in
+    // the address it came back to, so their rows can be lit for a moment.
+    let made: Vec<&str> = query
+        .iter()
+        .filter(|(k, _)| k == "made")
+        .map(|(_, v)| v.as_str())
+        .collect();
     let entries = match read_dir_sorted(state, vfs, canon) {
         Ok(entries) => entries,
         // The page says it; the reply stays 200. Knowing the code before the
@@ -1689,7 +1792,7 @@ fn entries_table(state: &State, vfs: &dyn Vfs, rel: &[String], canon: &VfsPath) 
     // column, heading and all.
     let dl = vfs.downloadable();
     let blank = if dl { "<td class=\"dl\"></td>" } else { "" };
-    let mut rows = String::new();
+    let mut rows = new_folder_rows(state, rel, query, if dl { 4 } else { 3 });
     if !rel.is_empty() {
         let parent = &rel[..rel.len() - 1];
         rows.push_str(&format!(
@@ -1717,8 +1820,9 @@ fn entries_table(state: &State, vfs: &dyn Vfs, rel: &[String], canon: &VfsPath) 
             (true, true) => blank.to_string(),
             (false, _) => String::new(),
         };
+        let lit = if made.contains(&e.name.as_str()) { " class=\"made\"" } else { "" };
         rows.push_str(&format!(
-            "<tr><td>{}<a href=\"{}\"{}>{}</a></td><td class=\"size\">{}</td><td class=\"time\">{}</td>{save}</tr>",
+            "<tr{lit}><td>{}<a href=\"{}\"{}>{}</a></td><td class=\"size\">{}</td><td class=\"time\">{}</td>{save}</tr>",
             entry_icon(&e.name, e.is_dir),
             html_escape(&href),
             if e.is_dir { " class=\"dir\"" } else { "" },
@@ -2782,6 +2886,97 @@ mod tests {
         let html = listing_page(&state, &root, prefs(), &[], &VfsPath::root(), &[], "/");
         assert!(html.contains("<body class=\"fitted nopane\">"), "{html}");
         widths(&html);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder's page offers what can be done with the folder: **As root**
+    /// below the root, **Upload** and **New folder** where the tree takes
+    /// writes, a download mark on each file row, and New folder's form with the
+    /// reason under it when a name came back refused. The pane's rows carry no
+    /// button of their own any more.
+    #[test]
+    fn a_folder_offers_its_own_actions() {
+        use std::sync::Arc;
+        struct Writable(Arc<dyn Vfs>);
+        impl Vfs for Writable {
+            fn resolve(&self, p: &VfsPath) -> Result<VfsPath, crate::vfs::ResolveError> {
+                self.0.resolve(p)
+            }
+            fn metadata(&self, p: &VfsPath) -> std::io::Result<crate::vfs::Meta> {
+                self.0.metadata(p)
+            }
+            fn read_dir(&self, p: &VfsPath) -> std::io::Result<Vec<crate::vfs::Entry>> {
+                self.0.read_dir(p)
+            }
+            fn read(&self, p: &VfsPath) -> std::io::Result<Vec<u8>> {
+                self.0.read(p)
+            }
+            fn open(&self, p: &VfsPath) -> std::io::Result<Box<dyn crate::vfs::ReadSeek>> {
+                self.0.open(p)
+            }
+            fn root_id_at(&self, p: &VfsPath) -> String {
+                self.0.root_id_at(p)
+            }
+            fn writable(&self) -> bool {
+                true
+            }
+        }
+
+        let dir = tmp_dir("actions");
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::create_dir(dir.join("sub").join("deeper")).unwrap();
+        fs::write(dir.join("sub").join("a.txt"), b"hello").unwrap();
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let plain = state.cfg.root().expect("these tests always serve one");
+        let page = |state: &State, vfs: Arc<dyn Vfs>, rel: &[&str], query: &str| {
+            let rel: Vec<String> = rel.iter().map(|s| s.to_string()).collect();
+            let root = Root { id: plain.id.clone(), vfs };
+            let q = crate::util::parse_query(query);
+            let p = Prefs { sidebar: true, ..prefs() };
+            listing_page(state, &root, p, &rel, &VfsPath::new(rel.clone()), &q, "/")
+        };
+
+        // Read-only, below the root: As root, and the download column, and
+        // nothing that writes.
+        let sub = page(&state, Arc::clone(&plain.vfs), &["sub"], "");
+        assert!(sub.contains("<span class=\"lbl\">As root</span>"), "{sub}");
+        assert!(sub.contains("href=\"/.ts/root?path="), "{sub}");
+        assert!(!sub.contains("New folder"), "{sub}");
+        assert!(sub.contains("<th class=\"dl\"></th>"), "{sub}");
+        assert!(sub.contains("href=\"/sub/a.txt?dl=1\" title=\"Download a.txt\""), "{sub}");
+        // The pane's directory rows are a name and an arrow, no button.
+        assert!(sub.contains("<a class=\"dir\" href=\"/sub/deeper/\">deeper/</a></span>"), "{sub}");
+        assert!(!sub.contains("class=\"asroot\""), "{sub}");
+        // At the root, As root would change nothing.
+        let top = page(&state, Arc::clone(&plain.vfs), &[], "");
+        assert!(!top.contains("As root"), "{top}");
+
+        // A tree that takes writes: New folder always, Upload where the shell
+        // can carry one, both behind this run's token.
+        let w: Arc<dyn Vfs> = Arc::new(Writable(Arc::clone(&plain.vfs)));
+        let html = page(&state, Arc::clone(&w), &["sub"], "");
+        assert!(html.contains("<a href=\"?new=folder\""), "{html}");
+        assert!(!html.contains("/.ts/upload"), "no Upload where the shell cannot: {html}");
+        state.cfg.uploads = true;
+        let html = page(&state, Arc::clone(&w), &["sub"], "");
+        let token = &state.cfg.action_token;
+        assert!(html.contains(&format!("/.ts/upload?dir=%2Fsub%2F&amp;t={token}")), "{html}");
+
+        // The form, and a name sent back refused: kept in the box, the reason
+        // on a row of its own under it.
+        let html = page(&state, Arc::clone(&w), &["sub"], "new=folder&name=a.txt&err=Something%20named%20a.txt%20is%20already%20here.");
+        assert!(html.contains("<form method=\"get\" action=\"/.ts/mkdir\">"), "{html}");
+        assert!(html.contains(&format!("name=\"t\" value=\"{token}\"")), "{html}");
+        assert!(html.contains("name=\"name\" value=\"a.txt\""), "{html}");
+        let form = html.find("class=\"newdir\"").unwrap();
+        let err = html.find("<tr class=\"newdir-err\"><td colspan=\"4\" role=\"alert\">Something named a.txt is already here.</td></tr>").expect(&html);
+        assert!(form < err, "the reason goes under the box");
+
+        // What the shell just made is lit.
+        let html = page(&state, Arc::clone(&w), &["sub"], "made=a.txt");
+        assert!(html.contains("<tr class=\"made\"><td>"), "{html}");
+
         fs::remove_dir_all(&dir).unwrap();
     }
 

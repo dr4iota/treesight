@@ -131,6 +131,78 @@ impl ResolveError {
     }
 }
 
+/// The reader's **Cancel** for the transfer under way, where a backend can
+/// see it.
+///
+/// The shell sets it from the status line and clears it when the next
+/// transfer starts; the copy loop looks at it between chunks. A backend that
+/// waits inside one chunk — for a dropped connection to come back, say —
+/// looks too, or Cancel would do nothing until that wait ran out.
+pub mod cancel {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static ASKED: AtomicBool = AtomicBool::new(false);
+
+    pub fn ask() {
+        ASKED.store(true, Ordering::SeqCst);
+    }
+
+    pub fn clear() {
+        ASKED.store(false, Ordering::SeqCst);
+    }
+
+    pub fn asked() -> bool {
+        ASKED.load(Ordering::SeqCst)
+    }
+}
+
+/// A file being written through [`Vfs::create_file`].
+///
+/// `finish` and not `Drop`, because closing is where a remote write reports
+/// that it failed — a full disk, a dropped connection — and a drop has nowhere
+/// to say so.
+///
+/// **A write that does not finish leaves the folder as it was.** Dropped
+/// without `finish`, or with a `finish` that fails, the backend takes away
+/// whatever it made — the new file, or the temporary one a replacement was
+/// being written into — and a file being replaced is still the old one. That
+/// is the backend's to do and not the caller's, because only the backend knows
+/// what it made: a caller removing "the file" after a failed replacement
+/// removed the one it was asked to keep.
+///
+/// `Ok(Some(note))` is a write that finished with something the reader should
+/// be told — the new file is in place, but the one it replaced could not be
+/// cleared away and is still there under another name, say. Not a failure,
+/// and not to be kept quiet either.
+pub trait WriteFile: io::Write + Send {
+    fn finish(self: Box<Self>) -> io::Result<Option<String>>;
+}
+
+/// `name` as the name of a new file or folder, or why it cannot be one.
+///
+/// One rule for every backend, so a name refused over SSH is refused on a
+/// local disk too: not empty once trimmed, no separator of either kind, not
+/// `.` or `..`, no NUL, and at most 255 bytes — the limit almost every
+/// filesystem shares. Leading and trailing spaces are trimmed rather than
+/// kept: a name that differs from another only by a space at its end is a
+/// trap on every system that shows it.
+pub fn new_name(name: &str) -> Result<&str, &'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A name is needed.");
+    }
+    if name == "." || name == ".." {
+        return Err("That name is taken by the folder system itself.");
+    }
+    if name.contains(['/', '\\', '\0']) {
+        return Err("A name cannot hold / or \\.");
+    }
+    if name.len() > 255 {
+        return Err("That name is too long.");
+    }
+    Ok(name)
+}
+
 /// A served tree. Paths are [`VfsPath`]s relative to the backend's root.
 ///
 /// Confinement — refusing a path that leads out of the root — is
@@ -170,6 +242,52 @@ pub trait Vfs: Send + Sync {
     /// do the thing it says.
     fn downloadable(&self) -> bool {
         true
+    }
+
+    /// Whether this tree takes new files and folders — **Upload** and **New
+    /// folder** in a folder's header. Off unless a backend says otherwise, and
+    /// for the whole tree, as [`Self::downloadable`] is.
+    ///
+    /// The other side of the seam from everything above: those questions only
+    /// read. A backend that answers yes implements the three calls below, and
+    /// nothing else here ever writes — the server has no route that does; the
+    /// shell, which the reader clicked, is the one caller.
+    fn writable(&self) -> bool {
+        false
+    }
+
+    /// Whether `path` is itself a symbolic link, not following it. Asked
+    /// before a write offers to replace a name: `metadata` follows the link,
+    /// so a link to a file looked like a file to replace, and was refused
+    /// only after the reader had said Replace. False where a backend has no
+    /// links, or cannot tell.
+    fn is_link(&self, _path: &VfsPath) -> bool {
+        false
+    }
+
+    /// A folder called `name` inside `dir`. `AlreadyExists` when anything of
+    /// that name is there — never a folder merged into an existing one.
+    /// `name` has been through [`new_name`].
+    fn create_dir(&self, _dir: &VfsPath, _name: &str) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// A file called `name` inside `dir`, to write into. With `replace` false
+    /// it is `AlreadyExists` when anything of that name is there, checked by
+    /// the backend at the moment it creates the file — a name that was free
+    /// when the reader was asked and is taken by the time the bytes arrive is
+    /// refused, not overwritten. With `replace` true a file there is replaced
+    /// **when the write finishes**, and not before: until [`WriteFile::finish`]
+    /// succeeds it is the file it was. A folder or a symbolic link of that name
+    /// is refused either way — replacing a link would write wherever it points.
+    /// `name` has been through [`new_name`].
+    fn create_file(
+        &self,
+        _dir: &VfsPath,
+        _name: &str,
+        _replace: bool,
+    ) -> io::Result<Box<dyn WriteFile>> {
+        Err(io::ErrorKind::Unsupported.into())
     }
 
     /// Whether a document from here came off the machine this is running on.
@@ -353,6 +471,19 @@ impl Vfs for LocalFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One rule for a new name on every backend: trimmed, not empty, no
+    /// separator of either kind, not `.` or `..`, no NUL, at most 255 bytes.
+    #[test]
+    fn a_new_name_is_one_name() {
+        assert_eq!(new_name("  notes  "), Ok("notes"));
+        assert_eq!(new_name("a b.txt"), Ok("a b.txt"));
+        for bad in ["", "   ", ".", "..", "a/b", "a\\b", "a\0b"] {
+            assert!(new_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(new_name(&"x".repeat(255)).is_ok());
+        assert!(new_name(&"x".repeat(256)).is_err());
+    }
 
     fn tmp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

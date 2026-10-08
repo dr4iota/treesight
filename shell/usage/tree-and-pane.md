@@ -31,6 +31,10 @@ The path, as links, and the controls for the window:
 - **Up** goes to the parent folder. At the top of the open folder the button is
   **Start** and returns to the start page.
 - **As root**, in a folder below the top, starts the tree at that folder.
+- **New folder** and **Upload**, in a folder the app can write to, add to it.
+  New folder opens a row at the top of the table for the name. Upload asks for
+  files, asks once before replacing any that are already there, and shows how
+  far it has got in the status line, with **Cancel**.
 - **Theme**, **line numbers** and **Sidebar** are in [Preferences](preferences.md).
 - **Print** is on a rendered file or a source view, and prints that view.
 

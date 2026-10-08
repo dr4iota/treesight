@@ -35,7 +35,7 @@ use two_face::theme::EmbeddedThemeName;
 use hl::Hl;
 use page::{Prefs, ThemeMode};
 use util::*;
-pub use vfs::{Entry, LocalFs, Meta, ReadSeek, ResolveError, Vfs, VfsPath};
+pub use vfs::{new_name, Entry, LocalFs, Meta, ReadSeek, ResolveError, Vfs, VfsPath, WriteFile};
 
 /// glibc keeps giving the single-precision math functions new symbol versions
 /// — `hypotf` in 2.35, `atan2f` in 2.43 — so a binary built on a host that has
@@ -411,6 +411,18 @@ pub struct Config {
     /// start page has no root. For a link off the program rather than into the
     /// tree — its website, say. `None` leaves the slot empty.
     pub home_slot: Option<HeaderFlag>,
+    /// Whether this shell can carry an upload: pick files on this device and
+    /// send them through [`Vfs::create_file`]. Off unless the shell says so,
+    /// and then **Upload** is drawn where the tree is also
+    /// [`Vfs::writable`]. **New folder** needs no such ability of the shell
+    /// and asks only the tree.
+    pub uploads: bool,
+    /// A secret for this run, carried by every link that writes — New folder's
+    /// form, Upload — and checked by the shell before it acts. Those are links
+    /// the shell claims; without it, a link in a served README could make a
+    /// folder for anyone who clicked it. Not a key against an attacker who can
+    /// read the page, only proof that a page this server drew asked.
+    pub action_token: String,
     /// A short note under the start page's lists. Behind a lock, because what
     /// an embedder has to say there can change while it runs; see
     /// [`Config::set_note`].
@@ -456,6 +468,24 @@ pub struct Config {
     status: RwLock<HashMap<String, RootNote>>,
 }
 
+/// 128 bits of [`Config::action_token`]: two of the standard library's own
+/// random hash keys, mixed with the clock, so no new dependency is needed for
+/// a value that only has to be unguessable from outside the page.
+fn fresh_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    (0..2)
+        .map(|i| {
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_u128(now ^ i);
+            format!("{:016x}", h.finish())
+        })
+        .collect()
+}
+
 impl Config {
     /// Config with library defaults, matching the CLI's own defaults.
     pub fn new(root: PathBuf) -> Config {
@@ -494,6 +524,8 @@ impl Config {
             intro: None,
             title_link: None,
             home_slot: None,
+            uploads: false,
+            action_token: fresh_token(),
             note: RwLock::new(None),
             edition: RwLock::new(None),
             places: Vec::new(),

@@ -1073,6 +1073,54 @@ form.filter button {
 }
 .matchnote { color: var(--muted); font-size: .85rem; margin: 0 0 .75rem; }
 
+/* New folder's row, at the top of the table: the name box with its two
+   buttons, the filter's shapes, and Create filled as the thing Enter does.
+   On a phone the box takes the line and the buttons go under it. */
+table.listing tr.newdir td { background: color-mix(in srgb, var(--link) 6%, transparent); }
+tr.newdir form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0; }
+tr.newdir input[type="text"] {
+  flex: 1 1 14rem;
+  max-width: 24rem;
+  min-height: 2.25rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--link);
+  border-radius: 6px;
+  padding: .3rem .6rem;
+  font: inherit;
+}
+tr.newdir button, tr.newdir a.cancel {
+  min-height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 .9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  cursor: pointer;
+  text-decoration: none;
+}
+tr.newdir button.primary { background: var(--link); border-color: var(--link); color: var(--bg); font-weight: 600; }
+/* Why the name came back, on a line of its own under the box rather than
+   beside it: beside it, a long reason squeezed the box on a phone and pushed
+   the buttons off the row. */
+table.listing tr.newdir-err td {
+  color: var(--err);
+  font-size: .85rem;
+  padding-top: 0;
+  background: color-mix(in srgb, var(--link) 6%, transparent);
+}
+/* A row the shell just made — a folder, an upload — lit and then let go, so
+   the eye finds it and the page does not stay marked. No script: the page is
+   drawn with the class and the animation does the rest. */
+@keyframes made { from { background: color-mix(in srgb, var(--link) 22%, transparent); } }
+table.listing tr.made td { animation: made 3s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  table.listing tr.made td { animation: none; background: color-mix(in srgb, var(--link) 10%, transparent); }
+}
+
 /* Code view: gutter + code panes share metrics so lines align. */
 .codewrap {
   display: flex;
@@ -1280,6 +1328,35 @@ iframe.raw { flex: 1; min-height: 0; display: block; width: 100%; border: 0; bac
 }
 .bigmsg a { font-weight: 600; }
 
+/* An upload or a download on its way, put into the status line by the shell
+   (`PROGRESS` in its window script): what is moving, how far, and Cancel. At
+   the line's far end, taking the room it needs from the path before it. */
+footer .ts-progress {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  min-width: 0;
+  color: var(--fg);
+}
+footer .ts-progress .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+footer .ts-progress .bar {
+  flex: 0 0 8rem;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+}
+footer .ts-progress .bar i { display: block; height: 100%; width: 0; background: var(--link); }
+footer .ts-progress a { color: var(--link); }
+/* A handset: the line is too short to share. Measured at 360px, the words got
+   one letter beside the path, the folder button and the bar; while something
+   is moving, that is all the line says. */
+@media (max-width: 30rem) {
+  footer:has(.ts-progress) > :not(.ts-progress) { display: none; }
+  footer .ts-progress { margin-left: 0; flex: 1 1 auto; }
+  footer .ts-progress .bar { flex: 0 1 5rem; min-width: 3rem; }
+}
 footer {
   /* The other end: a gesture strip, or a navigation bar. */
   padding: .6rem max(1.25rem, var(--safe-right)) max(.6rem, var(--safe-bottom))

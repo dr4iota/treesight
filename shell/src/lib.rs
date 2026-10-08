@@ -41,6 +41,8 @@ pub const WINDOW: &str = "main";
 const RECENT_MAX: usize = 8;
 
 mod open;
+mod transfer;
+pub use transfer::PickedFile;
 pub use open::{may_open_externally, open_externally};
 
 /// Keyboard shortcuts. The window has no menu bar, and on Windows and Linux a
@@ -475,6 +477,16 @@ pub struct ShellExt {
     /// tree's pages (`treeserve::Config::home_slot`). An address off the served
     /// origin leaves for the OS browser. `None` leaves the slot empty.
     pub home_slot: Option<treeserve::HeaderFlag>,
+    /// Files for **Upload**, where this shell's own picker cannot give them.
+    ///
+    /// A desktop's picker hands back paths and needs nothing here. A phone's
+    /// hands back addresses only its own platform code can read and name — a
+    /// `content://` URI is neither a path nor a name — so the embedder that has
+    /// that code answers instead: called off the main thread, it blocks until
+    /// the reader has chosen, and `Ok(None)` is a cancel. Where it is set,
+    /// Upload is offered and uses it, on every platform.
+    #[allow(clippy::type_complexity)]
+    pub pick_files: Option<Box<dyn Fn(&AppHandle) -> io::Result<Option<Vec<PickedFile>>> + Send + Sync>>,
     /// The note drawn under the start page's lists, with a link to finish it
     /// if it has one. Asked once, when the server starts — after every plugin
     /// has set up, so it can read their state; for anything later, call
@@ -633,6 +645,7 @@ struct Ext {
     intro: Option<String>,
     title_link: Option<(String, String)>,
     home_slot: Option<treeserve::HeaderFlag>,
+    uploads: bool,
     #[allow(clippy::type_complexity)]
     note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
@@ -655,9 +668,40 @@ struct SharedExt(Arc<Ext>);
 /// much as in ours: the start page's address is this crate's to know, and a
 /// downstream shell that binds `Ctrl+Home` should not have to spell it out —
 /// spelled wrong, the key would navigate into the tree and land on a 404.
+/// The status line's progress, drawn by the shell into a page that runs no
+/// script of its own (`transfer::progress`): what is moving, a bar, and
+/// **Cancel**, which is a link the shell claims like any other of its own.
+/// `null` takes it away. Any page without a footer — an embedder's own — is
+/// left alone. And the row a transfer just made, brought into view.
+const PROGRESS: &str = r#"
+window.__tsProgress = function (text, frac) {
+  var f = document.querySelector('footer');
+  if (!f) return;
+  var p = f.querySelector('.ts-progress');
+  if (text === null) { if (p) p.remove(); return; }
+  if (!p) {
+    p = document.createElement('span');
+    p.className = 'ts-progress';
+    p.setAttribute('role', 'status');
+    p.innerHTML = '<span class="what"></span><span class="bar"><i></i></span><a href="/.ts/cancel">Cancel</a>';
+    f.appendChild(p);
+  }
+  p.querySelector('.what').textContent = text;
+  p.querySelector('.bar i').style.width = (frac * 100) + '%';
+};
+// What the shell just made — a new folder, an upload — is lit by the page
+// (`tr.made`), and in a long folder it was lit below the fold, where the
+// light faded unseen. Brought into view once, on a page that is not being
+// put back where the reader left it (`SCROLLERS`' own `#ts` mark).
+addEventListener('DOMContentLoaded', function () {
+  var row = document.querySelector('tr.made');
+  if (row && !/^#ts/.test(location.hash)) row.scrollIntoView({ block: 'center' });
+});
+"#;
+
 fn window_script(custom: Option<String>) -> String {
     format!(
-        "{VIEWPORT}\n{RESTORE}\n{SCROLLERS}\n{}",
+        "{VIEWPORT}\n{RESTORE}\n{SCROLLERS}\n{PROGRESS}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
@@ -668,6 +712,12 @@ pub const HOME_SLOT: &str = "__TS_HOME__";
 
 pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
     let configure = ext.configure.take();
+    // Asked before the hook is taken out of `ext` below, or every platform
+    // whose uploads rest on it would read as having none.
+    let uploads = cfg!(desktop) || ext.pick_files.is_some();
+    if let Some(pick) = ext.pick_files.take() {
+        transfer::set_picker(pick);
+    }
     let ext = Arc::new(Ext {
         actions: ext.actions,
         extra_places: ext.extra_places,
@@ -685,6 +735,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         intro: ext.intro,
         title_link: ext.title_link,
         home_slot: ext.home_slot,
+        uploads,
         note: ext.note,
         edition: ext.edition,
         page_title: ext.page_title,
@@ -1510,6 +1561,10 @@ fn start(app: &AppHandle) -> Result<(), String> {
     // dialog on a desktop, or a downstream shell that claims `/.ts/open` and has
     // something to ask with where we have not.
     cfg.picker = cfg!(desktop) || ext.picker;
+    // Upload where there is a way to pick files: a desktop's own picker, or
+    // an embedder's (`ShellExt::pick_files`) where the platform's picker hands
+    // back addresses this crate cannot read.
+    cfg.uploads = ext.uploads;
     // The name, version and commit on the start page, the window title and the
     // footer, none of which have a folder to be named after. From the running
     // binary's own stamp rather than from this crate or from `app.config()`: a
@@ -2197,8 +2252,9 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
             // reader is browsing, and a download that is silently runnable
             // because the far end said `0755` is a trap a browser would not set.
             let mode = vfs.metadata(&src).ok().and_then(|m| m.mode).map(|m| m & 0o666);
-            let copied = copy_bounded(&vfs, &src, &dest);
+            let copied = copy_bounded(&app, &vfs, &src, &dest);
             match copied {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => fail(&app, &format!("Could not save {}: {e}", dest.display()), false),
                 Ok(_) => {
                     #[cfg(unix)]
@@ -2245,11 +2301,13 @@ const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// rename rather than a second copy, and carries the target's name so a stray one
 /// says what it was going to be.
 fn copy_bounded(
+    app: &AppHandle,
     vfs: &Arc<dyn treeserve::Vfs>,
     src: &treeserve::VfsPath,
     dest: &Path,
 ) -> io::Result<u64> {
-    if let Some(len) = vfs.metadata(src).ok().map(|m| m.len)
+    let len = vfs.metadata(src).ok().map(|m| m.len);
+    if let Some(len) = len
         && len > MAX_DOWNLOAD_BYTES
     {
         return Err(io::Error::other(format!(
@@ -2273,7 +2331,18 @@ fn copy_bounded(
             }
             other => other?,
         };
-        let copied = io::copy(&mut from, &mut to)?;
+        // Through the status line when nothing else holds it, so a large file
+        // from a far machine says how far it has got and can be cancelled;
+        // behind an upload, quietly.
+        let copied = match transfer::Turn::take() {
+            Some(_turn) => {
+                let name = src.segments().last().cloned().unwrap_or_default();
+                let done = transfer::pump(app, &format!("Saving {name}"), len, &mut from, &mut to);
+                transfer::progress(app, None);
+                done?
+            }
+            None => io::copy(&mut from, &mut to)?,
+        };
         if copied > MAX_DOWNLOAD_BYTES {
             return Err(io::Error::other(format!(
                 "too large to download (limit {MAX_DOWNLOAD_BYTES} bytes)"
@@ -2308,8 +2377,9 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
     let src = target.path.clone();
     let app = app.clone();
     thread::spawn(move || {
-        let copied = copy_bounded(&vfs, &src, &dest);
+        let copied = copy_bounded(&app, &vfs, &src, &dest);
         match copied {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Ok(_) => notify(
                 &app,
                 &format!(
@@ -2389,6 +2459,11 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // print rules are what makes the result worth looking at — no header, no
         // status line, no pane, and the light palette whatever is on screen.
         "/.ts/print" => eval(app, "window.print()"),
+        // A folder's New folder, its form sent; its Upload; and the status
+        // line's Cancel for either an upload or a download. See `transfer`.
+        "/.ts/mkdir" => transfer::mkdir(app, url),
+        "/.ts/upload" => transfer::upload(app, url),
+        "/.ts/cancel" => transfer::cancel(),
         // The theme / line-number / pane toggles, and the tree's disclosure
         // arrows. Both answer 303-and-a-cookie, and a 303 is the one reply a
         // custom scheme cannot carry out: WebKit takes the empty body and stays
@@ -2895,7 +2970,16 @@ fn raise(app: &AppHandle, msg: &str, kind: MessageDialogKind, fatal: bool) {
     let msg = msg.to_string();
     let _ = app.clone().run_on_main_thread(move || {
         #[cfg_attr(mobile, allow(unused_mut))]
-        let mut dialog = app.dialog().message(msg).kind(kind).title("treesight");
+        // Titled by the program the reader is running, which is the
+        // embedder's on a downstream app — "treesight" over a Telechore
+        // window named a program they have never heard of. The build's own
+        // stamp, the name the window wears; `package_info` is the crate's,
+        // which for an embedder is something like `telechore-app`.
+        let title = app
+            .try_state::<Serving>()
+            .and_then(|s| s.state().cfg.app_name.clone())
+            .unwrap_or_else(|| app.package_info().name.clone());
+        let mut dialog = app.dialog().message(msg).kind(kind).title(title);
         // No `parent` on the builder on mobile, where a dialog belongs to the
         // one activity and has nothing to get lost behind.
         #[cfg(desktop)]
