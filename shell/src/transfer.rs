@@ -248,6 +248,37 @@ pub struct PickedFile {
 
 type Picker = dyn Fn(&AppHandle) -> io::Result<Option<Vec<PickedFile>>> + Send + Sync;
 
+/// Where one **Download** goes, chosen in the embedder's save sheet: something
+/// to write the file into, and a way to take it away again if the copy fails —
+/// the sheet made the document before a byte of it was known.
+pub struct SaveTarget {
+    pub write: Box<dyn Write + Send>,
+    pub discard: Box<dyn FnOnce() + Send>,
+}
+
+type Saver = dyn Fn(&AppHandle, &str) -> io::Result<Option<SaveTarget>> + Send + Sync;
+
+/// The embedder's save sheet, from `ShellExt::save_file`, set once at start.
+static SAVER: std::sync::OnceLock<Box<Saver>> = std::sync::OnceLock::new();
+
+pub(crate) fn set_saver(save: Box<Saver>) {
+    let _ = SAVER.set(save);
+}
+
+/// The sheet's answer for a file called `name`: `None` where there is no sheet
+/// to ask, `Some(Ok(None))` where the reader cancelled it.
+#[cfg_attr(desktop, allow(dead_code))]
+pub(crate) fn ask_where(app: &AppHandle, name: &str) -> Option<io::Result<Option<SaveTarget>>> {
+    SAVER.get().map(|save| save(app, name))
+}
+
+#[cfg_attr(desktop, allow(dead_code))]
+pub(crate) fn has_saver() -> bool {
+    SAVER.get().is_some()
+}
+
+
+
 /// The embedder's picker, from `ShellExt::pick_files`, set once at start.
 static PICKER: std::sync::OnceLock<Box<Picker>> = std::sync::OnceLock::new();
 

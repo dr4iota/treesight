@@ -42,7 +42,7 @@ const RECENT_MAX: usize = 8;
 
 mod open;
 mod transfer;
-pub use transfer::PickedFile;
+pub use transfer::{PickedFile, SaveTarget};
 pub use open::{may_open_externally, open_externally};
 
 /// Keyboard shortcuts. The window has no menu bar, and on Windows and Linux a
@@ -487,6 +487,15 @@ pub struct ShellExt {
     /// Upload is offered and uses it, on every platform.
     #[allow(clippy::type_complexity)]
     pub pick_files: Option<Box<dyn Fn(&AppHandle) -> io::Result<Option<Vec<PickedFile>>> + Send + Sync>>,
+    /// Where a **Download** goes, where this shell's own dialog cannot say. A
+    /// desktop's dialog hands back a path and needs nothing here; a phone's
+    /// save sheet hands back a document only its platform code can open. The
+    /// embedder that has that code shows the sheet for a file of the given
+    /// name — called off the main thread, it blocks until the reader has
+    /// chosen, and `Ok(None)` is a cancel. Where it is set, a phone's Download
+    /// uses it; where it is not, the copy goes into Files.
+    #[allow(clippy::type_complexity)]
+    pub save_file: Option<Box<dyn Fn(&AppHandle, &str) -> io::Result<Option<SaveTarget>> + Send + Sync>>,
     /// The note drawn under the start page's lists, with a link to finish it
     /// if it has one. Asked once, when the server starts — after every plugin
     /// has set up, so it can read their state; for anything later, call
@@ -717,6 +726,9 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
     let uploads = cfg!(desktop) || ext.pick_files.is_some();
     if let Some(pick) = ext.pick_files.take() {
         transfer::set_picker(pick);
+    }
+    if let Some(save) = ext.save_file.take() {
+        transfer::set_saver(save);
     }
     let ext = Arc::new(Ext {
         actions: ext.actions,
@@ -1021,6 +1033,12 @@ fn app_storage_dir(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_data_dir().ok()?.join("user_files");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
+}
+
+/// Whether a folder has anything in it.
+#[cfg_attr(desktop, allow(dead_code))]
+fn has_entries(dir: &Path) -> bool {
+    fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some())
 }
 
 /// Serves `dir`, resolving it off the UI thread.
@@ -2197,7 +2215,10 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
     // button is drawn at all.
     #[cfg(mobile)]
     {
-        save_into_files(app, &target, &root);
+        match transfer::has_saver() {
+            true => save_through_sheet(app, &target, &root),
+            false => save_into_files(app, &target, &root),
+        }
         return;
     }
 
@@ -2389,6 +2410,66 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
             ),
             // `copy_bounded` has already removed the partial.
             Err(e) => fail(&app, &format!("Could not save {name}: {e}"), false),
+        }
+    });
+}
+
+/// The phone's Download where the embedder has a save sheet: the sheet first,
+/// since where the file goes is what the reader just asked to say, then the
+/// copy — into a file of the app's own in its cache, with the status line and
+/// the resume a plain file gets, and from there into the document the sheet
+/// made. A copy that fails takes the document away again, so the reader is not
+/// left a file that looks finished and is not.
+#[cfg(mobile)]
+fn save_through_sheet(app: &AppHandle, target: &treeserve::Resolved, root: &treeserve::Root) {
+    let name = target.rel.last().cloned().unwrap_or_else(|| "download".into());
+    let vfs = Arc::clone(&root.vfs);
+    let src = target.path.clone();
+    let app = app.clone();
+    thread::spawn(move || {
+        let dest = match transfer::ask_where(&app, &name) {
+            None | Some(Ok(None)) => return,
+            Some(Ok(Some(dest))) => dest,
+            Some(Err(e)) => return fail(&app, &format!("Could not save {name}: {e}"), false),
+        };
+        let Some(dir) = app.path().app_cache_dir().ok().map(|d| d.join("downloads")) else {
+            (dest.discard)();
+            return fail(&app, "This device has no room to save files.", false);
+        };
+        let staged = (|| -> io::Result<PathBuf> {
+            fs::create_dir_all(&dir)?;
+            let tmp = free_name(&dir, &name);
+            copy_bounded(&app, &vfs, &src, &tmp)?;
+            Ok(tmp)
+        })();
+        let SaveTarget { mut write, discard } = dest;
+        // The second hop through the status line too: into a provider it can
+        // take as long as the first, and Cancel has to reach it.
+        let copied = staged.and_then(|tmp| {
+            let out = fs::File::open(&tmp).and_then(|mut f| {
+                let len = f.metadata().ok().map(|m| m.len());
+                match transfer::Turn::take() {
+                    Some(_turn) => {
+                        let done = transfer::pump(&app, &format!("Saving {name}"), len, &mut f, &mut write);
+                        transfer::progress(&app, None);
+                        done
+                    }
+                    None => io::copy(&mut f, &mut write),
+                }
+            });
+            let out = out.and_then(|_| write.flush());
+            let _ = fs::remove_file(&tmp);
+            out
+        });
+        drop(write);
+        match copied {
+            Ok(()) => {}
+            Err(e) => {
+                discard();
+                if e.kind() != io::ErrorKind::Interrupted {
+                    fail(&app, &format!("Could not save {name}: {e}"), false);
+                }
+            }
         }
     });
 }
@@ -2840,8 +2921,13 @@ fn places(app: &AppHandle) -> Vec<(String, PathBuf)> {
 
     // First on a phone, and on Android the only one: a folder of the app's own is
     // the one a phone has that nobody has to grant.
+    //
+    // Only while there is something in it. Nothing in the app puts a file there
+    // now that Download asks where (`ShellExt::save_file`), so an empty row is
+    // a folder that will stay empty; what an older build saved there is still
+    // offered.
     #[cfg(mobile)]
-    if let Some(dir) = app_storage_dir(app) {
+    if let Some(dir) = app_storage_dir(app).filter(|d| !transfer::has_saver() || has_entries(d)) {
         // "Files", not "App storage": what the row opens is a folder for the
         // reader's own things — what they downloaded, what another app sent
         // here — and not a window onto the app's private root, which is where

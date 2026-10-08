@@ -94,14 +94,10 @@ Still open:
   that split. On iOS set
   `isExcludedFromBackup` on it, or a mirrored tree inflates the user's iCloud
   backup — which Apple's storage guidelines treat as a review matter.
-- **Save As writes nothing on a phone.** The save sheet returns a `content://`
-  URI and `FilePath::into_path()` fails on one, which `save_asked` used to read
-  as a cancelled dialog. It now says the feature is not there yet; making it
-  real means writing through the descriptor the dialog plugin can hand back, or
-  taking a dependency on the fs plugin. Drop the `cfg!(mobile)` arm in
-  `save_asked` when it lands. `set_directory(download_dir())` is wrong there
-  too — on Android that resolves to the app's own folder wearing the user's
-  name for it.
+- ~~**Save As writes nothing on a phone.**~~ An embedder that has the platform
+  code answers `ShellExt::save_file` with a writer for the document its save
+  sheet made, and `save_asked` stages the copy in the app's cache and moves it
+  in. Without one, a phone's Download still goes to Files.
 - **A backend that will not hand a file over whole now says so** —
   `Vfs::open_limit`, read by `file_page` before it draws and by `serve_raw`
   before it opens. Past it the page is words rather than a media element
