@@ -436,6 +436,20 @@ pub trait Vfs: Send + Sync {
         Err(io::ErrorKind::Unsupported.into())
     }
 
+    /// Whether **Delete** is offered on this tree's rows: by default where the
+    /// tree takes writes, and also where it only lets things go — a desktop's
+    /// own folders, whose files the shell moves to the Trash.
+    fn deletable(&self) -> bool {
+        self.writable()
+    }
+
+    /// Where `path` is on this machine's disk, for a backend that is this
+    /// machine's disk. The shell moves a deleted file there to the system's
+    /// Trash rather than asking [`Self::remove`], which is permanent.
+    fn local_path(&self, _path: &VfsPath) -> Option<PathBuf> {
+        None
+    }
+
     /// A last line for the question Delete asks about `path` — what the
     /// backend keeps of it after, say.
     fn remove_note(&self, _path: &VfsPath) -> Option<String> {
@@ -495,6 +509,37 @@ impl Vfs for LocalFs {
     /// This machine's own filesystem, by definition.
     fn on_this_device(&self) -> bool {
         true
+    }
+
+    /// On a desktop, where Delete goes to the Trash. Not on a phone: the only
+    /// local roots there are the app's own folders, and a granted folder is
+    /// not this backend.
+    fn deletable(&self) -> bool {
+        Self::copies_are_worth_making()
+    }
+
+    /// The display form: Windows' `\\?\` prefix off, which is how every
+    /// other program, the Trash included, names the file.
+    fn local_path(&self, path: &VfsPath) -> Option<PathBuf> {
+        Some(PathBuf::from(display_path(&self.host(path))))
+    }
+
+    /// By `symlink_metadata`, which does not follow the link it is asked about.
+    fn is_link(&self, path: &VfsPath) -> bool {
+        fs::symlink_metadata(self.host(path)).is_ok_and(|m| m.file_type().is_symlink())
+    }
+
+    /// Permanent: a file, or a folder with nothing in it. What the shell falls
+    /// back to when the Trash will not take something, after asking.
+    fn remove(&self, path: &VfsPath) -> io::Result<()> {
+        if path.segments().is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "the served root is not deleted from here"));
+        }
+        let host = self.host(path);
+        match fs::symlink_metadata(&host)?.is_dir() {
+            true => fs::remove_dir(&host),
+            false => fs::remove_file(&host),
+        }
     }
 
     fn downloadable(&self) -> bool {
@@ -588,6 +633,38 @@ impl Vfs for LocalFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A desktop's own folder offers Delete; what `remove` does itself is the
+    /// permanent fallback the shell asks about when the Trash will not take a
+    /// thing — a file, or a folder with nothing in it, never the root.
+    #[test]
+    fn a_local_folder_deletes_a_file_or_an_empty_folder() {
+        let dir = std::env::temp_dir().join(format!("ts-vfs-remove-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("full")).unwrap();
+        fs::create_dir(dir.join("empty")).unwrap();
+        fs::write(dir.join("a.txt"), b"x").unwrap();
+        fs::write(dir.join("full").join("b"), b"y").unwrap();
+        let v = LocalFs::new(dir.canonicalize().unwrap());
+        let p = |n: &str| VfsPath::root().join(n);
+        assert_eq!(v.deletable(), !cfg!(target_os = "android"));
+        assert!(!v.writable(), "Delete alone; no Upload or New folder");
+        assert!(v.local_path(&p("a.txt")).unwrap().ends_with("a.txt"));
+        v.remove(&p("a.txt")).unwrap();
+        v.remove(&p("empty")).unwrap();
+        assert!(v.remove(&p("full")).is_err());
+        assert_eq!(v.remove(&VfsPath::root()).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        assert!(!dir.join("a.txt").exists() && !dir.join("empty").exists() && dir.join("full").exists());
+        // A link is the link: seen as one, and deleted as one, its target left.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("full"), dir.join("to-full")).unwrap();
+            assert!(v.is_link(&p("to-full")) && !v.is_link(&p("full")));
+            v.remove(&p("to-full")).unwrap();
+            assert!(!dir.join("to-full").exists() && dir.join("full").join("b").exists());
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// One rule for a new name on every backend: trimmed, not empty, no
     /// separator of either kind, not `.` or `..`, no NUL, at most 255 bytes.

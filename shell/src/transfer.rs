@@ -570,6 +570,8 @@ struct Row {
     path: VfsPath,
     name: String,
     is_dir: bool,
+    /// The row is a symbolic link, and `path` is the link, not where it goes.
+    link: bool,
 }
 
 fn row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
@@ -592,7 +594,61 @@ fn row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
         name: resolved.path.segments().last().cloned().unwrap_or_default(),
         path: resolved.path,
         is_dir,
+        link: false,
     })
+}
+
+/// Whether `name` is one ordinary name: never empty, `.`, `..`, or holding a
+/// `/` or a NUL. And where it is joined onto a path on this machine (`local`),
+/// one plain component by this machine's own rules — on Windows that also
+/// refuses a `\`, a root and a drive, any of which led out of the folder. A
+/// server's names are joined as text, so `12:00.log` or `a\b` stays deletable
+/// there from a Windows desktop.
+fn one_name(name: &str, local: bool) -> bool {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
+        return false;
+    }
+    if !local {
+        return true;
+    }
+    let mut parts = std::path::Path::new(name).components();
+    matches!(parts.next(), Some(std::path::Component::Normal(n)) if n == name) && parts.next().is_none()
+}
+
+/// The row a Delete link names, **not followed**: its folder resolved and
+/// checked as [`row`] checks, and its own name joined back on as it is. A row
+/// that is a link is the link — resolving the whole address handed Delete
+/// whatever the link pointed at, folder and all, and left the link.
+fn named_row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
+    let serving = app.try_state::<Serving>().ok_or(None)?;
+    let cfg = &serving.state().cfg;
+    if param(url, "t").as_deref() != Some(cfg.action_token.as_str()) {
+        return Err(Some("That link did not come from this window.".into()));
+    }
+    let root = cfg.root().ok_or(None)?;
+    let href = param(url, "path").ok_or(None)?;
+    let trimmed = href.trim_end_matches('/');
+    let (dir, last) = trimmed.rsplit_once('/').unwrap_or(("", trimmed));
+    let name = treeserve::util::percent_decode(last);
+    // One ordinary name and nothing else. Not only `/`: on Windows `\` is a
+    // separator too, and a name with a drive or a root in it replaces the
+    // folder it is joined onto — `foo\..\x`, `\Windows\x`, `C:x` all led
+    // out of the folder. No row the listing draws has one; a link made by
+    // hand might.
+    let folder = treeserve::resolve_in_root(root.vfs.as_ref(), if dir.is_empty() { "/" } else { dir })
+        .map_err(|_| Some(format!("{href} is not in this folder.")))?;
+    if !one_name(&name, root.vfs.local_path(&folder.path).is_some()) {
+        return Err(Some(format!("{href} is not in this folder.")));
+    }
+    let path = folder.path.join(&name);
+    let link = root.vfs.is_link(&path);
+    let is_dir = !link
+        && root
+            .vfs
+            .metadata(&path)
+            .map(|m| m.is_dir)
+            .map_err(|e| Some(format!("{href}: {e}")))?;
+    Ok(Row { vfs: std::sync::Arc::clone(&root.vfs), path, name, is_dir, link })
 }
 
 /// A native question with a button that goes ahead and Cancel. True is yes.
@@ -678,13 +734,19 @@ pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
     let app = app.clone();
     let url = url.clone();
     thread::spawn(move || {
-        let r = match row(&app, &url) {
+        let r = match named_row(&app, &url) {
             Ok(r) => r,
             Err(Some(why)) => return fail(&app, &why, false),
             Err(None) => return,
         };
-        if !r.vfs.writable() || r.path.segments().is_empty() {
+        if !r.vfs.deletable() || r.path.segments().is_empty() {
             return fail(&app, &format!("{} cannot be deleted here.", r.name), false);
+        }
+        // A file on this machine goes to the system's Trash, folder and all,
+        // and can be put back from there.
+        #[cfg(desktop)]
+        if let Some(host) = r.vfs.local_path(&r.path) {
+            return to_trash(&app, &r, &host);
         }
         if r.is_dir && r.vfs.read_dir(&r.path).is_ok_and(|v| !v.is_empty()) {
             return fail(&app, &format!("{} is not empty; delete what is in it first.", r.name), false);
@@ -694,9 +756,10 @@ pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
             .and_then(|s| s.state().cfg.root_name())
             .map(|n| format!(" from {n}"))
             .unwrap_or_default();
-        let head = match r.is_dir {
-            true => format!("Delete the empty folder {}{place}?", r.name),
-            false => format!("Delete {}{place}?", r.name),
+        let head = match (r.link, r.is_dir) {
+            (true, _) => format!("Delete the link {}{place}? What it points to stays.", r.name),
+            (_, true) => format!("Delete the empty folder {}{place}?", r.name),
+            _ => format!("Delete {}{place}?", r.name),
         };
         let mut message = format!("{head}\n\nIt cannot be brought back from here.");
         if let Some(note) = r.vfs.remove_note(&r.path) {
@@ -713,4 +776,74 @@ pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
             Err(e) => fail(&app, &format!("Could not delete {}: {e}", r.name), false),
         }
     });
+}
+
+/// What the system calls the place deleted things wait in.
+#[cfg(desktop)]
+const TRASH: &str = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+
+/// Delete on a desktop's own folder: into the system's Trash, asked first.
+/// Where the Trash will not take it — a network mount, a filesystem with no
+/// trash of its own — a file or an empty folder may still go for good, asked
+/// again in those words; a folder with things in it never does.
+#[cfg(desktop)]
+fn to_trash(app: &AppHandle, r: &Row, host: &std::path::Path) {
+    let what = match (r.link, r.is_dir) {
+        (true, _) => format!("the link {}", r.name),
+        (_, true) => format!("the folder {}", r.name),
+        _ => r.name.clone(),
+    };
+    let after = match r.link {
+        true => "What it points to stays. You can put the link back from there.",
+        false => "You can put it back from there.",
+    };
+    if !ask(app, "Delete", &format!("Move {what} to the {TRASH}?\n\n{after}"), &format!("Move to {TRASH}")) {
+        return;
+    }
+    let e = match trash::delete(host) {
+        Ok(()) => return eval(app, "location.reload()"),
+        Err(e) => e,
+    };
+    let full = r.is_dir && r.vfs.read_dir(&r.path).is_ok_and(|v| !v.is_empty());
+    if full {
+        return fail(app, &format!("Could not move {} to the {TRASH}: {e}", r.name), false);
+    }
+    let again = format!(
+        "{} could not go to the {TRASH}: {e}\n\nDelete it permanently? It cannot be brought back.",
+        r.name
+    );
+    if !ask(app, "Delete", &again, "Delete") {
+        return;
+    }
+    match r.vfs.remove(&r.path) {
+        Ok(()) => eval(app, "location.reload()"),
+        Err(e) => fail(app, &format!("Could not delete {}: {e}", r.name), false),
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::one_name;
+
+    #[test]
+    fn a_delete_names_one_thing_in_its_folder() {
+        for local in [true, false] {
+            for ok in ["a.txt", "my notes", ".hidden", "…"] {
+                assert!(one_name(ok, local), "{ok}");
+            }
+            for bad in ["", ".", "..", "a/b", "/x", "a/", "x\0y"] {
+                assert!(!one_name(bad, local), "{bad:?}");
+            }
+        }
+        // A server's names are text: what Windows would read as a drive or a
+        // separator is a character there.
+        for remote in ["12:00.log", "a\\b", "foo\\..\\x", "C:x"] {
+            assert!(one_name(remote, false), "{remote}");
+        }
+        // On this machine, Windows reads these as more than a name.
+        #[cfg(windows)]
+        for bad in ["foo\\..\\outside", "\\Windows\\x", "C:x", "C:\\x", "\\\\host\\share", "a:b"] {
+            assert!(!one_name(bad, true), "{bad}");
+        }
+    }
 }

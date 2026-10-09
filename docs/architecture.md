@@ -249,7 +249,12 @@ of a listing ends in **⋯**, a `<details>` that opens a strip under it — no
 script — and the strip is, in order: the backend's line about the row and its
 warnings (`Vfs::row_info`, asked once per listing through `row_infos`), the
 backend's own verbs, Download where `downloadable`, and Delete where
-`writable`. A verb is a link to `/.ts/act` and Delete one to `/.ts/remove`,
+`deletable` — `writable` by default, and a desktop's `LocalFs` too, whose
+files the shell moves to the system's Trash (`Vfs::local_path`, the `trash`
+crate) and deletes for good only where the Trash refuses, asked again. A row
+that is a link is deleted as the link: its folder is resolved and its own name
+joined back unfollowed, so what it points at stays. A verb is a link
+to `/.ts/act` and Delete one to `/.ts/remove`,
 both with the page's token; the shell asks the verb's `Confirm` in a native
 box, then calls `Vfs::act` or `Vfs::remove` off the callback and reloads.
 A verb marked `on_file_page` is a pill on the file's own page too, and
