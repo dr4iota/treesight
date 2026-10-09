@@ -1,4 +1,4 @@
-# Tree and pane
+# Tree and sidebar
 
 Two halves. The tree on the left is the folder you opened. The rest of the
 window is the file you selected.
@@ -9,14 +9,14 @@ Directories first, then names, ignoring case. A directory has an arrow that
 opens it in place, and which ones you left open is remembered. Files starting
 with a dot are not listed.
 
-Each directory row has a button that starts the tree at that folder, so you can
-open it without the folder dialog.
+To start the tree at a folder further down, open it and press **As root** in
+the header.
 
 The **Files** heading carries **Pin**, to keep the open folder in Pinned, and
 **Close**, to return to the start page. **Open a folder…** is in the status line,
 which stays on screen.
 
-## The pane
+## The sidebar
 
 On the start page it holds the lists: Places, Pinned, Recent, and any other list
 the app adds. Once a folder is open, the tree is at the top and those lists stay
@@ -31,7 +31,8 @@ The path, as links, and the controls for the window:
 - **Up** goes to the parent folder. At the top of the open folder the button is
   **Start** and returns to the start page.
 - **As root**, in a folder below the top, starts the tree at that folder.
-- **New folder** and **Upload**, in a folder the app can write to, add to it.
+- **New folder** and **Upload**, in a folder the app can write to — on a
+  computer, any of its own — add to it.
   New folder opens a row at the top of the table for the name. Upload asks for
   files, asks once before replacing any that are already there, and shows how
   far it has got in the status line, with **Cancel**.

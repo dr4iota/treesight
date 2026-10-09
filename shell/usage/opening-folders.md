@@ -18,8 +18,10 @@ Each row is checked after the list appears. A greyed row says why:
 
 The row stays a link, so you can try it again.
 
-On a phone, where there are no folders to browse outside the app's own storage,
-that storage is the row, and it is always readable.
+On a phone there are no such folders to browse without asking. The row there
+is **Files**, a folder of the app's own. Where a download asks where to save
+it, nothing new lands in Files, and the row is listed only while it holds
+something.
 
 ## Pinned
 
