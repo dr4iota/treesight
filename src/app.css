@@ -204,6 +204,23 @@ header .controls { margin-left: auto; }
    written down because the crumbs beside it carry an explicit one: this is the
    thing that must *not* travel to the second row with the path. */
 header > .tag { order: 0; flex: 0 0 auto; }
+/* A tree page's header is one line laid out from both ends: the way out and
+   the machine's tag at the left, the page's controls at the right, and the
+   path between them while there is room. The controls are the header's own
+   items rather than a box of their own, so when the line runs out they wrap
+   one by one and not as a block: the first row keeps whatever of them fits
+   beside the left end, right-aligned, and the rest go to a second row, also
+   right-aligned. As a box they went to a row of their own and left the first
+   row half empty, and a last control alone on a third.
+   The gap between items is the controls' own `.35rem`; the regions — the left
+   cluster, the tag, the path — add the rest of the old `1rem` themselves. */
+body.fitted header { justify-content: flex-end; column-gap: .35rem; }
+body.fitted header .controls { display: contents; }
+body.fitted header .controls > :first-child { margin-left: auto; }
+body.fitted header .up, body.fitted header .back { margin-right: .65rem; }
+body.fitted .paneflag, body.fitted .drawer-btn { margin-right: 0; }
+body.fitted header > .tag { margin-right: 1.05rem; }
+body.fitted .crumbs { margin-right: .65rem; }
 /* A token in a bag: an id, a name a machine is filed under. Small, monospaced and
    fenced off, so it never reads as the first word of the path beside it. Here
    rather than in a page of its own, because the shell that serves pages next to
