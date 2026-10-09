@@ -1163,8 +1163,11 @@ fn pane_html(
             "pinned",
             "Pinned",
             &[],
+            // Drawn as a path, like Recent: a pin's name may be one — the
+            // opener's `Thor: /home/pi/notes` — and the leaf is what tells two
+            // pins on one server apart. A plain name is all leaf.
             pinned.iter().zip(&unpin).map(|(p, aside)| Row {
-                as_path: false,
+                as_path: true,
                 label: p.label.as_deref(),
                 id: &p.id,
                 action: "/.ts/place",
@@ -3669,7 +3672,7 @@ mod tests {
         );
         assert!(!html.contains("href=\"/.ts/pin\""), "{html}");
         // Under the name it was pinned with, and with a row of its own to undo.
-        assert!(html.contains(">Home of it all</a>"), "{html}");
+        assert!(html.contains("<span class=\"leaf\">Home of it all</span></a>"), "{html}");
         assert!(
             html.contains(&format!(
                 "<a class=\"aside\" href=\"/.ts/unpin?path={}\" title=\"Unpin this folder\">",

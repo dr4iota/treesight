@@ -2596,7 +2596,10 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
             if let Some(serving) = app.try_state::<Serving>()
                 && let Some(root) = serving.state().cfg.root()
             {
-                let label = serving.state().cfg.root_name();
+                // The name its Recent row has, where the opener gives one —
+                // `Thor: /home/pi`, not just `Thor` for every folder pinned on
+                // that server — and the window's name where it does not.
+                let label = row_label_of(app, &root.id).or_else(|| serving.state().cfg.root_name());
                 pin_root_id(app, &root.id, label);
                 eval(app, "location.reload()");
             }
