@@ -195,6 +195,10 @@ pub struct RowInfo {
     /// Short words that need the reader's attention, drawn as warning pills
     /// after the line.
     pub warn: Vec<String>,
+    /// What the row is called on screen, where the backend's name for it — the
+    /// one in its address — is too long to read: a path cut from the start,
+    /// say. The whole name stays the link's title.
+    pub label: Option<String>,
     /// A filled mark after the row's name, with this title. The one state of a
     /// row worth showing before ⋯ is opened.
     pub mark: Option<String>,

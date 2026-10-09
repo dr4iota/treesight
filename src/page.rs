@@ -1877,15 +1877,20 @@ fn entries_table(
             true => String::new(),
             false => format!(" class=\"{}\"", class.join(" ")),
         };
+        let shown = info.as_ref().and_then(|i| i.label.as_deref()).unwrap_or(&e.name);
+        let title = match shown == e.name {
+            true => String::new(),
+            false => format!(" title=\"{}\"", html_escape(&e.name)),
+        };
         let name = match unreachable {
             // Nothing behind it to serve now, so not a link to a page that
             // would only say so.
-            true => format!("<span>{}</span>", html_escape(&e.name)),
+            true => format!("<span{title}>{}</span>", html_escape(shown)),
             false => format!(
-                "<a href=\"{}\"{}>{}</a>",
+                "<a href=\"{}\"{}{title}>{}</a>",
                 html_escape(&href),
                 if e.is_dir { " class=\"dir\"" } else { "" },
-                html_escape(&e.name)
+                html_escape(shown)
             ),
         };
         let mark = info
@@ -3225,12 +3230,14 @@ mod tests {
                     "kept.txt" => Some(RowInfo {
                         line: Some(RowLine { wide: "Held since noon".into(), narrow: "since 12:00".into() }),
                         warn: vec!["changed on the server".into()],
+                        label: None,
                         mark: Some("Kept offline".into()),
                         actions: vec![keep(true)],
                         unreachable: false,
                     }),
                     "away.txt" => Some(RowInfo { unreachable: true, ..Default::default() }),
                     _ => Some(RowInfo {
+                        label: Some(format!("…{}", &name[name.len() - 5..])),
                         line: Some(RowLine { wide: "Not held".into(), narrow: "not held".into() }),
                         actions: vec![keep(false)],
                         ..Default::default()
@@ -3274,6 +3281,8 @@ mod tests {
         assert!(line < warn && warn < toggle && toggle < dl && dl < del, "{after}");
         // Nothing held: said so, and the toggle off.
         assert!(html.contains("<span class=\"wide\">Not held</span>"), "{html}");
+        // A label is what the row shows; its name stays the address and the title.
+        assert!(html.contains("<a href=\"/plain.txt\" title=\"plain.txt\">…n.txt</a>"), "{html}");
         assert!(html.contains(&format!("<a class=\"btn\" href=\"/.ts/act?path=%2Fplain.txt&amp;a=keep&amp;t={token}\"")), "{html}");
         // Nothing behind it: greyed, a name and not a link, and no Download.
         assert!(html.contains("<tr class=\"miss\"><td>"), "{html}");
