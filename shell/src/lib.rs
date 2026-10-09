@@ -1061,7 +1061,20 @@ fn has_entries(dir: &Path) -> bool {
 static OPEN_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn begin_open() -> u64 {
+    *LANDING.lock().unwrap_or_else(|e| e.into_inner()) = None;
     OPEN_GEN.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// Where the last open sent the window, until the next open starts. An open that is over before its wait page has even committed —
+/// the cache's Place answers at once, where a dial takes seconds — sent the
+/// window on while the wait page's own navigation was still in flight, and the
+/// wait page could arrive second and stay: "Opening Cache…", with nothing left
+/// to take it away. A wait page that finishes loading with this set is one
+/// whose open has already landed, so it is sent on here.
+static LANDING: Mutex<Option<String>> = Mutex::new(None);
+
+fn note_landing(url: &str) {
+    *LANDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(url.to_string());
 }
 
 fn open_superseded(open_id: u64) -> bool {
@@ -1337,9 +1350,15 @@ fn open_failed(app: &AppHandle, previous: Option<tauri::Url>) {
             // stepped onto yet in that case, so going *to* the page is right and
             // costs no entry — `replace_page` navigates for the same reason.
             true if !on_the_start_page(app) && committed(app) => eval(app, "history.back()"),
-            true if !on_the_start_page(app) => replace_page(app, url.as_str()),
+            true if !on_the_start_page(app) => {
+                note_landing(url.as_str());
+                replace_page(app, url.as_str())
+            }
             true => {}
-            false => replace_page(app, url.as_str()),
+            false => {
+                note_landing(url.as_str());
+                replace_page(app, url.as_str())
+            }
         }
         return;
     }
@@ -1821,6 +1840,16 @@ fn build_window(
             serving
                 .at_home
                 .store(payload.url().path() == treeserve::HOME_PATH, Ordering::Relaxed);
+            // A wait page whose open is already over: on to where it landed —
+            // whether it arrived before that page or after it, and whether it
+            // is new or one Back walked onto. A wait page for an open still
+            // under way finds nothing noted: `begin_open` cleared it.
+            if is_wait_url(payload.url()) {
+                let to = LANDING.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if let Some(to) = to {
+                    replace_page(&app, &to);
+                }
+            }
             // A page this server answered is named after the served root. An
             // embedder's own page — a terminal, a config editor — is named by
             // the embedder: retitling it from the root left it named after a
@@ -2827,6 +2856,7 @@ pub fn show_tree(app: &AppHandle) {
     let Some(url) = app.try_state::<Serving>().map(|s| s.entry.clone()) else {
         return;
     };
+    note_landing(&url);
     match on_the_start_page(app) {
         true => push_page(app, &url),
         false => replace_page(app, &url),
