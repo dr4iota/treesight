@@ -21,6 +21,11 @@ use crate::util::display_path;
 pub struct VfsPath(Vec<String>);
 
 impl VfsPath {
+    /// The folder this is in; `None` at the root.
+    pub fn parent(&self) -> Option<VfsPath> {
+        self.0.split_last().map(|(_, up)| VfsPath(up.to_vec()))
+    }
+
     /// The served root itself.
     pub fn root() -> VfsPath {
         VfsPath(Vec::new())

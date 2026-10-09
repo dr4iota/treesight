@@ -716,7 +716,7 @@ pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
         progress(&app, None);
         match done {
             Ok(said) => {
-                eval(&app, "location.reload()");
+                after_change(&app, &r);
                 if let Some(said) = said {
                     notify(&app, &said);
                 }
@@ -769,7 +769,7 @@ pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
             return;
         }
         match r.vfs.remove(&r.path) {
-            Ok(()) => eval(&app, "location.reload()"),
+            Ok(()) => after_change(&app, &r),
             Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {
                 fail(&app, &format!("{} is not empty; delete what is in it first.", r.name), false)
             }
@@ -801,7 +801,7 @@ fn to_trash(app: &AppHandle, r: &Row, host: &std::path::Path) {
         return;
     }
     let e = match trash::delete(host) {
-        Ok(()) => return eval(app, "location.reload()"),
+        Ok(()) => return after_change(app, r),
         Err(e) => e,
     };
     let full = r.is_dir && r.vfs.read_dir(&r.path).is_ok_and(|v| !v.is_empty());
@@ -816,9 +816,34 @@ fn to_trash(app: &AppHandle, r: &Row, host: &std::path::Path) {
         return;
     }
     match r.vfs.remove(&r.path) {
-        Ok(()) => eval(app, "location.reload()"),
+        Ok(()) => after_change(app, r),
         Err(e) => fail(app, &format!("Could not delete {}: {e}", r.name), false),
     }
+}
+
+/// The page again, once a row's verb or Delete has done its work — or, where
+/// the folder that page showed is no longer there, the nearest one above it
+/// that is. A cache's last copy forgotten takes its folder with it, and a
+/// reload of that folder was a page saying it was not found.
+fn after_change(app: &AppHandle, r: &Row) {
+    let Some(parent) = r.path.parent() else {
+        return eval(app, "location.reload()");
+    };
+    if r.vfs.metadata(&parent).is_ok_and(|m| m.is_dir) {
+        return eval(app, "location.reload()");
+    }
+    let mut at = parent;
+    while let Some(up) = at.parent() {
+        at = up;
+        if r.vfs.metadata(&at).is_ok_and(|m| m.is_dir) {
+            break;
+        }
+    }
+    let Some(serving) = app.try_state::<Serving>() else {
+        return;
+    };
+    let href = format!("{}/", treeserve::util::href_path(at.segments()).trim_end_matches('/'));
+    replace_page(app, &format!("{}{href}", serving.origin));
 }
 
 #[cfg(test)]

@@ -1982,7 +1982,10 @@ fn row_strip(
             &format!("Delete {}", e.name),
         ));
     }
-    if buttons.is_empty() {
+    // Nothing to do and nothing of the backend's to say: no ⋯. A line alone
+    // is still worth one — a name cut short, whose line says it in full.
+    let said = info.is_some_and(|i| i.line.is_some() || !i.warn.is_empty());
+    if buttons.is_empty() && !said {
         return String::new();
     }
     let (wide, narrow) = match info.and_then(|i| i.line.as_ref()) {
