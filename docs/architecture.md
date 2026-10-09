@@ -249,7 +249,9 @@ of a listing ends in **⋯**, a `<details>` that opens a strip under it — no
 script — and the strip is, in order: the backend's line about the row and its
 warnings (`Vfs::row_info`, asked once per listing through `row_infos`), the
 backend's own verbs, Download where `downloadable`, and Delete where
-`deletable` — `writable` by default, and a desktop's `LocalFs` too, whose
+`deletable` — `writable` by default, and a desktop's `LocalFs` too, which
+is also `writable` there (New folder, and Upload as a copy in, a replacement
+renamed over the file when it finishes), whose
 files the shell moves to the system's Trash (`Vfs::local_path`, the `trash`
 crate) and deletes for good only where the Trash refuses, asked again. A row
 that is a link is deleted as the link: its folder is resolved and its own name

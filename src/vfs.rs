@@ -258,6 +258,51 @@ pub struct Notice {
     pub link: Option<(String, String)>,
 }
 
+/// A file being written into a desktop's own folder: straight to its name if
+/// it is new, beside it if it replaces one. Unfinished, it takes away what it
+/// made, and a file it was replacing is left as it was.
+struct LocalWrite {
+    file: Option<fs::File>,
+    write_to: PathBuf,
+    target: PathBuf,
+    /// The permissions of the file being replaced, where one is.
+    replacing: Option<fs::Permissions>,
+    done: bool,
+}
+
+impl io::Write for LocalWrite {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.file.as_mut().ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))?.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.as_mut().map_or(Ok(()), |f| f.flush())
+    }
+}
+
+impl WriteFile for LocalWrite {
+    fn finish(mut self: Box<Self>) -> io::Result<Option<String>> {
+        let file = self.file.take().ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))?;
+        file.sync_all()?;
+        drop(file);
+        if let Some(perms) = self.replacing.take() {
+            let _ = fs::set_permissions(&self.write_to, perms);
+            fs::rename(&self.write_to, &self.target)?;
+        }
+        self.done = true;
+        Ok(None)
+    }
+}
+
+impl Drop for LocalWrite {
+    fn drop(&mut self) {
+        if !self.done {
+            self.file.take();
+            let _ = fs::remove_file(&self.write_to);
+        }
+    }
+}
+
 /// `name` as the name of a new file or folder, or why it cannot be one.
 ///
 /// One rule for every backend, so a name refused over SSH is refused on a
@@ -505,6 +550,18 @@ impl LocalFs {
         !cfg!(target_os = "android")
     }
 
+    /// `name` in `dir` on this machine, where `name` is one plain component
+    /// by this machine's own path rules. [`new_name`] refuses a `/` and a `\\`,
+    /// but on Windows `C:x` is a drive and would replace the folder it was
+    /// joined to.
+    fn child(&self, dir: &VfsPath, name: &str) -> io::Result<PathBuf> {
+        let mut parts = std::path::Path::new(name).components();
+        match (parts.next(), parts.next()) {
+            (Some(Component::Normal(n)), None) if n == name => Ok(self.host(dir).join(name)),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "that is not a name for a file here")),
+        }
+    }
+
     fn host(&self, path: &VfsPath) -> PathBuf {
         let mut abs = self.root.clone();
         for seg in path.segments() {
@@ -525,6 +582,55 @@ impl Vfs for LocalFs {
     /// not this backend.
     fn deletable(&self) -> bool {
         Self::copies_are_worth_making()
+    }
+
+    /// New folder and Upload on a desktop's own folders, as on a server's —
+    /// the files picked are copied in. Not on a phone, for the reason above.
+    fn writable(&self) -> bool {
+        Self::copies_are_worth_making()
+    }
+
+    /// `AlreadyExists` for anything of that name, from the filesystem itself:
+    /// `create_dir` never merges into a folder that is there.
+    fn create_dir(&self, dir: &VfsPath, name: &str) -> io::Result<()> {
+        fs::create_dir(self.child(dir, name)?)
+    }
+
+    /// A new file is created only if nothing is there (`create_new`, so a name
+    /// taken while the reader was asked is refused, not overwritten). A
+    /// replacement is written beside the file and renamed over it when it
+    /// finishes, wearing the old file's permissions, so until then the file is
+    /// the one it was. A folder or a link of that name is refused either way.
+    fn create_file(&self, dir: &VfsPath, name: &str, replace: bool) -> io::Result<Box<dyn WriteFile>> {
+        let target = self.child(dir, name)?;
+        let there = fs::symlink_metadata(&target).ok();
+        match &there {
+            Some(m) if m.is_dir() => {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "a folder of that name is here"));
+            }
+            Some(m) if m.file_type().is_symlink() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "a link of that name is here, and is not written through",
+                ));
+            }
+            Some(_) if !replace => {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{name} is already there")));
+            }
+            _ => {}
+        }
+        let (write_to, replacing) = match there {
+            Some(m) => {
+                let stamp = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or_default();
+                (target.with_file_name(format!(".{name}.treesight-{stamp:x}.part")), Some(m.permissions()))
+            }
+            None => (target.clone(), None),
+        };
+        let file = fs::File::options().write(true).create_new(true).open(&write_to)?;
+        Ok(Box::new(LocalWrite { file: Some(file), write_to, target, replacing, done: false }))
     }
 
     /// The display form: Windows' `\\?\` prefix off, which is how every
@@ -643,6 +749,73 @@ impl Vfs for LocalFs {
 mod tests {
     use super::*;
 
+    /// New folder and Upload on a desktop's own folder: a folder that is new,
+    /// a file that is new or replaces one only when its write finishes, a
+    /// write abandoned leaving nothing behind, and never a folder or a link
+    /// written over.
+    #[test]
+    fn a_local_folder_takes_new_folders_and_files() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("ts-vfs-write-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("old.txt"), b"old").unwrap();
+        let v = LocalFs::new(dir.canonicalize().unwrap());
+        let root = VfsPath::root();
+        assert_eq!(v.writable(), !cfg!(target_os = "android"));
+
+        v.create_dir(&root, "made").unwrap();
+        assert!(dir.join("made").is_dir());
+        assert_eq!(v.create_dir(&root, "made").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+
+        let mut w = v.create_file(&root, "new.txt", false).unwrap();
+        w.write_all(b"new").unwrap();
+        w.finish().unwrap();
+        assert_eq!(fs::read(dir.join("new.txt")).unwrap(), b"new");
+        assert_eq!(v.create_file(&root, "new.txt", false).err().unwrap().kind(), io::ErrorKind::AlreadyExists);
+
+        // A replacement: the old file until it finishes, and its permissions after.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(dir.join("old.txt"), fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let mut w = v.create_file(&root, "old.txt", true).unwrap();
+        w.write_all(b"replaced").unwrap();
+        assert_eq!(fs::read(dir.join("old.txt")).unwrap(), b"old");
+        w.finish().unwrap();
+        assert_eq!(fs::read(dir.join("old.txt")).unwrap(), b"replaced");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(dir.join("old.txt")).unwrap().permissions().mode() & 0o777, 0o640);
+        }
+
+        // Abandoned: a new file goes, a replaced one stays as it was.
+        let mut w = v.create_file(&root, "gone.txt", false).unwrap();
+        w.write_all(b"x").unwrap();
+        drop(w);
+        assert!(!dir.join("gone.txt").exists());
+        let mut w = v.create_file(&root, "old.txt", true).unwrap();
+        w.write_all(b"half").unwrap();
+        drop(w);
+        assert_eq!(fs::read(dir.join("old.txt")).unwrap(), b"replaced");
+        let left: Vec<_> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert!(left.iter().all(|n| !n.to_string_lossy().ends_with(".part")), "{left:?}");
+
+        // Never over a folder or through a link.
+        assert_eq!(v.create_file(&root, "sub", true).err().unwrap().kind(), io::ErrorKind::InvalidInput);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("old.txt"), dir.join("ln")).unwrap();
+            assert_eq!(v.create_file(&root, "ln", true).err().unwrap().kind(), io::ErrorKind::InvalidInput);
+        }
+        // A name Windows reads as a drive is not a name in this folder.
+        #[cfg(windows)]
+        assert_eq!(v.create_dir(&root, "C:x").unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A desktop's own folder offers Delete; what `remove` does itself is the
     /// permanent fallback the shell asks about when the Trash will not take a
     /// thing — a file, or a folder with nothing in it, never the root.
@@ -657,7 +830,6 @@ mod tests {
         let v = LocalFs::new(dir.canonicalize().unwrap());
         let p = |n: &str| VfsPath::root().join(n);
         assert_eq!(v.deletable(), !cfg!(target_os = "android"));
-        assert!(!v.writable(), "Delete alone; no Upload or New folder");
         assert!(v.local_path(&p("a.txt")).unwrap().ends_with("a.txt"));
         v.remove(&p("a.txt")).unwrap();
         v.remove(&p("empty")).unwrap();

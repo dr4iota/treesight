@@ -3132,20 +3132,17 @@ mod tests {
             listing_page(state, &root, p, &rel, &VfsPath::new(rel.clone()), &q, "/")
         };
 
-        // Read-only, below the root: As root, and the download column, and
-        // nothing that writes.
+        // A desktop's own folder, below the root: As root, and Download in
+        // the strip under a file's ⋯; and, on a desktop, Delete — which the
+        // shell sends to the Trash, folders included — and New folder.
         let sub = page(&state, Arc::clone(&plain.vfs), &["sub"], "");
         assert!(sub.contains("<span class=\"lbl\">As root</span>"), "{sub}");
         assert!(sub.contains("href=\"/.ts/root?path="), "{sub}");
-        assert!(!sub.contains("New folder"), "{sub}");
-        // Download is in the strip under a file's ⋯, and nothing that writes
-        // is offered — but a desktop's own folder offers Delete, which the
-        // shell sends to the Trash, folders included.
         assert!(sub.contains("<th class=\"act\"></th>"), "{sub}");
         assert!(sub.contains("<details class=\"more\"><summary title=\"More for a.txt\""), "{sub}");
         assert!(sub.contains("href=\"/sub/a.txt?dl=1\" title=\"Save a copy of a.txt\""), "{sub}");
-        assert!(!sub.contains("New folder"), "{sub}");
         assert_eq!(sub.contains("/.ts/remove?path=%2Fsub%2Fdeeper%2F"), cfg!(not(target_os = "android")), "{sub}");
+        assert_eq!(sub.contains("<a href=\"?new=folder\""), cfg!(not(target_os = "android")), "{sub}");
         // The pane's directory rows are a name and an arrow, no button.
         assert!(sub.contains("<a class=\"dir\" href=\"/sub/deeper/\">deeper/</a></span>"), "{sub}");
         assert!(!sub.contains("class=\"asroot\""), "{sub}");
