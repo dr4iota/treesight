@@ -14,6 +14,9 @@ keywords = ["file-server", "http", "markdown", "syntax-highlighting", "cli"]
 categories = ["command-line-utilities", "web-programming::http-server"]
 
 [dependencies]
+# The device's time zone for a listing's times; `clock` alone, which is what
+# reads the zone on every platform, Android's tzdata included.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 comrak = { version = "0.52.0", default-features = false }
 libm = "0.2"
 mermaid-rs-renderer = { version = "0.3", default-features = false }

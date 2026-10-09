@@ -4329,6 +4329,7 @@ dependencies = [
 name = "treeserve"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "comrak",
  "libm",
  "mermaid-rs-renderer",

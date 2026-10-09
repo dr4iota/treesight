@@ -279,12 +279,28 @@ pub fn human_size(n: u64) -> String {
     }
 }
 
-/// Format a mtime as "YYYY-MM-DD HH:MM" (UTC).
+/// Format a mtime as "YYYY-MM-DD HH:MM", in the device's own time zone — the
+/// one its clock and the system's file pickers show. This read UTC once, and
+/// on a phone five hours off the reader's evening a file looked from tomorrow.
 pub fn fmt_time(t: SystemTime) -> String {
+    fmt_time_at(t, local_offset(t))
+}
+
+/// Seconds east of UTC at `t`, where the device is. UTC when the zone cannot
+/// be read, which is what this always said before.
+fn local_offset(t: SystemTime) -> i64 {
+    use chrono::Offset;
+    let at: chrono::DateTime<chrono::Utc> = t.into();
+    i64::from(at.with_timezone(&chrono::Local).offset().fix().local_minus_utc())
+}
+
+/// [`fmt_time`] at a given offset from UTC, in seconds east.
+fn fmt_time_at(t: SystemTime, offset: i64) -> String {
     let secs = t
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+        .unwrap_or(0)
+        + offset;
     let days = secs.div_euclid(86400);
     let rem = secs.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
@@ -301,8 +317,12 @@ pub fn fmt_time(t: SystemTime) -> String {
 /// [`fmt_time`] for a narrow page: `MM-DD HH:MM` in `now`'s year, and the
 /// date alone, `YYYY-MM-DD`, in any other.
 pub fn fmt_time_short(t: SystemTime, now: SystemTime) -> String {
-    let long = fmt_time(t);
-    match fmt_time(now).get(..4) == long.get(..4) {
+    fmt_time_short_at(t, now, local_offset(t))
+}
+
+fn fmt_time_short_at(t: SystemTime, now: SystemTime, offset: i64) -> String {
+    let long = fmt_time_at(t, offset);
+    match fmt_time_at(now, offset).get(..4) == long.get(..4) {
         true => long[5..].to_string(),
         false => long[..10].to_string(),
     }
@@ -395,9 +415,12 @@ mod tests {
         let at = |secs: u64| UNIX_EPOCH + Duration::from_secs(secs);
         // 2026-10-07 09:40 UTC, and a moment in the same year and another.
         let t = at(1_791_366_000);
-        assert_eq!(fmt_time(t), "2026-10-07 09:40");
-        assert_eq!(fmt_time_short(t, at(1_791_366_000 + 86400)), "10-07 09:40");
-        assert_eq!(fmt_time_short(t, at(1_791_366_000 + 120 * 86400)), "2026-10-07");
+        assert_eq!(fmt_time_at(t, 0), "2026-10-07 09:40");
+        assert_eq!(fmt_time_short_at(t, at(1_791_366_000 + 86400), 0), "10-07 09:40");
+        assert_eq!(fmt_time_short_at(t, at(1_791_366_000 + 120 * 86400), 0), "2026-10-07");
+        // Four hours west, as on the tablet that found it; and a day boundary.
+        assert_eq!(fmt_time_at(t, -4 * 3600), "2026-10-07 05:40");
+        assert_eq!(fmt_time_at(t, -10 * 3600), "2026-10-06 23:40");
         let ago = |secs: u64| fmt_age(t, at(1_791_366_000 + secs));
         let short = |secs: u64| fmt_age_short(t, at(1_791_366_000 + secs));
         assert_eq!(ago(30), "just now");
