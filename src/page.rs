@@ -122,9 +122,9 @@ const ICON_VIDEO: &str = "<path d=\"M1.9 3.9h12.2v8.2H1.9z\"/>\
 const ICON_DOC: &str = "<path d=\"M3.6 2.4h5.6l3.2 3.2v8H3.6z\"/><path d=\"M9.2 2.4v3.2h3.2\"/>\
      <path d=\"M5.6 8.4h5M5.6 10.6h5\"/>";
 const ICON_FILE: &str = "<path d=\"M3.6 2.4h5.6l3.2 3.2v8H3.6z\"/><path d=\"M9.2 2.4v3.2h3.2\"/>";
-/// The file exactly as it is on disk, so: leaving for it.
-pub const ICON_RAW: &str =
-    "<path d=\"M9.6 3.4h3v3\"/><path d=\"M12.6 3.4L8.2 7.8\"/><path d=\"M12 9.4v3.2H3.4V4h3.2\"/>";
+/// The file exactly as it is on disk: a plain sheet, the file rows' own mark,
+/// with nothing drawn on it — no lines, as Preview has none to add.
+pub const ICON_RAW: &str = "<path d=\"M3.6 2.4h5.6l3.2 3.2v8H3.6z\"/><path d=\"M9.2 2.4v3.2h3.2\"/>";
 /// Download's mark turned upward: the bytes leaving for the tree.
 pub const ICON_UPLOAD: &str =
     "<path d=\"M8 10.2V3.5\"/><path d=\"M5.2 6.1L8 3.3l2.8 2.8\"/><path d=\"M3.2 13.1h9.6\"/>";
@@ -142,9 +142,13 @@ pub const ICON_DELETE: &str = "<path d=\"M2.8 4.4h10.4\"/><path d=\"M6.2 4.4V2.8
 /// A filled bookmark: the mark a backend may put after a row's name.
 pub const ICON_MARK: &str =
     "<path fill=\"currentColor\" d=\"M4.4 2.6h7.2v11l-3.6-2.6-3.6 2.6z\"/>";
-pub const ICON_SOURCE: &str = "<path d=\"M6.2 4.4L2.7 8l3.5 3.6\"/><path d=\"M9.8 4.4L13.3 8l-3.5 3.6\"/>";
-pub const ICON_RENDERED: &str =
-    "<path d=\"M3.4 3h9.2v10H3.4z\"/><path d=\"M5.4 6h5.2M5.4 8.4h5.2M5.4 10.8h3.4\"/>";
+/// `</>`: the source, highlighted — the mark code is spelled with everywhere.
+pub const ICON_SOURCE: &str = "<path d=\"M5.4 4.6L2.2 8l3.2 3.4\"/><path d=\"M10.6 4.6L13.8 8l-3.2 3.4\"/>\
+     <path d=\"M9.1 3.2L6.9 12.8\"/>";
+/// An eye: Preview, the file as this app shows it — the word and the mark an
+/// editor uses for a rendered Markdown file.
+pub const ICON_PREVIEW: &str = "<path d=\"M1.6 8s2.4-4.2 6.4-4.2S14.4 8 14.4 8s-2.4 4.2-6.4 4.2S1.6 8 1.6 8z\"/>\
+     <path d=\"M8 6.1a1.9 1.9 0 100 3.8 1.9 1.9 0 000-3.8z\"/>";
 /// Refresh: the page as the disk has it now. Three quarters of a circle with the
 /// gap and the arrowhead at the top right, so the drawing is the turn itself. The
 /// head is the chevron `ICON_UP` uses, rather than the square hook
@@ -3084,6 +3088,38 @@ mod tests {
         let html = listing_page(&state, &root, prefs(), &[], &VfsPath::root(), &[], "/");
         assert!(html.contains("<body class=\"fitted nopane\">"), "{html}");
         widths(&html);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Raw's way back is the view the file's page draws, named for it — and
+    /// none where that page is a notice, which is no view to go back to.
+    #[test]
+    fn raw_names_its_way_back_for_the_page_it_returns_to() {
+        let dir = tmp_dir("rawback");
+        fs::write(dir.join("a.md"), "# a\n").unwrap();
+        fs::write(dir.join("b.rs"), "fn main() {}\n").unwrap();
+        fs::write(dir.join("c.png"), [0u8; 4]).unwrap();
+        fs::write(dir.join("d.md"), [0u8, 159, 146, 150, 0, 1]).unwrap();
+        fs::write(dir.join("e.txt"), vec![b'x'; MAX_HIGHLIGHT_BYTES as usize + 1]).unwrap();
+        let state = state_at(dir.clone());
+        let root = state.cfg.root().expect("these tests always serve one");
+        let back = |name: &str| {
+            let rel = vec![name.to_string()];
+            let page = crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/");
+            match (page.contains("The file as this app shows it"), page.contains("Highlighted source")) {
+                (true, false) => "Preview",
+                (false, true) => "Source",
+                (false, false) => "none",
+                _ => panic!("both: {page}"),
+            }
+        };
+        assert_eq!(back("a.md"), "Preview");
+        assert_eq!(back("b.rs"), "Source");
+        assert_eq!(back("c.png"), "Preview");
+        // Binary under a Markdown name, and text past the highlight limit: the
+        // page is a notice either way.
+        assert_eq!(back("d.md"), "none");
+        assert_eq!(back("e.txt"), "none");
         fs::remove_dir_all(&dir).unwrap();
     }
 

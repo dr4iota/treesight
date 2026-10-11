@@ -1,11 +1,12 @@
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
 use crate::page::{
-    bare_layout, flag, layout, svg_icon, Prefs, ICON_DOWNLOAD, ICON_PRINT, ICON_RAW, ICON_RENDERED,
+    bare_layout, flag, layout, svg_icon, Prefs, ICON_DOWNLOAD, ICON_PRINT, ICON_PREVIEW, ICON_RAW,
     ICON_SOURCE,
 };
 use crate::util::*;
 use crate::vfs::VfsPath;
+use std::io::Read;
 use crate::{Root, State};
 
 /// The bytes, for something on a page to point at. `bare` says so in the URL
@@ -129,21 +130,26 @@ fn meta_line(size: u64, mtime: Option<std::time::SystemTime>, extra: &str) -> St
 /// viewer's wrapping, the PDF viewer, an image at its own size — and none of the
 /// furniture the other views put around their content, since none of it is the
 /// file. What the header says and what a flag does is ours; the rest is not.
-pub fn raw_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str) -> String {
+pub fn raw_page(
+    state: &State,
+    root: &Root,
+    prefs: Prefs<'_>,
+    rel: &[String],
+    canon: &VfsPath,
+    url_now: &str,
+) -> String {
     let name = rel.last().map(String::as_str).unwrap_or("");
     let base = href_path(rel);
     // The way out is the way in reversed: where every other view offers Raw,
-    // this one offers the view it came from. Download stays — it is the other
-    // thing wanted of a file one is looking at as a file.
+    // this one offers the view it came from, named for what that is (`way_back`).
+    // Download stays — it is the other thing wanted of a file one is looking at
+    // as a file.
+    let back = way_back(root.vfs.as_ref(), canon, name)
+        .map(|(icon, label, hint)| flag("", &base, &svg_icon(icon), label, hint))
+        .unwrap_or_default();
     let controls = format!(
         "{}{}",
-        flag(
-            "",
-            &base,
-            &svg_icon(ICON_RENDERED),
-            "Rendered",
-            "The file as this app shows it"
-        ),
+        back,
         flag(
             "",
             &format!("{base}?dl=1"),
@@ -163,6 +169,43 @@ pub fn raw_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], ur
         html_escape(name)
     );
     bare_layout(state, root, prefs, rel, url_now, &controls, &content)
+}
+
+/// The view `file_page` draws for this file, as Raw's way back names it: Preview
+/// where the app draws, plays or renders the file, Source where it shows the
+/// text — or nothing, where that page is a notice (too large, binary,
+/// unreadable): a notice is not a view, and Raw is then the only one there is,
+/// as the header sketch's table has it. Up and the system's Back still leave.
+/// The same tests in the same order as `file_page`, which is the page this
+/// names, except that the binary test reads only the 8 KiB it looks at: the
+/// frame fetches the whole file anyway, and a remote tree should not send it
+/// twice to name a button.
+fn way_back(
+    vfs: &dyn Vfs,
+    canon: &VfsPath,
+    name: &str,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    const PREVIEW: (&str, &str, &str) = (ICON_PREVIEW, "Preview", "The file as this app shows it");
+    let ext = ext_of(name);
+    let size = vfs.metadata(canon).map(|m| m.len).unwrap_or(0);
+    if vfs.open_limit().is_some_and(|limit| size > limit) {
+        return None;
+    }
+    if [IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS].iter().any(|exts| exts.contains(&ext.as_str())) || ext == "pdf" {
+        return Some(PREVIEW);
+    }
+    if size > MAX_HIGHLIGHT_BYTES {
+        return None;
+    }
+    let mut head = Vec::with_capacity(8192);
+    vfs.open(canon).ok()?.take(8192).read_to_end(&mut head).ok()?;
+    if looks_binary(&head) {
+        return None;
+    }
+    if MARKDOWN_EXTS.contains(&ext.as_str()) || MERMAID_EXTS.contains(&ext.as_str()) {
+        return Some(PREVIEW);
+    }
+    Some((ICON_SOURCE, "Source", "Highlighted source"))
 }
 
 pub fn file_page(
@@ -316,9 +359,9 @@ pub fn file_page(
         controls.push_str(&flag(
             "",
             &href_path(rel),
-            &svg_icon(ICON_RENDERED),
-            "Rendered",
-            "Rendered view instead",
+            &svg_icon(ICON_PREVIEW),
+            "Preview",
+            "Preview instead",
         ));
     }
     controls.push_str(&std_controls(state, rel, vfs));

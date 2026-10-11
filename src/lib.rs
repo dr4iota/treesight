@@ -1260,7 +1260,7 @@ pub fn handle(state: &State, req: &Req) -> Reply {
     let bare = query_get(&query, "bare") == Some("1");
     let framed = want_raw && !want_dl && !bare;
     if framed && wants_html(req) && !is_subresource(req) {
-        return html_reply(200, view::raw_page(state, &root, prefs, &rel, &url_now));
+        return html_reply(200, view::raw_page(state, &root, prefs, &rel, &canon, &url_now));
     }
     if want_raw || want_dl || !wants_html(req) || is_subresource(req) {
         return serve_raw(req, root.vfs.as_ref(), &canon, &name, want_dl);

@@ -12,7 +12,7 @@ Select a file to see it beside the tree:
 ## Source, Raw, and Download
 
 On Markdown and diagrams, **Source** shows the highlighted source, and
-**Rendered** switches back.
+**Preview** switches back.
 
 **Raw** shows the file itself, with the header still shown, so you can get
 back. **Download** saves a copy. A file can also be saved without opening it,
