@@ -1001,10 +1001,18 @@ body.nothing .start .why.dot[data-count]::after {
   font-weight: 600;
 }
 
-/* The listing keeps clear of a cutout on its own side. Not the left: the pane is
-   there, and where the pane is gone the drawer's own padding answers for it. */
+/* The listing keeps clear of a cutout on either side it reaches. That is the
+   left too wherever no pane is laid out beside it — the pane switched off, the
+   pane a drawer, a page that has none, the Servers page — and a closed drawer
+   pays nothing for the listing it is not over. Beside a pane the pane pays. */
 /* One scroll per pane: the whole sidebar in one, the listing in the other. */
-main { flex: 1; min-width: 0; overflow: auto; padding: 1rem max(1.25rem, var(--safe-right)) 3rem; }
+main {
+  flex: 1; min-width: 0; overflow: auto;
+  padding: 1rem max(1.25rem, var(--safe-right)) 3rem max(1.25rem, var(--safe-left));
+}
+@media (width > 50rem) {
+  body:not(.nopane) nav.tree + main { padding-left: 1.25rem; }
+}
 
 table.listing { border-collapse: collapse; width: 100%; max-width: 60rem; }
 table.listing th {
@@ -1421,8 +1429,15 @@ main:has(> .fit > embed.pdf) { padding-bottom: 1rem; }
    it would be our margin around a document that has its own, and the engine
    inside knows what the file wants better than we do. `color-scheme` is
    inherited, so the frame does hear one thing from us: which way to paint the
-   parts that are its own, the text viewer's page and its scrollbars. */
-iframe.raw { flex: 1; min-height: 0; display: block; width: 100%; border: 0; background: var(--bg); }
+   parts that are its own, the text viewer's page and its scrollbars.
+   The safe areas are the exception, on the three edges the frame reaches: the
+   document inside cannot see them, so its sides and the end of its scroll would
+   stay under a cutout and the gesture strip. */
+iframe.raw {
+  flex: 1; min-height: 0; display: block; border: 0; background: var(--bg);
+  width: calc(100% - var(--safe-left) - var(--safe-right));
+  margin: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
 
 .filemeta { color: var(--muted); font-size: .85rem; margin: .35rem 0 1rem; }
 .bigmsg {
