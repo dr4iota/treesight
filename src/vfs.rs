@@ -246,6 +246,18 @@ pub struct Confirm {
     pub ok: String,
 }
 
+/// What a row's verb asks, worked out when it is pressed ([`Vfs::prepare`])
+/// rather than when the page was drawn.
+#[derive(Clone, Debug)]
+pub enum Prepared {
+    /// Ask the action's own [`RowAction::confirm`], if it has one.
+    AsDrawn,
+    /// Ask this instead: the question needed reading first, a folder's size.
+    Ask(Confirm),
+    /// Do not go ahead, and tell the reader why.
+    Refuse(String),
+}
+
 /// A line under the header of a page — a folder or a file — that says what
 /// the page is when it is not what it seems: a copy, served while the place it
 /// came from does not answer.
@@ -256,6 +268,10 @@ pub struct Notice {
     pub text: String,
     /// A link at the line's end: (words, href).
     pub link: Option<(String, String)>,
+    /// Or one of the page's own verbs at the line's end: (words, the id of
+    /// one of [`Vfs::row_info`]'s actions on this page's path). The page makes
+    /// the link, since the token in it is the page's; only in the app.
+    pub verb: Option<(String, String)>,
 }
 
 /// A file being written into a desktop's own folder: straight to its name if
@@ -467,6 +483,18 @@ pub trait Vfs: Send + Sync {
     /// A line under the header of `path`'s page. See [`Notice`].
     fn notice(&self, _path: &VfsPath) -> Option<Notice> {
         None
+    }
+
+    /// Readies the verb `id` on `path` before it is asked about, for a verb
+    /// whose question depends on what only reading tells — keeping a folder
+    /// says how much it holds, and refuses one too big. Called by the shell
+    /// off the navigation callback, before [`Self::act`], holding the transfer
+    /// lock, so the status line's Cancel reaches it through
+    /// [`crate::vfs::cancel::asked`] (answer `Interrupted`); `progress` is told
+    /// a line of words for the status line, since the whole is not known yet.
+    /// The default reads nothing and asks what was drawn.
+    fn prepare(&self, _path: &VfsPath, _id: &str, _progress: &mut dyn FnMut(&str)) -> io::Result<Prepared> {
+        Ok(Prepared::AsDrawn)
     }
 
     /// Carries out the verb `id` of one of [`Self::row_info`]'s actions on
@@ -748,6 +776,16 @@ impl Vfs for LocalFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backend that does not prepare reads nothing and asks what was drawn.
+    #[test]
+    fn prepare_defaults_to_the_drawn_question() {
+        let v = LocalFs::new(std::env::temp_dir());
+        let mut said = Vec::new();
+        let got = v.prepare(&VfsPath::root(), "keep", &mut |l| said.push(l.to_string())).unwrap();
+        assert!(matches!(got, Prepared::AsDrawn));
+        assert!(said.is_empty());
+    }
 
     /// New folder and Upload on a desktop's own folder: a folder that is new,
     /// a file that is new or replaces one only when its write finishes, a

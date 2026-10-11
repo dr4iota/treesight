@@ -36,8 +36,8 @@ use hl::Hl;
 use page::{Prefs, ThemeMode};
 use util::*;
 pub use vfs::{
-    new_name, Confirm, Entry, LocalFs, Meta, Notice, ReadSeek, ResolveError, RowAction, RowInfo, RowLine,
-    Vfs, VfsPath, WriteFile,
+    new_name, Confirm, Entry, LocalFs, Meta, Notice, Prepared, ReadSeek, ResolveError, RowAction, RowInfo,
+    RowLine, Vfs, VfsPath, WriteFile,
 };
 
 /// glibc keeps giving the single-precision math functions new symbol versions

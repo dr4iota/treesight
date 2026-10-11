@@ -954,7 +954,7 @@ pub fn layout(
         ),
         scrim = scrim,
         sidebar = sidebar,
-        notice = notice_html(root, rel),
+        notice = notice_html(state, root, rel),
         content = content,
         footer = status_line(state, root),
     )
@@ -962,12 +962,17 @@ pub fn layout(
 
 /// The backend's line about this page, over the content: a copy served while
 /// the place it came from does not answer, say. See [`crate::vfs::Notice`].
-fn notice_html(root: &Root, rel: &[String]) -> String {
+fn notice_html(state: &State, root: &Root, rel: &[String]) -> String {
     let Some(n) = root.vfs.notice(&VfsPath::new(rel.to_vec())) else {
         return String::new();
     };
+    let verb = n
+        .verb
+        .filter(|_| state.cfg.app_ui)
+        .map(|(words, id)| (words, act_href(state, &href_path(rel), &id)));
     let link = n
         .link
+        .or(verb)
         .map(|(words, href)| {
             format!(
                 " <a class=\"again\" href=\"{}\">{}</a>",
@@ -3280,11 +3285,20 @@ mod tests {
                     }),
                 }
             }
-            fn notice(&self, _p: &VfsPath) -> Option<Notice> {
+            fn notice(&self, p: &VfsPath) -> Option<Notice> {
+                if p.segments() == ["subfolder".to_string()] {
+                    return Some(Notice {
+                        warn: false,
+                        text: "2 files here changed.".into(),
+                        link: None,
+                        verb: Some(("Update".into(), "update".into())),
+                    });
+                }
                 Some(Notice {
                     warn: true,
                     text: "thor cannot be reached.".into(),
                     link: Some(("Try again".into(), "/.ts/reload".into())),
+                    verb: None,
                 })
             }
         }
@@ -3302,6 +3316,10 @@ mod tests {
 
         assert!(html.contains("<div class=\"notice warn\" role=\"status\"><span>thor cannot be reached.</span> \
              <a class=\"again\" href=\"/.ts/reload\">Try again</a></div>"), "{html}");
+        // A notice's verb is linked as a row's is, with the page's token.
+        fs::create_dir_all(dir.join("subfolder")).unwrap();
+        let sub = listing_page(&state, &root, prefs(), &["subfolder".into()], &VfsPath::new(vec!["subfolder".into()]), &[], "/subfolder/");
+        assert!(sub.contains(&format!("<a class=\"again\" href=\"/.ts/act?path=%2Fsubfolder&amp;a=update&amp;t={token}\">Update</a>")), "{sub}");
         // Kept: the mark, the backend's line in both forms, the warning, then the
         // lit toggle, Download, and Delete — in that order.
         let kept = html.find("<a href=\"/kept.txt\">kept.txt</a><span class=\"rowmark\" title=\"Kept offline\"").expect(&html);

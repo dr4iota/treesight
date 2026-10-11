@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 use treeserve::util::percent_encode;
-use treeserve::{Vfs, VfsPath};
+use treeserve::{Prepared, Vfs, VfsPath};
 
 use crate::{committed, eval, fail, js_quoted, notify, replace_page, Serving, WINDOW};
 
@@ -674,7 +674,10 @@ fn ask(app: &AppHandle, title: &str, message: &str, ok: &str) -> bool {
 ///
 /// The verb is looked up again here rather than trusted from the link: the
 /// question it asks and whether it is on offer at all are the backend's answer
-/// *now*, not when the page was drawn.
+/// *now*, not when the page was drawn. A verb whose question needs reading
+/// first gets it from `Vfs::prepare`, with its words in the status line and
+/// Cancel under the transfer lock; the lock is let go while the box is up,
+/// as Upload lets it go while the picker is.
 pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
     let app = app.clone();
     let url = url.clone();
@@ -692,7 +695,28 @@ pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
         else {
             return fail(&app, &format!("That cannot be done to {} now.", r.name), false);
         };
-        if let Some(c) = &action.confirm
+        let prepared = {
+            let Some(_turn) = Turn::take() else {
+                return fail(&app, BUSY_SAYS, false);
+            };
+            let mut last = Instant::now() - TICK;
+            let prepared = r.vfs.prepare(&r.path, &id, &mut |line| {
+                if last.elapsed() >= TICK {
+                    last = Instant::now();
+                    progress(&app, Some((line, 0.0)));
+                }
+            });
+            progress(&app, None);
+            prepared
+        };
+        let confirm = match prepared {
+            Ok(Prepared::AsDrawn) => action.confirm.clone(),
+            Ok(Prepared::Ask(c)) => Some(c),
+            Ok(Prepared::Refuse(why)) => return notify(&app, &why),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => return,
+            Err(e) => return fail(&app, &format!("{}: {}: {e}", action.label, r.name), false),
+        };
+        if let Some(c) = &confirm
             && !ask(&app, &action.label, &c.message, &c.ok)
         {
             return;

@@ -260,6 +260,12 @@ either, the shell goes up to the nearest folder still there. A verb is a link
 to `/.ts/act` and Delete one to `/.ts/remove`,
 both with the page's token; the shell asks the verb's `Confirm` in a native
 box, then calls `Vfs::act` or `Vfs::remove` off the callback and reloads.
+Before the box, `Vfs::prepare` may read what the question needs — a folder's
+size — with words in the status line and Cancel, and answer another question
+(`Prepared::Ask`) or a refusal (`Prepared::Refuse`); by default it reads
+nothing and the drawn `Confirm` is asked. A notice may end in one of the
+page's own verbs (`Notice::verb`) rather than a link; the page makes the link,
+with its token.
 A verb marked `on_file_page` is a pill on the file's own page too, and
 `Vfs::notice` is a line over any page — a copy served while its source does not
 answer, say. Nothing in these names a remote: the embedder's cache is the first
