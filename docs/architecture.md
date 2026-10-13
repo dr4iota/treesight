@@ -172,7 +172,8 @@ intended behaviour, not a limitation being tolerated.
 | `http.rs` | `feature = "http"` only: `Serving`, `spawn`, the worker loop, and the tiny_http ⇄ `Req`/`Reply` adapters. The one file that knows a socket exists |
 | `vfs.rs` | `Vfs`, `VfsPath`, `LocalFs`, `Meta`, `Entry`, `ResolveError` |
 | `page.rs` | Listing, tree pane, Places/Recent/sections, layout, wait/error pages, SVG icons |
-| `view.rs` | File page: media, PDF, markdown, mermaid files, highlighted source |
+| `view.rs` | File page: media, PDF, markdown, mermaid files, tables, highlighted source; a `.gz` unpacked first |
+| `data.rs` | CSV/TSV parser and table; JSON layout that copies every token as written; capped `gunzip` |
 | `md.rs` | comrak + syntect fences; mermaid → dual light/dark SVG; LaTeX → MathML |
 | `hl.rs` | syntect / two-face; class-prefixed CSS generated at startup |
 | `util.rs` | HTML/percent/glob, `display_path` (strips `\\?\`), media extension lists, `MAX_HIGHLIGHT_BYTES` (2 MiB) |
@@ -181,8 +182,16 @@ intended behaviour, not a limitation being tolerated.
 `main.rs` is CLI-only and does not sit on the request path.
 
 Caps that keep a worker from stalling on a huge file: 2 MiB for highlight /
-README / markdown body; 64 KiB for a mermaid fence (`md.rs`). Anything
-bigger is offered as Raw / Download, or left as source.
+README / markdown body, and for a `.gz` once unpacked, read through a `take`
+so a small file that inflates to gigabytes stops there; 64 KiB for a mermaid
+fence (`md.rs`); for a table 5,000 rows, 1,000 columns and 2 MiB of HTML,
+and for laid-out JSON 2 MiB of output and 128 levels, all checked as they go
+(`data.rs`). A table or a layout past its cap is drawn as written instead. Anything bigger is offered as Raw / Download, or left as source.
+
+JSON is laid out by a re-indenter rather than a parse into values and back:
+`serde_json` would rewrite `2.50` as `2.5` and big integers as floats unless
+asked not to, and it refuses comments, which are what make a JSON file
+"not JSON" often enough that drawing it as written is the right answer.
 
 ---
 

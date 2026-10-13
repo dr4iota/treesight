@@ -3,6 +3,7 @@
 //! The binary in `main.rs` is a thin CLI over this library; embedders (the
 //! Tauri app in `app/`) call [`spawn`] and drive the server themselves.
 
+pub mod data;
 pub mod embed;
 pub mod hl;
 #[cfg(feature = "http")]
@@ -1263,7 +1264,8 @@ pub fn handle(state: &State, req: &Req) -> Reply {
         return html_reply(200, view::raw_page(state, &root, prefs, &rel, &canon, &url_now));
     }
     if want_raw || want_dl || !wants_html(req) || is_subresource(req) {
-        return serve_raw(req, root.vfs.as_ref(), &canon, &name, want_dl);
+        let as_text = query_get(&query, "as") == Some("text");
+        return serve_raw(req, root.vfs.as_ref(), &canon, &name, want_dl, as_text);
     }
 
     html_reply(
@@ -1445,7 +1447,7 @@ fn etag_matches(given: &str, tag: &str) -> bool {
             .any(|t| t.strip_prefix("W/").unwrap_or(t) == tag)
 }
 
-fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: bool) -> Reply {
+fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: bool, as_text: bool) -> Reply {
     // A backend that will not hand this over whole says why, rather than saying
     // the file is not there — it is there, it is in the listing, and "not found"
     // for something you can see is the kind of answer that sends someone looking
@@ -1470,7 +1472,7 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
         .unwrap_or(0);
     let meta = vfs.metadata(path).ok().filter(|m| m.len == size);
     let etag = meta.as_ref().and_then(etag_for);
-    let mime = mime_for_ext(&ext_of(name));
+    let declared = mime_for_ext(&ext_of(name));
 
     // Reloading a page does not reload what is inside it: the picture, the video
     // and the PDF are separate requests, and with nothing to check them against
@@ -1479,7 +1481,6 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
     // stays where it is and a reload spends one small conditional request per
     // file finding out whether it is still good.
     let mut headers = vec![
-        hdr("Content-Type", mime),
         hdr("Accept-Ranges", "bytes"),
         hdr("X-Content-Type-Options", "nosniff"),
         hdr(
@@ -1494,7 +1495,7 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
     // opaque origin, no path back to the pages' own. Images, media and PDFs
     // are not documents and never read the header; PDFs in particular are
     // left out because Chromium refuses to draw a sandboxed one.
-    if mime.starts_with("text/html") || mime == "image/svg+xml" || mime == "application/xml" {
+    if declared.starts_with("text/html") || declared == "image/svg+xml" || declared == "application/xml" {
         headers.push(hdr("Content-Security-Policy", "sandbox"));
     }
     if let Some(tag) = &etag {
@@ -1514,6 +1515,44 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
             .with("ETag", tag)
             .with("Cache-Control", "no-cache");
     }
+
+    // Text as text, decided only now that there is a body to send: a 304
+    // costs no read. Most text has no type of its own here — code, config, a
+    // log, a table — and `octet-stream` under `nosniff` is a download, which
+    // in a frame is a blank page and in the shell a copy left in Downloads
+    // nobody asked for. So a file whose first 8 KiB are text goes out as
+    // `text/plain` where its type says nothing more; and the Raw view
+    // (`as=text`) gets every text file that way, JSON, HTML, SVG and XML
+    // included, because Raw is the file as it is and not as an engine draws
+    // it — HTML's drawing is its Preview. A copy being saved keeps its type,
+    // and so does JSON fetched by anything but the frame. UTF-8 is claimed
+    // only where the head is UTF-8; otherwise the engine decodes it.
+    let sniff = !attachment && (as_text || declared == "application/octet-stream");
+    let mime = match sniff {
+        true => {
+            let mut head = Vec::with_capacity(8192);
+            let read = Read::by_ref(&mut file).take(8192).read_to_end(&mut head).is_ok();
+            // Back to the start, or a fresh handle where this one cannot seek.
+            if file.seek(SeekFrom::Start(0)).is_err() {
+                match vfs.open(path) {
+                    Ok(f) => file = f,
+                    Err(_) => return Reply::plain(404, "not found"),
+                }
+            }
+            let utf8 = match std::str::from_utf8(&head) {
+                Ok(_) => true,
+                // Cut mid-character at the 8 KiB mark is still UTF-8.
+                Err(e) => e.error_len().is_none(),
+            };
+            match (read && !looks_binary(&head), utf8) {
+                (true, true) => "text/plain; charset=utf-8",
+                (true, false) => "text/plain",
+                (false, _) => declared,
+            }
+        }
+        false => declared,
+    };
+    headers.insert(0, hdr("Content-Type", mime));
     if attachment {
         // The name is a remote file's, so it does not get to shape the header.
         // Quotes and backslashes would break out of the quoted-string; CR and LF
@@ -1621,13 +1660,50 @@ mod tests {
         let vfs = super::vfs::LocalFs::new(dir.canonicalize().unwrap());
         let sandboxed = |name: &str| {
             let path = super::vfs::VfsPath::new(vec![name.to_string()]);
-            super::serve_raw(&req(""), &vfs, &path, name, false)
+            super::serve_raw(&req(""), &vfs, &path, name, false, false)
                 .headers
                 .iter()
                 .any(|(k, v)| k == "Content-Security-Policy" && v == "sandbox")
         };
         assert!(sandboxed("a.html"), "an html document sandboxes");
         assert!(!sandboxed("b.png"), "a picture does not");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Text goes out as text where its type says nothing more, and to the Raw
+    /// view always; binary keeps its type, and so does a copy being saved.
+    #[test]
+    fn raw_text_is_served_as_text() {
+        let dir = std::env::temp_dir().join(format!("ts-rawtext-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.lua"), "local x = 1\n").unwrap();
+        std::fs::write(dir.join("b.json"), "{\"a\":1}").unwrap();
+        std::fs::write(dir.join("c.html"), "<b>hi</b>").unwrap();
+        std::fs::write(dir.join("d.bin"), [0u8, 1, 2]).unwrap();
+        std::fs::write(dir.join("e.png"), [0u8; 4]).unwrap();
+        std::fs::write(dir.join("f.log"), b"caf\xe9\n").unwrap();
+        let vfs = super::vfs::LocalFs::new(dir.canonicalize().unwrap());
+        let served = |name: &str, dl: bool, as_text: bool| {
+            let path = super::vfs::VfsPath::new(vec![name.to_string()]);
+            let reply = super::serve_raw(&req(""), &vfs, &path, name, dl, as_text);
+            let ty = reply.headers.iter().find(|(k, _)| k == "Content-Type").unwrap().1.clone();
+            let mut body = Vec::new();
+            if let super::Body::Stream { mut reader, .. } = reply.body {
+                reader.read_to_end(&mut body).unwrap();
+            }
+            (ty, body)
+        };
+        let text = "text/plain; charset=utf-8";
+        // The head read to decide is put back: the body is whole.
+        assert_eq!(served("a.lua", false, false), (text.to_string(), b"local x = 1\n".to_vec()));
+        assert_eq!(served("b.json", false, false).0, "application/json", "to a tool");
+        assert_eq!(served("b.json", false, true).0, text, "to the frame");
+        assert_eq!(served("f.log", false, true).0, "text/plain", "not UTF-8: not said to be");
+        assert_eq!(served("c.html", false, false).0, "text/html; charset=utf-8", "drawn, for Preview");
+        assert_eq!(served("c.html", false, true).0, text, "and as written, for Raw");
+        assert_eq!(served("d.bin", false, true).0, "application/octet-stream");
+        assert_eq!(served("e.png", false, true).0, "image/png");
+        assert_eq!(served("a.lua", true, true).0, "application/octet-stream", "a copy keeps its type");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

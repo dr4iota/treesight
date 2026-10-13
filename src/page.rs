@@ -3424,6 +3424,102 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Data files are drawn as what they hold, with the source a flag away and
+    /// the file's own bytes still what Raw and Download give.
+    #[test]
+    fn a_data_file_is_drawn_as_what_it_holds() {
+        use std::io::Write;
+        let dir = tmp_dir("datafiles");
+        fs::write(dir.join("t.csv"), "name,qty\n<pear>,3\n").unwrap();
+        fs::write(dir.join("m.json"), "{\"a\":[1,2]}").unwrap();
+        fs::write(dir.join("c.json"), "// settings\n{\"a\":1}").unwrap();
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(b"k,v\n1,2\n").unwrap();
+        fs::write(dir.join("t.csv.gz"), enc.finish().unwrap()).unwrap();
+        let pack = |bytes: &[u8]| {
+            let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            enc.write_all(bytes).unwrap();
+            enc.finish().unwrap()
+        };
+        fs::write(dir.join("n.md.gz"), pack(b"# x\n")).unwrap();
+        fs::write(dir.join("p.png.gz"), pack(b"\x89PNG\r\n\x1a\n\0\0")).unwrap();
+        fs::write(dir.join("bad.jsonl"), "{\"a\":1,}\n").unwrap();
+        fs::write(dir.join("wide.csv"), format!("{}\n{}", ",".repeat(5000), "x\n".repeat(10))).unwrap();
+        fs::write(dir.join("fake.gz"), "plain text, not gzip\n").unwrap();
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        enc.write_all(&vec![b'x'; (MAX_HIGHLIGHT_BYTES + 1) as usize]).unwrap();
+        fs::write(dir.join("big.log.gz"), enc.finish().unwrap()).unwrap();
+        let state = state_at(dir.clone());
+        let root = state.cfg.root().expect("these tests always serve one");
+        let page = |name: &str, query: &[(String, String)]| {
+            let rel = vec![name.to_string()];
+            crate::view::file_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), query, "/")
+        };
+        let src = [("src".to_string(), "1".to_string())];
+
+        // A table, escaped, with Source offered; the source view offers it back.
+        let html = page("t.csv", &[]);
+        assert!(html.contains("<table class=\"data\"><thead><tr><th>name</th><th>qty</th>"), "{html}");
+        assert!(html.contains("<td>&lt;pear&gt;</td><td class=\"n\">3</td>"), "{html}");
+        assert!(html.contains("1 row</p>"), "{html}");
+        assert!(html.contains("href=\"/t.csv?src=1\""), "{html}");
+        let html = page("t.csv", &src);
+        assert!(!html.contains("<table class=\"data\""), "{html}");
+        assert!(html.contains(">Preview<"), "{html}");
+
+        // JSON laid out, and as written behind Source.
+        let html = page("m.json", &[]);
+        assert!(html.contains("JSON &middot; 6 lines"), "{html}");
+        assert!(html.contains("href=\"/m.json?src=1\""), "{html}");
+        assert!(page("m.json", &src).contains("JSON &middot; 1 line<"), "src");
+        // Not JSON after all — a comment — and drawn as it is, with no toggle.
+        let html = page("c.json", &[]);
+        assert!(html.contains("2 lines"), "{html}");
+        assert!(!html.contains("?src=1"), "{html}");
+
+        // Not laid out, so not called JSON for the layout's sake: a `.jsonl`
+        // is what its own name makes it, and a trailing comma is not laid out.
+        let html = page("bad.jsonl", &[]);
+        assert!(!html.contains("JSON &middot;"), "{html}");
+        assert!(!html.contains("?src=1"), "{html}");
+
+        // A packed table opens as the table, and says it was packed.
+        let html = page("t.csv.gz", &[]);
+        assert!(html.contains("<th>k</th><th>v</th>"), "{html}");
+        assert!(html.contains("gzip, 8 B unpacked"), "{html}");
+        assert!(html.contains("href=\"/t.csv.gz?raw=1\""), "{html}");
+        // Rendered Markdown has no meta line of its own, and gets one to say so.
+        let html = page("n.md.gz", &[]);
+        assert!(html.contains("<div class=\"md\"><h1"), "{html}");
+        assert!(html.contains("&middot; gzip, 4 B unpacked</p>"), "{html}");
+        // A packed picture is an ordinary `.gz`: its element would get the
+        // packed bytes, so it is not opened.
+        let html = page("p.png.gz", &[]);
+        assert!(html.contains("Binary file."), "{html}");
+        assert!(!html.contains("unpacked"), "{html}");
+        // One that unpacks past the limit says so instead of reading on.
+        let html = page("big.log.gz", &[]);
+        assert!(html.contains("too large to render once unpacked"), "{html}");
+
+        // Raw's way back names what the page draws, for a `.gz` too: nothing
+        // where the page is that notice, Source where it is the text.
+        let raw = |name: &str| {
+            let rel = vec![name.to_string()];
+            crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/")
+        };
+        assert!(!raw("big.log.gz").contains("title=\"Highlighted source\""), "big");
+        assert!(page("fake.gz", &[]).contains("plain text, not gzip"), "fake page");
+        assert!(raw("fake.gz").contains("title=\"Highlighted source\""), "fake raw");
+
+        // A table too wide to draw is the file as written, saying why, with no
+        // Preview to go back to.
+        let html = page("wide.csv", &[]);
+        assert!(!html.contains("<table class=\"data\""), "{html}");
+        assert!(html.contains("too big to draw as a table"), "{html}");
+        assert!(!html.contains(">Preview<"), "{html}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A backend that will not hand a big file over says so on the page, rather
     /// than drawing a picture at bytes it is about to refuse — which is a broken
     /// box with nothing to read in it, and a 404 for a file that is right there

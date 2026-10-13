@@ -1,3 +1,4 @@
+use crate::data::{delimiter_for, gunzip, parse_delimited, reformat_json, render_table, MAX_TABLE_ROWS};
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
 use crate::page::{
@@ -171,6 +172,23 @@ pub fn raw_page(
     bare_layout(state, root, prefs, rel, url_now, &controls, &content)
 }
 
+/// The name a `.gz` had before it was packed, where the page opens it to
+/// show: `syslog.2.gz` is `syslog.2`. Not a picture, a film, a sound or a PDF
+/// packed — those are drawn by an element pointed at the file's bytes, which
+/// are still the packed ones, so `photo.png.gz` is an ordinary `.gz` and gets
+/// the binary notice and Download.
+fn unpacked_name(name: &str) -> Option<&str> {
+    if ext_of(name) != "gz" {
+        return None;
+    }
+    let inner = &name[..name.len() - 3];
+    let ext = ext_of(inner);
+    match [IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS].iter().any(|exts| exts.contains(&ext.as_str())) || ext == "pdf" {
+        true => None,
+        false => Some(inner),
+    }
+}
+
 /// The view `file_page` draws for this file, as Raw's way back names it: Preview
 /// where the app draws, plays or renders the file, Source where it shows the
 /// text — or nothing, where that page is a notice (too large, binary,
@@ -199,10 +217,28 @@ fn way_back(
     }
     let mut head = Vec::with_capacity(8192);
     vfs.open(canon).ok()?.take(8192).read_to_end(&mut head).ok()?;
+    // A `.gz` is named for what is inside, and `file_page` refuses one past the
+    // limit unpacked, which only unpacking that far finds out: the one case
+    // here that reads more than the head, and only up to what the page would.
+    // One that is not gzip after all is its own bytes, as it is there.
+    let ext = match unpacked_name(name) {
+        Some(inner) => match gunzip(vfs.open(canon).ok()?, MAX_HIGHLIGHT_BYTES) {
+            Some((_, true)) => return None,
+            Some((mut bytes, false)) => {
+                bytes.truncate(8192);
+                head = bytes;
+                ext_of(inner)
+            }
+            None => ext,
+        },
+        None => ext,
+    };
     if looks_binary(&head) {
         return None;
     }
-    if MARKDOWN_EXTS.contains(&ext.as_str()) || MERMAID_EXTS.contains(&ext.as_str()) {
+    // JSON says Preview without reading the rest to find out whether it is
+    // JSON: one that is not lands on the source, under a name that oversells it.
+    if [MARKDOWN_EXTS, MERMAID_EXTS, TABLE_EXTS, JSON_EXTS].iter().any(|exts| exts.contains(&ext.as_str())) {
         return Some(PREVIEW);
     }
     Some((ICON_SOURCE, "Source", "Highlighted source"))
@@ -292,6 +328,39 @@ pub fn file_page(
         return layout(state, root, prefs, rel, url_now, "", false, &content);
     };
 
+    // A `.gz` is read as what it holds, under the name it had before it was
+    // packed, so `syslog.2.gz` is a log and `rows.csv.gz` a table; Raw and
+    // Download still hand over the packed file. One that is not gzip after all
+    // falls through as its own bytes, which is the binary notice.
+    let (bytes, name, ext, unpacked) = match unpacked_name(name) {
+        Some(inner_name) => match gunzip(&bytes[..], MAX_HIGHLIGHT_BYTES) {
+            Some((inner, false)) => {
+                let len = inner.len() as u64;
+                (inner, inner_name, ext_of(inner_name), Some(len))
+            }
+            Some((_, true)) => {
+                let raw = format!("<a href=\"{}?raw=1\">View raw</a>", html_escape(&href_path(rel)));
+                let ways = match download_link(rel, vfs, "download") {
+                    Some(dl) => format!("{raw} or {dl}."),
+                    None => format!("{raw}."),
+                };
+                let content = format!(
+                    "{}<div class=\"bigmsg\"><p>File is too large to render once unpacked \
+                     (over {}).</p><p>{ways}</p></div>",
+                    meta_line(size, mtime, "gzip"),
+                    human_size(MAX_HIGHLIGHT_BYTES)
+                );
+                return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+            }
+            None => (bytes, name, ext, None),
+        },
+        None => (bytes, name, ext, None),
+    };
+    // What the meta line adds for a packed file: how big it is opened.
+    let unpacked = unpacked
+        .map(|n| format!(" &middot; gzip, {} unpacked", human_size(n)))
+        .unwrap_or_default();
+
     if looks_binary(&bytes[..bytes.len().min(8192)]) {
         let content = format!(
             "{}<div class=\"bigmsg\"><p>Binary file.</p>{}</div>",
@@ -305,6 +374,37 @@ pub fn file_page(
 
     let text = String::from_utf8_lossy(&bytes);
     let want_source = query_get(query, "src") == Some("1");
+
+    let source_flag = || {
+        flag(
+            "",
+            &format!("{}?src=1", href_path(rel)),
+            &svg_icon(ICON_SOURCE),
+            "Source",
+            "Highlighted source instead",
+        )
+    };
+
+    // A table where the file is one, with the source a flag away as Markdown
+    // has it. An empty file has no table to draw and falls through to say so.
+    let mut table_refused = false;
+    if !want_source && TABLE_EXTS.contains(&ext.as_str()) {
+        let rows = parse_delimited(&text, delimiter_for(&ext, &text));
+        // The same budget as anything else that goes to the page; past it the
+        // file is drawn as written, and the meta line says why.
+        let drawn = render_table(&rows, MAX_HIGHLIGHT_BYTES as usize);
+        table_refused = matches!(drawn, Some(Err(())));
+        if let Some(Ok(table)) = drawn {
+            let body = rows.len() - 1;
+            let extra = match body > MAX_TABLE_ROWS {
+                true => format!("{body} rows &middot; first {MAX_TABLE_ROWS} shown"),
+                false => format!("{body} row{}", if body == 1 { "" } else { "s" }),
+            };
+            let controls = format!("{}{}{}", print_flag(state), source_flag(), std_controls(state, rel, vfs));
+            let content = format!("{}{table}", meta_line(size, mtime, &format!("{extra}{unpacked}")));
+            return layout(state, root, prefs, rel, url_now, &controls, false, &content);
+        }
+    }
 
     if !want_source {
         let body = if MARKDOWN_EXTS.contains(&ext.as_str()) {
@@ -323,25 +423,42 @@ pub fn file_page(
             let controls = format!(
                 "{}{}{}",
                 print_flag(state),
-                flag(
-                    "",
-                    &format!("{}?src=1", href_path(rel)),
-                    &svg_icon(ICON_SOURCE),
-                    "Source",
-                    "Highlighted source instead"
-                ),
+                source_flag(),
                 std_controls(state, rel, vfs)
             );
-            let content = format!("<div class=\"md\">{}</div>", body);
+            // A rendered page has no meta line; a packed one gets one, to say so.
+            let note = match unpacked.is_empty() {
+                true => String::new(),
+                false => meta_line(size, mtime, unpacked.trim_start_matches(" &middot; ")),
+            };
+            let content = format!("{note}<div class=\"md\">{}</div>", body);
             return layout(state, root, prefs, rel, url_now, &controls, false, &content);
         }
     }
 
+    // JSON is laid out one member to a line unless the source was asked for —
+    // a minified file is one line nobody reads — and as written where it is
+    // not JSON after all, or where the layout would be past the limit the
+    // highlighter keeps to for any other file.
+    let laid_out = match JSON_EXTS.contains(&ext.as_str()) {
+        true => reformat_json(&text, MAX_HIGHLIGHT_BYTES as usize),
+        false => None,
+    };
+    let shown = match (&laid_out, want_source) {
+        (Some(t), false) => t.as_str(),
+        _ => &*text,
+    };
+
     // Highlighted source view.
-    let first_line = text.lines().next().unwrap_or("");
-    let syntax = state.hl.syntax_for(name, &ext, first_line);
-    let html = state.hl.highlight(syntax, &text);
-    let line_count = text.lines().count().max(1);
+    let first_line = shown.lines().next().unwrap_or("");
+    // JSON by name only where it is JSON: a `.jsonl` that is not stays what
+    // its extension and first line make it.
+    let syntax = match laid_out.is_some() {
+        true => state.hl.syntax_for(name, "json", first_line),
+        false => state.hl.syntax_for(name, &ext, first_line),
+    };
+    let html = state.hl.highlight(syntax, shown);
+    let line_count = shown.lines().count().max(1);
 
     let gutter = if prefs.ln {
         let mut nums = String::with_capacity(line_count * 4);
@@ -355,7 +472,12 @@ pub fn file_page(
     };
 
     let mut controls = print_flag(state);
-    if MARKDOWN_EXTS.contains(&ext.as_str()) || MERMAID_EXTS.contains(&ext.as_str()) {
+    if laid_out.is_some() && !want_source {
+        controls.push_str(&source_flag());
+    } else if laid_out.is_some()
+        || [MARKDOWN_EXTS, MERMAID_EXTS].iter().any(|exts| exts.contains(&ext.as_str()))
+        || (TABLE_EXTS.contains(&ext.as_str()) && !table_refused)
+    {
         controls.push_str(&flag(
             "",
             &href_path(rel),
@@ -372,10 +494,11 @@ pub fn file_page(
             size,
             mtime,
             &format!(
-                "{} &middot; {} line{}",
+                "{} &middot; {} line{}{unpacked}{}",
                 html_escape(&syntax.name),
                 line_count,
-                if line_count == 1 { "" } else { "s" }
+                if line_count == 1 { "" } else { "s" },
+                if table_refused { " &middot; too big to draw as a table" } else { "" }
             )
         ),
         gutter,

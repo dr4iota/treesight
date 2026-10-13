@@ -260,6 +260,12 @@ pub const AUDIO_EXTS: &[&str] = &["mp3", "ogg", "oga", "opus", "wav", "flac", "m
 pub const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "webm", "mkv", "mov", "ogv"];
 pub const MARKDOWN_EXTS: &[&str] = &["md", "markdown", "mdown", "mkd"];
 pub const MERMAID_EXTS: &[&str] = &["mmd", "mermaid"];
+/// HTML, whose Preview is the page as a browser draws it, scripts off.
+pub const HTML_EXTS: &[&str] = &["html", "htm"];
+/// Delimited text, drawn as a table (`data.rs`).
+pub const TABLE_EXTS: &[&str] = &["csv", "tsv", "tab"];
+/// JSON and its one-record-per-line forms, laid out and highlighted as JSON.
+pub const JSON_EXTS: &[&str] = &["json", "jsonl", "ndjson", "geojson"];
 /// Files larger than this are not syntax-highlighted, Markdown-rendered, or
 /// shown as a directory README — the page offers Raw / Download instead.
 pub const MAX_HIGHLIGHT_BYTES: u64 = 2 * 1024 * 1024;

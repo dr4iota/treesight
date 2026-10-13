@@ -4331,6 +4331,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "comrak",
+ "flate2",
  "libm",
  "mermaid-rs-renderer",
  "pulldown-latex",

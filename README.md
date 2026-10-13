@@ -2,7 +2,7 @@
 
 A single-binary file server in the spirit of `webfsd`, but with server-side
 rendering: directory browsing with a file tree side pane, syntax-highlighted
-code, rendered Markdown, inline image/video/audio/PDF preview, and dark/light
+code, rendered Markdown, CSV tables, inline image/video/audio/PDF preview, and dark/light
 themes. Plain HTML output, zero JavaScript, no runtime dependencies.
 
 ## Build
@@ -229,6 +229,13 @@ Example: `treeserve -p 9000 ~/projects/notes`
   pure CSS (`prefers-color-scheme` in auto mode, cookie override otherwise).
 - **Media:** images, video, audio (with HTTP Range support for seeking) and
   PDF render inline; binaries get a download page.
+- **Data files.** CSV and TSV (`.tab` too) are drawn as a table with a heading row that
+  stays put (the first 5,000 rows); JSON and JSON Lines are laid out one
+  member to a line with every token kept as written, and shown as written
+  where they are not JSON (a `tsconfig.json` with comments or a trailing
+  comma). A `.gz` opens as what it holds — `syslog.2.gz` as text,
+  `rows.csv.gz` as a table — up to 2 MiB unpacked; a packed picture, film,
+  sound or PDF is left packed, with Download.
 - **curl-friendly.** Clients that don't ask for `text/html` get raw bytes
   for files and a plain-text listing for directories:
   `curl host:8080/path/file.tar > file.tar` just works.
@@ -239,7 +246,8 @@ Example: `treeserve -p 9000 ~/projects/notes`
 
 - `?raw=1` – raw bytes (correct Content-Type, Range supported)
 - `?dl=1` – force download (Content-Disposition: attachment)
-- `?src=1` – highlighted source view for Markdown and Mermaid files
+- `?src=1` – highlighted source as written, for Markdown, Mermaid, CSV/TSV
+  and JSON files
 - `?q=GLOB&r=1` – filter a directory listing (recursive with `r=1`)
 
 ## Desktop app — treesight
@@ -370,7 +378,7 @@ byte-identical, which `scripts/snap.sh` is there to prove.
 `tiny_http` (sync HTTP server, `http` feature — the CLI only), `syntect` +
 `two-face` (highlighting),
 `comrak` (Markdown), `mermaid-rs-renderer` (Mermaid → SVG), `pulldown-latex`
-(LaTeX → MathML). Everything else —
+(LaTeX → MathML), `flate2` (`.gz`, pure-Rust backend). Everything else —
 argument parsing, URL handling, templating, glob matching — is hand-rolled
 std-only Rust. The `treesight` crate adds `tauri` plus its dialog, opener and
 single-instance plugins.

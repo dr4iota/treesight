@@ -1424,6 +1424,44 @@ main:has(> .fit) { display: flex; flex-direction: column; }
 .fit > embed.pdf { flex: 1; align-self: stretch; height: auto; min-height: 0; }
 main:has(> .fit > embed.pdf) { padding-bottom: 1rem; }
 
+/* A CSV or TSV as a table. It takes the height the meta line leaves, as `.fit`
+   does, so it scrolls both ways inside itself: the heading row stays on top
+   while the rows go under it, and a wide table scrolls sideways in its own box
+   with the meta line and the header still where they were. */
+main:has(> .tablewrap) { display: flex; flex-direction: column; padding-bottom: 1rem; }
+.tablewrap {
+  /* As tall as the table and no taller, shrinking to scroll inside a page
+     that cannot hold it: `flex: 1` drew a two-row table in a frame down to
+     the foot of the window. */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  align-self: flex-start;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+table.data { border-collapse: separate; border-spacing: 0; font-size: .85rem; }
+table.data th, table.data td {
+  padding: .3rem .7rem;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre;
+}
+table.data td.w { white-space: pre-wrap; min-width: 20rem; }
+table.data th:last-child, table.data td:last-child { border-right: none; }
+table.data tbody tr:last-child td { border-bottom: none; }
+table.data th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+table.data tbody tr:nth-child(2n) { background: var(--bg-subtle); }
+table.data td.n { text-align: right; font-variant-numeric: tabular-nums; }
+
 /* The raw view: the header, and under it the file with the rest of the window.
    No pane, no status line, no border, no padding — a frame with a margin around
    it would be our margin around a document that has its own, and the engine
@@ -1873,6 +1911,8 @@ body.nothing .start .row > a.aside {
   }
   .shell { display: block; overflow: visible; }
   main { padding: 0; overflow: visible; }
+  main:has(> .tablewrap) { display: block; }
+  .tablewrap { overflow: visible; border: none; }
   /* A heading is no use at the foot of a page with nothing of its own under it. */
   .md h1, .md h2, .md h3, .md h4 { break-after: avoid; }
   .md .mermaid-light { display: block !important; }

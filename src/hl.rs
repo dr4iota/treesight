@@ -66,9 +66,16 @@ impl Hl {
 
     /// Pick a syntax for a file: extension, then full name (Makefile etc.),
     /// then shebang / first line, then plain text.
+    ///
+    /// **Not by a number.** `syslog.2` and `messages.1` — a rotated log, and
+    /// what a `.gz` of one unpacks as — are far likelier than a man page's
+    /// source, which syntect claims every digit for and which says so in its
+    /// first line anyway. A numbered name goes by its first line or is text.
     pub fn syntax_for(&self, name: &str, ext: &str, first_line: &str) -> &SyntaxReference {
-        self.ss
-            .find_syntax_by_extension(ext)
+        let numbered = !ext.is_empty() && ext.bytes().all(|b| b.is_ascii_digit());
+        (!numbered)
+            .then(|| self.ss.find_syntax_by_extension(ext))
+            .flatten()
             .or_else(|| self.ss.find_syntax_by_extension(name))
             .or_else(|| self.ss.find_syntax_by_first_line(first_line))
             .unwrap_or_else(|| self.ss.find_syntax_plain_text())
@@ -90,5 +97,22 @@ impl Hl {
             }
         }
         generator.finalize()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Hl;
+
+    #[test]
+    fn a_numbered_name_is_a_rotated_log_not_a_man_page() {
+        let hl = Hl::for_tests();
+        let log = "Oct 12 10:00:00 thor sshd[1000]: Accepted password";
+        assert_eq!(hl.syntax_for("syslog.2", "2", log).name, "Plain Text");
+        assert_eq!(hl.syntax_for("messages.1", "1", log).name, "Plain Text");
+        // A script that happens to be numbered still goes by its first line.
+        assert_eq!(hl.syntax_for("run.1", "1", "#!/bin/bash").name, "Bourne Again Shell (bash)");
+        // And an ordinary extension is untouched.
+        assert_eq!(hl.syntax_for("a.rs", "rs", "").name, "Rust");
     }
 }

@@ -18,6 +18,9 @@ categories = ["command-line-utilities", "web-programming::http-server"]
 # reads the zone on every platform, Android's tzdata included.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 comrak = { version = "0.52.0", default-features = false }
+# A `.gz` opened as the text inside it. The pure-Rust backend, so `pure` stays
+# all Rust; it is already in the tree through the app's PNG decoder.
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 libm = "0.2"
 mermaid-rs-renderer = { version = "0.3", default-features = false }
 pulldown-latex = "0.8.0"
