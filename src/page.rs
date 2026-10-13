@@ -479,30 +479,36 @@ fn pill_words(html: &str) -> Vec<String> {
         .collect()
 }
 
-/// How many header items a row of pills is: its words, less the ones that sit
-/// in a `group` behind another, since a group's segments have no gap between
-/// them. Read off the markup for the same reason as `pill_words`.
-fn pill_units(html: &str) -> usize {
-    const OPEN: &str = "<span class=\"group\">";
-    let joined: usize = html
-        .match_indices(OPEN)
-        .map(|(i, _)| {
-            // To the group's own `</span>`: the segments' spans nest inside it.
-            let rest = &html[i + OPEN.len()..];
-            let mut depth = 1;
-            let mut at = 0;
-            while depth > 0 {
-                let (open, close) = (rest[at..].find("<span"), rest[at..].find("</span>"));
-                match (open, close) {
-                    (Some(o), Some(c)) if o < c => (depth, at) = (depth + 1, at + o + 5),
-                    (_, Some(c)) => (depth, at) = (depth - 1, at + c + 7),
-                    _ => break,
+/// The header items a row of pills is, in order, as how many segments each
+/// has: one for a pill, more for a `group`, whose segments have no gap between
+/// them. The items are the row's top-level elements, which is also what
+/// `:nth-last-child` counts when `header_fit` moves the ones that spill. Read
+/// off the markup for the same reason as `pill_words`.
+fn pill_units(html: &str) -> Vec<usize> {
+    let mut units = Vec::new();
+    let (mut depth, mut start) = (0usize, 0);
+    let mut at = 0;
+    while let Some(lt) = html[at..].find('<') {
+        let i = at + lt;
+        let Some(gt) = html[i..].find('>') else { break };
+        let tag = &html[i..=i + gt];
+        at = i + gt + 1;
+        if tag.starts_with("</") {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                let words = pill_words(&html[start..at]).len();
+                if words > 0 {
+                    units.push(words);
                 }
             }
-            pill_words(&rest[..at]).len().saturating_sub(1)
-        })
-        .sum();
-    pill_words(html).len() - joined
+        } else if !tag.ends_with("/>") {
+            if depth == 0 {
+                start = i;
+            }
+            depth += 1;
+        }
+    }
+    units
 }
 
 /// What `html_escape` wrote, read back: a word's width is its characters',
@@ -593,15 +599,15 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
     };
     let left_words = pill_words(left);
     let control_words = pill_words(controls);
-    let control_units = pill_units(controls);
+    let units = pill_units(controls);
     let text: f32 = crumbs.iter().map(|c| text_px(c, CRUMB_TEXT)).sum();
     let path = (text + crumbs.len().saturating_sub(1) as f32 * SEP).max(CRUMBS_MIN);
     let tag = tag.map_or(0.0, |t| t.chars().count() as f32 * TAG_CHAR + TAG_BOX + GAP);
     // Up is followed by the header's gap; the sidebar's control beside it by
     // its own closer one. The path is followed by the gap too, and the
     // controls end the line.
-    let line = |with_words: bool| {
-        let left = left_words
+    let left = |with_words: bool| {
+        left_words
             .iter()
             .map(|w| row(std::slice::from_ref(w), 1, with_words))
             .sum::<f32>()
@@ -609,16 +615,82 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
                 0 => 0.0,
                 1 => GAP,
                 n => GAP + PANE_GAP * (n - 1) as f32,
-            };
-        PAD + SLACK + left + tag + path + GAP + row(&control_words, control_units, with_words)
+            }
+    };
+    let line = |with_words: bool| {
+        PAD + SLACK + left(with_words) + tag + path + GAP + row(&control_words, units.len(), with_words)
     };
     let rem = |px: f32| (px / 16.0 * 4.0).ceil() / 4.0;
+
+    // Below the second width the path has a row of its own, and the controls
+    // that do not fit beside the left end follow it there rather than taking
+    // a row above it: at each width where one more of them goes, the last
+    // that many are put after the path (`order: 4`), so the second row is the
+    // path and, at its right end, what spilled. Only while the path has room
+    // beside them for its `8rem` and to fit in two lines at its smaller size
+    // (`.85rem`, against the 15px it is priced at above, and a tenth more for
+    // where the lines can break): two lines
+    // are about a pill's height, a third would make the row taller than the
+    // one it saves. Narrower than that, the spilled controls go back ahead of
+    // it and the path takes a row of its own under them, as it does where
+    // nothing spills.
+    //
+    // Priced closer than the two widths above, with no slack and to a
+    // hundredth of a rem: a phone's first row is often full to the pixel, and
+    // the slack priced the posters' 411px phone out of the second row. An
+    // error costs a third row, not the old one: a control left on the first
+    // row that does not fit takes a line of its own above the path's, and one
+    // moved beside the path that does not fit goes under it. Against the
+    // viewport, not the header's box, which is narrower by any side inset;
+    // a phone in portrait has none, and held sideways it is past these widths.
+    let span = |units: &[usize]| {
+        units.iter().map(|&n| n as f32 * PILL_MARK).sum::<f32>()
+            + PILL_GAP * units.len().saturating_sub(1) as f32
+    };
+    let first = PAD + left(false) + tag;
+    let two_lines = (path * (13.6 / CRUMB_TEXT) * 0.55).max(CRUMBS_MIN);
+    let close = |px: f32| (px / 16.0 * 100.0).ceil() / 100.0;
+    let back = |rem: f32| {
+        format!(
+            "\n@media (max-width: {rem}rem) {{ body.fitted {{ --crumbs-break: none; \
+             --crumbs-basis: 100%; --crumbs-min: 0; --head-row-gap: .5rem; }} \
+             body.fitted header .controls > :nth-child(n) {{ order: 0; }} }}"
+        )
+    };
+    let mut spill = String::new();
+    for out in 1..=units.len() {
+        let kept = units.len() - out;
+        let widest = close(first + span(&units[..=kept]));
+        // The width below which the path no longer has that room beside
+        // them; the next band, if any, would leave it less.
+        let room = close(PAD + span(&units[kept..]) + GAP + two_lines);
+        if room >= widest {
+            if !spill.is_empty() {
+                spill.push_str(&back(widest));
+            }
+            break;
+        }
+        if out == 1 {
+            spill.push_str(&format!(
+                "\n@media (max-width: {widest}rem) {{ body.fitted {{ --crumbs-break: block; \
+                 --crumbs-basis: 0%; --crumbs-min: 8rem; --head-row-gap: .25rem; }} }}"
+            ));
+        }
+        spill.push_str(&format!(
+            "\n@media (max-width: {widest}rem) {{ body.fitted header .controls > :nth-last-child(-n+{out}) \
+             {{ order: 4; }} }}"
+        ));
+        if room * 16.0 > first + span(&units[..kept]) {
+            spill.push_str(&back(room));
+            break;
+        }
+    }
     format!(
         "<style>\
          @media (max-width: {words}rem) {{ body.fitted {{ --lbl: none; --ctl-display: inline-flex; \
          --pill: 1.7rem; --pill-pad: 0; }} }}\n\
          @media (max-width: {marks}rem) {{ body.fitted {{ --crumbs-order: 3; --crumbs-basis: 100%; \
-         --crumbs-min: 0; --crumbs-size: .85rem; }} }}\
+         --crumbs-min: 0; --crumbs-size: .85rem; }} }}{spill}\
          </style>",
         words = rem(line(true)),
         marks = rem(line(false)),
@@ -3170,6 +3242,52 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Where the controls spill off a phone's first row, the last of them
+    /// follow the path onto the second, one more at each narrower band — and
+    /// go back ahead of it once the path would have no room beside them, which
+    /// a long path reaches at a wider screen than a short one.
+    #[test]
+    fn spilled_controls_follow_the_path() {
+        let bands = |html: &str| -> Vec<(f32, String)> {
+            html.match_indices("(max-width: ")
+                .map(|(i, _)| {
+                    let rest = &html[i + 12..];
+                    let (w, rule) = rest.split_once("rem)").unwrap();
+                    (w.parse().unwrap(), rule.split(" }\n").next().unwrap().to_string())
+                })
+                .collect()
+        };
+        let up = format!("{}{}", flag("up", "#", "", "Up", ""), flag("paneflag", "#", "", "Sidebar", ""));
+        let words = |w: &[&str]| w.iter().map(|w| flag("", "#", "", w, "")).collect::<String>();
+        let controls = format!(
+            "{}{}{}{}",
+            words(&["Refresh", "Terminal"]),
+            group(&words(&["Print", "Download", "Keep offline"])),
+            group(&words(&["Preview", "Source", "Raw"])),
+            words(&["Auto"])
+        );
+        assert_eq!(pill_units(&controls), [1, 1, 3, 3, 1]);
+        let fit = |crumbs: &[&str]| bands(&header_fit(&up, Some("thor"), crumbs, &controls));
+
+        let short = fit(&["weather-station", "README.md"]);
+        let at = |bands: &[(f32, String)], rule: &str| {
+            bands.iter().find(|(_, r)| r.contains(rule)).unwrap_or_else(|| panic!("no {rule}: {bands:?}")).0
+        };
+        let (one, two) = (at(&short, "-n+1)"), at(&short, "-n+2)"));
+        let back = at(&short, "order: 0");
+        assert!(at(&short, "--crumbs-order: 3") > one && one > two, "{short:?}");
+        assert_eq!(at(&short, "--crumbs-break: block"), one, "{short:?}");
+        // The posters' phone, 411 wide, whose first row is full to the pixel
+        // (12 Oct 2026): the views and the theme beside the path, the file's
+        // verbs still on the first row.
+        assert!(two * 16.0 >= 411.0 && back * 16.0 < 411.0, "{short:?}");
+        let three = short.iter().find(|(_, r)| r.contains("-n+3)")).map_or(0.0, |b| b.0);
+        assert!(three * 16.0 < 411.0, "{short:?}");
+
+        let long = fit(&["weather-station", "projects", "a-rather-longer-folder", "docs", "README.md"]);
+        assert!(at(&long, "order: 0") > back, "{short:?} {long:?}");
+    }
+
     /// A file's views are one group with the one on screen lit and no link,
     /// the same group on Raw with Raw lit: Preview · Source · Raw where the app
     /// draws the file, Source · Raw for text, none for a picture, Raw alone for
@@ -3299,10 +3417,10 @@ mod tests {
     #[test]
     fn a_group_prices_no_gap_inside_it() {
         let words = ["Print", "Download", "Keep offline"].map(|w| flag("", "#", "", w, "")).concat();
-        assert_eq!(pill_units(&words), 3);
-        assert_eq!(pill_units(&group(&words)), 1);
+        assert_eq!(pill_units(&words), [1, 1, 1]);
+        assert_eq!(pill_units(&group(&words)), [3]);
         let both = format!("{}{}{}", flag("", "#", "", "Refresh", ""), group(&words), group(&words));
-        assert_eq!(pill_units(&both), 3);
+        assert_eq!(pill_units(&both), [1, 3, 3]);
     }
 
     /// A folder's page offers what can be done with the folder: **As root**

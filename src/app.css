@@ -177,16 +177,19 @@ header {
   }
 }
 /* The path on the line with the buttons, or on a row of its own under them —
-   once a tree page's server says the line cannot hold both. The four
-   `--crumbs-*` are that answer, and `header_fit` in `page.rs` is the one place
-   that sets them, at a width it estimates from this page's own words and
-   path. Not at a fixed width and not on every page: a fixed 46rem sent an embedder's one-word title — the
-   Servers page's — under two buttons with the whole row empty beside it.
-   Below, it wraps rather than scrolls: the row is the path's, so a path longer
-   than one line of it takes two — the same `overflow-wrap: anywhere` the pane
-   uses to keep a long name inside itself. And should the estimate come out
-   short anyway, the header wraps (`flex-wrap`), so the worst it does is take a
-   second line it did not plan. */
+   once a tree page's server says the line cannot hold both. The `--crumbs-*`
+   are that answer, and `header_fit` in `page.rs` is the one place that sets
+   them, at a width it estimates from this page's own words and path. Not at a
+   fixed width and not on every page: a fixed 46rem sent an embedder's one-word
+   title — the Servers page's — under two buttons with the whole row empty
+   beside it.
+   Below, the row starts with the path, and the controls that spilled off the
+   first row follow it there at the right (`header_fit` again, which moves
+   them after it). The path wraps rather than scrolls: a path longer than its
+   room takes two lines — the same `overflow-wrap: anywhere` the pane uses to
+   keep a long name inside itself. And should the estimate come out short
+   anyway, the header wraps (`flex-wrap`), so the worst it does is take a line
+   it did not plan. */
 .crumbs {
   order: var(--crumbs-order, 0);
   flex: 1 1 var(--crumbs-basis, 0%);
@@ -194,6 +197,16 @@ header {
   font-size: var(--crumbs-size, 1em);
   font-weight: 500;
   overflow-wrap: anywhere;
+}
+/* What starts that row while controls follow the path onto it: a flex line
+   cannot be broken before an item, so an empty item a whole line wide sits
+   between the first row and the path. Its line has no height but a gap each
+   side, so `header_fit` halves the gap while it is there. */
+header::after {
+  content: "";
+  display: var(--crumbs-break, none);
+  order: 2;
+  flex-basis: 100%;
 }
 /* The two on the left are the ways *out* — the menu and Back — and everything
    else acts on the page, so it belongs at the other end. With the path on a row
@@ -214,7 +227,7 @@ header > .tag { order: 0; flex: 0 0 auto; }
    row half empty, and a last control alone on a third.
    The gap between items is the controls' own `.35rem`; the regions — the left
    cluster, the tag, the path — add the rest of the old `1rem` themselves. */
-body.fitted header { justify-content: flex-end; column-gap: .35rem; }
+body.fitted header { justify-content: flex-end; column-gap: .35rem; row-gap: var(--head-row-gap, .5rem); }
 body.fitted header .controls { display: contents; }
 body.fitted header .controls > :first-child { margin-left: auto; }
 body.fitted header .up, body.fitted header .back { margin-right: .65rem; }
