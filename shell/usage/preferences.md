@@ -1,12 +1,15 @@
 # Preferences
 
-Three settings in the header, remembered on this device.
+Three settings, remembered on this device.
 
-- **Theme** — **Light**, **Dark**, or **Auto**, which follows the system and is
-  the default. The button shows the one chosen; click moves to the next.
-- **Line numbers** (Ln) — on or off, for highlighted source.
-- **Sidebar** — show or hide the left side. Hidden, the file fills the window.
-  On a narrow window the same button slides the sidebar over the page instead.
+- **Theme**, in the header — **Light**, **Dark**, or **Auto**, which follows
+  the system and is the default. The button shows the one chosen; click moves
+  to the next.
+- **Line numbers** — on or off, for highlighted source: a switch at the right
+  end of the line above the source, beside its size and date.
+- **Sidebar**, in the header — show or hide the left side. Hidden, the file
+  fills the window. On a narrow window the same button slides the sidebar in
+  over the page instead.
 
 A switch that is on is lit; its word does not change. Each button shows its
 mark beside its word. When the header runs out of room the words give way, all

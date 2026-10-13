@@ -30,11 +30,11 @@ stars the folder that is open, not one you have walked into, and the folder gets
 a row of its own, kept across launches. Press it again, or the cross on the row
 (**Remove from Starred**), and the row goes.
 
-To pin a folder further down, start the tree there first — open it, then
-**As root** in its header — and then pin it.
+To star a folder further down, start the tree there first — open it, then
+**As root** in its header — and then star it.
 
-A pinned row that has gone missing greys and says so, and stays until you remove
-it.
+A starred row that has gone missing greys and says so, and stays until you
+remove it.
 
 ## Recent
 
