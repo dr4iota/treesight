@@ -185,36 +185,50 @@ pub trait WriteFile: io::Write + Send {
 
 /// What a backend can say about one row of a listing beyond its name, size
 /// and time — asked through [`Vfs::row_info`]: a line of its own words, verbs
-/// of its own on the row. The page draws all of it in the row's strip, under
-/// ⋯, and gives none of it a meaning: what the words say and what the verbs do
-/// are the backend's.
+/// of its own on the row. The page draws all of it in the row itself, nothing
+/// behind a menu, and gives none of it a meaning: what the words say and what
+/// the verbs do are the backend's.
 #[derive(Clone, Debug, Default)]
 pub struct RowInfo {
-    /// The strip's first line, in the backend's words.
+    /// A line under the row, in the backend's words, read as a sentence in two
+    /// halves: this and the [`Place::Line`] verbs on what it says at the
+    /// start; the [`Place::LineEnd`] verbs and then [`Self::warn`] at the far
+    /// end, the slack between them.
     pub line: Option<RowLine>,
-    /// Short words that need the reader's attention, drawn as warning pills
-    /// after the line.
-    pub warn: Vec<String>,
+    /// What needs the reader's attention — a change on the server, say — at
+    /// the line's far end, after the verbs that deal with it.
+    pub warn: Vec<Words>,
     /// What the row is called on screen, where the backend's name for it — the
     /// one in its address — is too long to read: a path cut from the start,
     /// say. The whole name stays the link's title.
     pub label: Option<String>,
-    /// A filled mark after the row's name, with this title. The one state of a
-    /// row worth showing before ⋯ is opened.
+    /// A state the row is in but cannot change by itself — kept because its
+    /// folder is, say — drawn as a greyed badge on its icon, with this title.
+    /// A [`Place::Badge`] verb takes the spot instead where the row has one.
     pub mark: Option<String>,
-    /// The backend's own verbs, in order. Download and Delete are the page's
-    /// and come after them.
+    /// The backend's own verbs, in order, each where its [`Place`] puts it.
+    /// Download and Delete are the page's and follow the buttons.
     pub actions: Vec<RowAction>,
     /// False draws the row greyed and without a link: there is nothing behind
     /// it the backend can serve now.
     pub unreachable: bool,
 }
 
-/// The first line of a row's strip, in two lengths: the page shows one by its
-/// width, and on a narrow page puts the row's modified time before it, since
-/// the narrow table has no column for that. Plain text; the page escapes it.
+/// The backend's line on a row: a lead word set apart — *Offline* — and the
+/// words after it in two lengths. Plain text; the page escapes it.
 #[derive(Clone, Debug, Default)]
 pub struct RowLine {
+    pub lead: String,
+    /// The lead in the text colour rather than muted: the row's own state, as
+    /// a filled badge is.
+    pub lit: bool,
+    pub wide: String,
+    pub narrow: String,
+}
+
+/// Words in two lengths: the page shows one by its width. Plain text.
+#[derive(Clone, Debug, Default)]
+pub struct Words {
     pub wide: String,
     pub narrow: String,
 }
@@ -236,6 +250,24 @@ pub struct RowAction {
     pub confirm: Option<Confirm>,
     /// Also a pill on the file's own page, after Download.
     pub on_file_page: bool,
+    pub place: Place,
+}
+
+/// Where a row's verb is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Place {
+    /// A mark at the row's far end, with Download and Delete.
+    #[default]
+    Button,
+    /// The row's icon itself, with a badge on it lit when [`RowAction::on`]:
+    /// a toggle on the row as a whole. One per row; the first is taken.
+    Badge,
+    /// Words after the backend's [`RowInfo::line`], which they act on:
+    /// *Forget*, after the copy it would forget.
+    Line,
+    /// Words at the line's far end, before the [`RowInfo::warn`] they deal
+    /// with: *Update*, before what changed.
+    LineEnd,
 }
 
 /// A question asked before a verb is carried out.
@@ -466,9 +498,9 @@ pub trait Vfs: Send + Sync {
         None
     }
 
-    /// What to draw in the strip under `path`'s row, beyond the page's own
-    /// Download and Delete. `None` — the default — is a backend with nothing to
-    /// add.
+    /// What to draw in `path`'s row beyond its name, size and time, and the
+    /// page's own Download and Delete. `None` — the default — is a backend
+    /// with nothing to add.
     fn row_info(&self, _path: &VfsPath) -> Option<RowInfo> {
         None
     }

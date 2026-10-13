@@ -699,11 +699,11 @@ window.__tsProgress = function (text, frac) {
   p.querySelector('.bar i').style.width = (frac * 100) + '%';
 };
 // What the shell just made — a new folder, an upload — is lit by the page
-// (`tr.made`), and in a long folder it was lit below the fold, where the
+// (`.row.made`), and in a long folder it was lit below the fold, where the
 // light faded unseen. Brought into view once, on a page that is not being
 // put back where the reader left it (`SCROLLERS`' own `#ts` mark).
 addEventListener('DOMContentLoaded', function () {
-  var row = document.querySelector('tr.made');
+  var row = document.querySelector('.row.made');
   if (row && !/^#ts/.test(location.hash)) row.scrollIntoView({ block: 'center' });
 });
 "#;
@@ -2590,7 +2590,7 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // A folder's New folder, its form sent; its Upload; and the status
         // line's Cancel for either an upload or a download. See `transfer`.
         "/.ts/mkdir" => transfer::mkdir(app, url),
-        // A row's strip: Delete, and the backend's own verbs on the row.
+        // A row's marks: Delete, and the backend's own verbs on the row.
         "/.ts/remove" => transfer::remove(app, url),
         "/.ts/act" => transfer::act(app, url),
         "/.ts/upload" => transfer::upload(app, url),

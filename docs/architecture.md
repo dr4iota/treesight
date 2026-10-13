@@ -273,12 +273,30 @@ page never gets a title from one root and a tree from another.
 `root_id_at(path)` is what the tree's “serve this folder as the root” link
 puts in `?path=`. For `LocalFs` that is `display_path` of the host path.
 
-**A backend may say more about a row than its name, size and time.** Each row
-of a listing ends in **⋯**, a `<details>` that opens a strip under it — no
-script — and the strip is, in order: the backend's line about the row and its
-warnings (`Vfs::row_info`, asked once per listing through `row_infos`), the
-backend's own verbs, Download where `downloadable`, and Delete where
-`deletable` — `writable` by default, and a desktop's `LocalFs` too, which
+**A folder's rows** are a `<ul class="entries">`, each row a grid that
+subgrids the list's columns, so one markup lays out two ways by the list's
+own width (a container query at 40rem, not the window's): wide, a heading and
+the icon, name, Size, Modified as the time over its age, and the marks; narrow,
+no heading, the name over its short time with the icon and the marks centred
+on them, and a name too long for the line wrapping with its size dropped to
+the last line at the right. `..` is a whole row, *.. (parent directory)*. New
+folder's form takes the filter's place over the list (`?new=folder`).
+
+**A backend may say more about a row than its name, size and time.** All of
+it is in the row, nothing behind a menu (`Vfs::row_info`, asked once per
+listing through `row_infos`). Each verb has a `Place`: a `Badge` verb is the
+row's icon, a toggle with a bookmark on it, filled when on — and where the
+row has none, `RowInfo::mark` draws the bookmark greyed, a state the row
+cannot change by itself; a `Button` verb is a mark at the row's far end,
+before Download where `downloadable` and Delete where `deletable`. The
+backend's `RowLine` is one more line of the row — under the whole row
+narrow, under Name and Size wide — read as a sentence in two halves: its lead
+word (lit where the row's state is the badge's) and words, then the `Line`
+verbs; the slack; then the `LineEnd` verbs and `RowInfo::warn`. Words come in
+two lengths (`RowLine`, `Words`) and the page shows one by the width. While a
+listing has badges and none is on, a line over the rows says to tap an icon.
+Delete is `deletable`:
+`writable` by default, and a desktop's `LocalFs` too, which
 is also `writable` there (New folder, and Upload as a copy in, a replacement
 renamed over the file when it finishes), whose
 files the shell moves to the system's Trash (`Vfs::local_path`, the `trash`

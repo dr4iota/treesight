@@ -37,8 +37,8 @@ use hl::Hl;
 use page::{Prefs, ThemeMode};
 use util::*;
 pub use vfs::{
-    new_name, Confirm, Entry, LocalFs, Meta, Notice, Prepared, ReadSeek, ResolveError, RowAction, RowInfo,
-    RowLine, Vfs, VfsPath, WriteFile,
+    new_name, Confirm, Entry, LocalFs, Meta, Notice, Place, Prepared, ReadSeek, ResolveError, RowAction,
+    RowInfo, RowLine, Vfs, VfsPath, Words, WriteFile,
 };
 
 /// glibc keeps giving the single-precision math functions new symbol versions
@@ -2029,7 +2029,7 @@ mod tests {
         // A folder is open, and `/` is its listing.
         assert!(state.cfg.root().is_some());
         match get("/").body {
-            super::Body::Text(t) => assert!(t.contains("<table class=\"listing\">"), "{t}"),
+            super::Body::Text(t) => assert!(t.contains("<ul class=\"entries\">"), "{t}"),
             _ => panic!("a page is text"),
         }
 

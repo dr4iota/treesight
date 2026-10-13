@@ -751,7 +751,7 @@ pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
     });
 }
 
-/// `/.ts/remove`: **Delete**, from a row's strip — a file, or a folder with
+/// `/.ts/remove`: **Delete**, from a row's far end — a file, or a folder with
 /// nothing in it. Asked every time; never recursive. The backend may add a
 /// line to the question (`Vfs::remove_note`).
 pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {

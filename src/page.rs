@@ -1,6 +1,6 @@
 use crate::md::{render_markdown, RawHtml};
 use crate::util::*;
-use crate::vfs::{ResolveError, Vfs, VfsPath};
+use crate::vfs::{Place, ResolveError, Vfs, VfsPath};
 use crate::{Config, Drawn, Root, RootNote, State};
 
 pub use crate::vfs::Entry;
@@ -133,15 +133,15 @@ pub const ICON_NEW_FOLDER: &str = "<path d=\"M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7
      .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z\"/><path d=\"M8 7.4v3.8M6.1 9.3h3.8\"/>";
 pub const ICON_DOWNLOAD: &str =
     "<path d=\"M8 2.9v6.7\"/><path d=\"M5.2 7l2.8 2.8L10.8 7\"/><path d=\"M3.2 13.1h9.6\"/>";
-/// ⋯: more for this row.
-pub const ICON_MORE: &str = "<path fill=\"currentColor\" stroke=\"none\" d=\"M2.4 8a1.2 1.2 0 102.4 0 1.2 1.2 0 \
-     00-2.4 0zM6.8 8a1.2 1.2 0 102.4 0 1.2 1.2 0 00-2.4 0zM11.2 8a1.2 1.2 0 102.4 0 1.2 1.2 0 00-2.4 0z\"/>";
 /// A bin: Delete.
 pub const ICON_DELETE: &str = "<path d=\"M2.8 4.4h10.4\"/><path d=\"M6.2 4.4V2.8h3.6v1.6\"/>\
      <path d=\"M4.2 4.4l.7 8.8h6.2l.7-8.8\"/>";
-/// A filled bookmark: the mark a backend may put after a row's name.
+/// A filled bookmark: the badge on a row's icon whose toggle is on, or that is
+/// in a state of the backend's it cannot change by itself.
 pub const ICON_MARK: &str =
     "<path fill=\"currentColor\" d=\"M4.4 2.6h7.2v11l-3.6-2.6-3.6 2.6z\"/>";
+/// The same bookmark outlined: the badge on a row's icon whose toggle is off.
+const ICON_MARK_OPEN: &str = "<path d=\"M4.4 2.6h7.2v11l-3.6-2.6-3.6 2.6z\"/>";
 /// `</>`: the source, highlighted — the mark code is spelled with everywhere.
 pub const ICON_SOURCE: &str = "<path d=\"M5.4 4.6L2.2 8l3.2 3.4\"/><path d=\"M10.6 4.6L13.8 8l-3.2 3.4\"/>\
      <path d=\"M9.1 3.2L6.9 12.8\"/>";
@@ -310,16 +310,9 @@ pub fn svg_icon(paths: &str) -> String {
     )
 }
 
-/// The icon cell of a listing row.
-///
-/// Directories carry the class rather than being found by one: `tr:has(a.dir)`
-/// asked the row about its link, which left the colour to whether the webview
-/// knew `:has()`, and never applied to search results, whose links carry no
-/// class at all.
-fn entry_icon(name: &str, is_dir: bool) -> String {
-    icon_cell(is_dir, icon_for(name, is_dir))
-}
-
+/// The icon of a listing row. Directories carry the class rather than being
+/// found by one: `tr:has(a.dir)` asked the row about its link, which left the
+/// colour to whether the webview knew `:has()`.
 fn icon_cell(is_dir: bool, paths: &str) -> String {
     format!(
         "<span class=\"icon{}\">{}</span>",
@@ -1688,40 +1681,38 @@ fn dir_href(rel: &[String]) -> String {
     format!("{}/", href_path(rel).trim_end_matches('/'))
 }
 
-/// The form New folder opens, as rows at the top of the folder's table: the
-/// name box with **Create** and **Cancel**, and under it, when the shell sent
-/// the name back refused, the reason (`?err=`) with the name kept (`?name=`).
+/// The form New folder opens, in the filter's place over the rows: the name
+/// box with **Create** and **Cancel**, and under it, when the shell sent the
+/// name back refused, the reason (`?err=`) with the name kept (`?name=`). The
+/// filter comes back with Cancel; a reader is never doing both at once, and
+/// two text boxes stacked are two a thumb has to tell apart.
 ///
-/// A row and not a dialog: the tree's pages run no script, and a native
+/// A form and not a dialog: the tree's pages run no script, and a native
 /// message box has no text field anywhere. A form needs neither. It is sent as
 /// a link to `/.ts/mkdir`, which only the shell answers, and the shell comes
-/// back here — with the new folder's row lit, or with this row again.
-fn new_folder_rows(state: &State, rel: &[String], query: &[(String, String)], cols: usize) -> String {
+/// back here — with the new folder's row lit, or with this form again.
+fn new_folder_form(state: &State, rel: &[String], query: &[(String, String)]) -> Option<String> {
     if !state.cfg.app_ui || query_get(query, "new") != Some("folder") {
-        return String::new();
+        return None;
     }
     let kept = query_get(query, "name").unwrap_or("");
-    let err = query_get(query, "err").map(|e| {
-        format!(
-            "<tr class=\"newdir-err\"><td colspan=\"{cols}\" role=\"alert\">{}</td></tr>",
-            html_escape(e)
-        )
-    });
-    format!(
-        "<tr class=\"newdir\"><td colspan=\"{cols}\"><form method=\"get\" action=\"/.ts/mkdir\">\
+    let err = query_get(query, "err")
+        .map(|e| format!("<p class=\"err\" role=\"alert\">{}</p>", html_escape(e)))
+        .unwrap_or_default();
+    Some(format!(
+        "<form class=\"filter newdir\" method=\"get\" action=\"/.ts/mkdir\">\
          <span class=\"icon dir\">{icon}</span>\
          <input type=\"hidden\" name=\"dir\" value=\"{dir}\">\
          <input type=\"hidden\" name=\"t\" value=\"{token}\">\
          <input type=\"text\" name=\"name\" value=\"{kept}\" placeholder=\"Name of the new folder\" \
          aria-label=\"Name of the new folder\" maxlength=\"255\" autocomplete=\"off\" autofocus>\
-         <button class=\"primary\">Create</button><a class=\"cancel\" href=\"./\">Cancel</a>\
-         </form></td></tr>{err}",
+         <button class=\"primary\">Create</button><a class=\"cancel\" href=\"./\">Cancel</a>{err}\
+         </form>\n",
         icon = svg_icon(ICON_NEW_FOLDER),
         dir = html_escape(&dir_href(rel)),
         token = state.cfg.action_token,
         kept = html_escape(kept),
-        err = err.unwrap_or_default(),
-    )
+    ))
 }
 
 /// **As root**, in a folder's header: serve this folder instead of the root it
@@ -1889,7 +1880,7 @@ pub fn listing_page(
     let q = query_get(query, "q").unwrap_or("");
     let recursive = query_get(query, "r") == Some("1");
 
-    let mut content = format!(
+    let filter = || format!(
         r#"<form class="filter" method="get">
 <input type="text" name="q" value="{}" placeholder="glob, e.g. *.rs" aria-label="filter pattern">
 <label><input type="checkbox" name="r" value="1"{}> recursive</label>
@@ -1907,6 +1898,7 @@ pub fn listing_page(
             )
         }
     );
+    let mut content = new_folder_form(state, rel, query).unwrap_or_else(filter);
 
     if q.is_empty() {
         content.push_str(&entries_table(state, root, rel, canon, query));
@@ -1982,207 +1974,305 @@ fn entries_table(
             );
         }
     };
-    // Each row's verbs sit behind one ⋯ at its far end — a target away from the
-    // name, so a thumb aiming for one does not land on the other — and open as a
-    // strip under the row: what is known about the row first, then the
-    // backend's own verbs, then Download and Delete. `<details>` with nothing in
-    // it, and the stylesheet showing the strip after an open one, so the page
-    // stays script-free. A row with nothing in its strip has no ⋯; a table
-    // where no row has one has no column, heading and all.
+    // Everything a row offers is in the row, nothing behind a menu. The
+    // backend's toggle is the row's icon; the name sits over its modified time,
+    // and Download, Delete and the backend's other verbs are marks at the far
+    // end; where the backend has a line about the row — a copy kept here — it
+    // runs under the row with the verbs that act on it. A list of grids rather
+    // than a table, so one set of rows lays out two ways: on a phone the line
+    // spans the row; wide, the icon, the time and the marks span both lines and
+    // the line sits under the name and the size.
     let infos = vfs.row_infos(canon, &entries);
     let now = std::time::SystemTime::now();
-    let strips: Vec<String> = entries
-        .iter()
-        .zip(&infos)
-        .map(|(e, info)| {
-            let mut r = rel.to_vec();
-            r.push(e.name.clone());
-            row_strip(state, vfs, &r, e, info.as_ref(), now)
-        })
-        .collect();
-    let act = strips.iter().any(|s| !s.is_empty());
-    let cols = if act { 4 } else { 3 };
-    let blank = if act { "<td class=\"act\"></td>" } else { "" };
-    let mut rows = new_folder_rows(state, rel, query, cols);
+    let mut rows = String::from(
+        "<li class=\"head\"><span class=\"hn\">Name</span><span class=\"sz\">Size</span>\
+         <span class=\"when\">Modified</span></li>",
+    );
+    if state.cfg.app_ui {
+        rows.push_str(&badge_hint(&infos));
+    }
+    // The way up is the whole row, with where it goes said in words: `..`
+    // alone was two dots wide, the smallest target on the page.
     if !rel.is_empty() {
         let parent = &rel[..rel.len() - 1];
+        let name = match parent.last() {
+            Some(n) => n.clone(),
+            None => state.cfg.title_for(root),
+        };
         rows.push_str(&format!(
-            "<tr><td>{}<a href=\"{}/\">..</a></td><td class=\"size\"></td><td class=\"time\"></td>{blank}</tr>",
+            "<li class=\"row parent\"><a href=\"{}/\">{}<span class=\"way\"><span class=\"dots\">..</span> \
+             (to folder <span class=\"to\">{}</span>)</span></a></li>",
+            html_escape(href_path(parent).trim_end_matches('/')),
             icon_cell(true, ICON_UP),
-            html_escape(href_path(parent).trim_end_matches('/'))
+            html_escape(&name),
         ));
     }
-    for ((e, info), strip) in entries.iter().zip(&infos).zip(&strips) {
-        let mut href = {
-            let mut r = rel.to_vec();
-            r.push(e.name.clone());
-            href_path(&r)
-        };
-        if e.is_dir {
-            href.push('/');
-        }
-        let more = match strip.is_empty() {
-            true => blank.to_string(),
-            false => format!(
-                "<td class=\"act\"><details class=\"more\"><summary title=\"More for {name}\" \
-                 aria-label=\"More for {name}\">{}</summary></details></td>",
-                svg_icon(ICON_MORE),
-                name = html_escape(&e.name),
-            ),
-        };
-        let mut class = Vec::new();
-        if made.contains(&e.name.as_str()) {
-            class.push("made");
-        }
-        let unreachable = info.as_ref().is_some_and(|i| i.unreachable);
-        if unreachable {
-            class.push("miss");
-        }
-        let class = match class.is_empty() {
-            true => String::new(),
-            false => format!(" class=\"{}\"", class.join(" ")),
-        };
-        let shown = info.as_ref().and_then(|i| i.label.as_deref()).unwrap_or(&e.name);
-        let title = match shown == e.name {
-            true => String::new(),
-            false => format!(" title=\"{}\"", html_escape(&e.name)),
-        };
-        let name = match unreachable {
-            // Nothing behind it to serve now, so not a link to a page that
-            // would only say so.
-            true => format!("<span{title}>{}</span>", html_escape(shown)),
-            false => format!(
-                "<a href=\"{}\"{}{title}>{}</a>",
-                html_escape(&href),
-                if e.is_dir { " class=\"dir\"" } else { "" },
-                html_escape(shown)
-            ),
-        };
-        let mark = info
-            .as_ref()
-            .and_then(|i| i.mark.as_deref())
-            .map(|title| {
-                format!(
-                    "<span class=\"rowmark\" title=\"{t}\" aria-label=\"{t}\">{}</span>",
-                    svg_icon(ICON_MARK),
-                    t = html_escape(title)
-                )
-            })
-            .unwrap_or_default();
-        rows.push_str(&format!(
-            "<tr{class}><td>{}{name}{mark}</td><td class=\"size\">{}</td><td class=\"time\">{}</td>{more}</tr>",
-            entry_icon(&e.name, e.is_dir),
-            if e.is_dir {
-                "&mdash;".to_string()
-            } else {
-                human_size(e.size)
-            },
-            e.mtime.map(fmt_time).unwrap_or_default(),
-        ));
-        if !strip.is_empty() {
-            rows.push_str(&format!(
-                "<tr class=\"strip\"><td colspan=\"{cols}\"><div class=\"acts\">{strip}</div></td></tr>"
-            ));
-        }
+    for (e, info) in entries.iter().zip(&infos) {
+        let mut full = rel.to_vec();
+        full.push(e.name.clone());
+        rows.push_str(&entry_row(state, vfs, &full, &e.name, e, info.as_ref(), made.contains(&e.name.as_str()), now));
     }
     if entries.is_empty() {
-        rows.push_str(&format!(
-            "<tr><td colspan=\"{cols}\"><em>empty directory</em></td></tr>"
-        ));
+        rows.push_str("<li class=\"empty\"><em>empty directory</em></li>");
+    }
+    format!("<div class=\"entries-box\"><ul class=\"entries\">{rows}</ul></div>")
+}
+
+/// One row of a folder's list — a folder's own entries, or a filter's
+/// matches, which are the same rows named by their path from here: the
+/// icon, the name and its size, the time, the backend's line, and the marks.
+/// `shown` is the name drawn, unless the backend has a label for the row.
+#[allow(clippy::too_many_arguments)]
+fn entry_row(
+    state: &State,
+    vfs: &dyn Vfs,
+    full: &[String],
+    shown: &str,
+    e: &crate::vfs::Entry,
+    info: Option<&crate::vfs::RowInfo>,
+    made: bool,
+    now: std::time::SystemTime,
+) -> String {
+    let mut href = href_path(full);
+    if e.is_dir {
+        href.push('/');
+    }
+    let mut class = String::from("row");
+    if made {
+        class.push_str(" made");
+    }
+    let unreachable = info.is_some_and(|i| i.unreachable);
+    if unreachable {
+        class.push_str(" miss");
+    }
+    let shown = info.and_then(|i| i.label.as_deref()).unwrap_or(shown);
+    let title = match shown == e.name {
+        true => String::new(),
+        false => format!(" title=\"{}\"", html_escape(&e.name)),
+    };
+    let name = match unreachable {
+        // Nothing behind it to serve now, so not a link to a page that
+        // would only say so.
+        true => format!("<span class=\"name\"{title}>{}</span>", html_escape(shown)),
+        false => format!(
+            "<a class=\"name{}\" href=\"{}\"{title}>{}</a>",
+            if e.is_dir { " dir" } else { "" },
+            html_escape(&href),
+            html_escape(shown)
+        ),
+    };
+    let size = match e.is_dir {
+        true => "<span class=\"sz none\">&mdash;</span>".to_string(),
+        false => format!("<span class=\"sz\">{}</span>", human_size(e.size)),
+    };
+    let ends = row_ends(state, vfs, full, e, info);
+    // A row with the backend's line under it takes a second line of the
+    // grid; one without stays one band.
+    let line = row_line(state, &href, info);
+    if !line.is_empty() {
+        class.push_str(" lined");
     }
     format!(
-        "<table class=\"listing\"><tr><th>Name</th><th class=\"size\">Size</th><th class=\"time\">Modified</th>{}</tr>{}</table>",
-        if act { "<th class=\"act\"></th>" } else { "" },
-        rows
+        "<li class=\"{class}\">{}<span class=\"nm\">{name}{size}</span>{}{line}{}</li>",
+        row_icon(state, &href, e, info),
+        when(e.mtime, now),
+        match ends.is_empty() {
+            true => String::new(),
+            false => format!("<span class=\"ends\">{ends}</span>"),
+        },
     )
 }
 
-/// What opens under a row's ⋯, in a fixed order: the line about the row, its
-/// warnings, the backend's verbs ([`Vfs::row_info`]), Download, and Delete at
-/// the far end. Empty when there is nothing to put in it.
-///
-/// The line has a wide form and a narrow one, both in the page; the stylesheet
-/// shows one by the width. The narrow one carries the modified time too, since
-/// a narrow table has no column for it.
-fn row_strip(
+/// The row's icon. Where the backend has a toggle for the row as a whole
+/// ([`Place::Badge`]) the icon is that toggle, with a badge on it filled when
+/// on and outlined when off, so the state and the control are one thing in
+/// one place. A state with no toggle — kept because its folder is, say — is
+/// the badge greyed, on an icon that is no link.
+fn row_icon(state: &State, href: &str, e: &crate::vfs::Entry, info: Option<&crate::vfs::RowInfo>) -> String {
+    let dir = if e.is_dir { " dir" } else { "" };
+    let art = svg_icon(icon_for(&e.name, e.is_dir));
+    let badge = info
+        .filter(|_| state.cfg.app_ui)
+        .and_then(|i| i.actions.iter().find(|a| a.place == Place::Badge));
+    if let Some(a) = badge {
+        return format!(
+            "<a class=\"icon{dir} badge{}\" href=\"{}\" title=\"{t}\" aria-label=\"{t}\" aria-pressed=\"{}\">{art}\
+             <span class=\"pin\">{}</span></a>",
+            if a.on { " on" } else { "" },
+            html_escape(&act_href(state, href, &a.id)),
+            a.on,
+            svg_icon(if a.on { ICON_MARK } else { ICON_MARK_OPEN }),
+            t = html_escape(&a.title),
+        );
+    }
+    match info.and_then(|i| i.mark.as_deref()) {
+        Some(m) => format!(
+            "<span class=\"icon{dir} badge held\" title=\"{t}\" aria-label=\"{t}\">{art}\
+             <span class=\"pin\">{}</span></span>",
+            svg_icon(ICON_MARK),
+            t = html_escape(m),
+        ),
+        None => icon_cell(e.is_dir, icon_for(&e.name, e.is_dir)),
+    }
+}
+
+/// Words in both their lengths; the stylesheet shows one by the width.
+fn twofold(wide: &str, narrow: &str) -> String {
+    format!(
+        "<span class=\"wide\">{}</span><span class=\"narrow\">{}</span>",
+        html_escape(wide),
+        html_escape(narrow)
+    )
+}
+
+/// The row's modified time and how long ago that was: a column of two lines on
+/// a wide page, one short line under the name on a narrow one.
+fn when(mtime: Option<std::time::SystemTime>, now: std::time::SystemTime) -> String {
+    let Some(t) = mtime else {
+        return "<span class=\"when\"></span>".to_string();
+    };
+    format!(
+        "<span class=\"when\"><span class=\"t\">{}</span><span class=\"ago\">{}</span></span>",
+        twofold(&fmt_time(t), &fmt_time_short(t, now)),
+        twofold(&fmt_age(t, now), &fmt_age_short(t, now)),
+    )
+}
+
+/// The backend's line on the row, read as a sentence in two halves with the
+/// slack between them: its lead word and what follows, with the verbs on what
+/// it says ([`Place::Line`]); then at the far end the verbs on what changed
+/// ([`Place::LineEnd`]) and the changes themselves.
+fn row_line(state: &State, href: &str, info: Option<&crate::vfs::RowInfo>) -> String {
+    let Some(info) = info else {
+        return String::new();
+    };
+    let verbs = |place: Place| -> String {
+        if !state.cfg.app_ui {
+            return String::new();
+        }
+        info.actions
+            .iter()
+            .filter(|a| a.place == place)
+            .map(|a| {
+                format!(
+                    "<a class=\"say\" href=\"{}\" title=\"{}\">{}</a>",
+                    html_escape(&act_href(state, href, &a.id)),
+                    html_escape(&a.title),
+                    html_escape(&a.label),
+                )
+            })
+            .collect()
+    };
+    let (start, end) = (verbs(Place::Line), verbs(Place::LineEnd));
+    if info.line.is_none() && info.warn.is_empty() && start.is_empty() && end.is_empty() {
+        return String::new();
+    }
+    let said = info
+        .line
+        .as_ref()
+        .map(|l| {
+            let lead = match l.lead.is_empty() {
+                true => String::new(),
+                false => format!(
+                    "<span class=\"lead{}\">{}</span> ",
+                    if l.lit { " lit" } else { "" },
+                    html_escape(&l.lead)
+                ),
+            };
+            format!("{lead}<span class=\"words\">{}</span>", twofold(&l.wide, &l.narrow))
+        })
+        .unwrap_or_default();
+    let warn: String = info
+        .warn
+        .iter()
+        .map(|w| format!("<span class=\"warn\">{}</span>", twofold(&w.wide, &w.narrow)))
+        .collect();
+    let end = match end.is_empty() && warn.is_empty() {
+        true => String::new(),
+        false => format!("<span class=\"end\">{end}{warn}</span>"),
+    };
+    format!("<span class=\"line\"><span class=\"start\">{said}{start}</span>{end}</span>")
+}
+
+/// A line over the rows saying the icons are switches, while nothing here is
+/// switched on: an outlined badge is a hint a reader can miss, and once one is
+/// lit the reader has found it. In the words of the toggle's own label.
+fn badge_hint(infos: &[Option<crate::vfs::RowInfo>]) -> String {
+    let badges = || {
+        infos
+            .iter()
+            .flatten()
+            .flat_map(|i| i.actions.iter())
+            .filter(|a| a.place == Place::Badge)
+    };
+    let Some(first) = badges().next() else {
+        return String::new();
+    };
+    if badges().any(|a| a.on) || infos.iter().flatten().any(|i| i.mark.is_some()) {
+        return String::new();
+    }
+    let mut label = first.label.chars();
+    let label: String = match label.next() {
+        Some(c) => c.to_lowercase().chain(label).collect(),
+        None => return String::new(),
+    };
+    format!(
+        "<li class=\"hint\"><span class=\"tap\">Tap</span><span class=\"click\">Click</span> an icon to {}</li>",
+        html_escape(&label)
+    )
+}
+
+/// The marks at a row's far end, in a fixed order: the backend's verbs that
+/// are neither the icon nor on the line, Download, and Delete last. Marks
+/// without words — these are the marks every file manager uses — with the
+/// words in the title.
+fn row_ends(
     state: &State,
     vfs: &dyn Vfs,
     rel: &[String],
     e: &crate::vfs::Entry,
     info: Option<&crate::vfs::RowInfo>,
-    now: std::time::SystemTime,
 ) -> String {
     let app = state.cfg.app_ui;
     let mut href = href_path(rel);
     if e.is_dir {
         href.push('/');
     }
-    let mut buttons = String::new();
+    let mut ends = String::new();
     if app {
         for a in info.map(|i| i.actions.as_slice()).unwrap_or_default() {
-            buttons.push_str(&strip_button(
-                if a.on { "on" } else { "" },
-                &act_href(state, &href, &a.id),
-                &svg_icon(&a.icon),
-                &a.label,
-                &a.title,
-            ));
+            if a.place == Place::Button {
+                ends.push_str(&end_button(
+                    if a.on { "on" } else { "" },
+                    &act_href(state, &href, &a.id),
+                    &a.icon,
+                    &a.title,
+                ));
+            }
         }
     }
     let unreachable = info.is_some_and(|i| i.unreachable);
     if !e.is_dir && vfs.downloadable() && !unreachable {
-        buttons.push_str(&strip_button(
+        ends.push_str(&end_button(
             "",
             &format!("{href}?dl=1"),
-            &svg_icon(ICON_DOWNLOAD),
-            "Download",
+            ICON_DOWNLOAD,
             &format!("Save a copy of {}", e.name),
         ));
     }
     if app && vfs.deletable() {
-        buttons.push_str(&strip_button(
+        ends.push_str(&end_button(
             "danger",
             &format!(
                 "/.ts/remove?path={}&t={}",
                 percent_encode(&href),
                 state.cfg.action_token
             ),
-            &svg_icon(ICON_DELETE),
-            "Delete…",
+            ICON_DELETE,
             &format!("Delete {}", e.name),
         ));
     }
-    // Nothing to do and nothing of the backend's to say: no ⋯. A line alone
-    // is still worth one — a name cut short, whose line says it in full.
-    let said = info.is_some_and(|i| i.line.is_some() || !i.warn.is_empty());
-    if buttons.is_empty() && !said {
-        return String::new();
-    }
-    let (wide, narrow) = match info.and_then(|i| i.line.as_ref()) {
-        Some(l) => (l.wide.clone(), l.narrow.clone()),
-        None => (String::new(), String::new()),
-    };
-    let modified = e.mtime.map(|t| format!("Modified {}", fmt_time_short(t, now)));
-    let narrow = match (modified, narrow.is_empty()) {
-        (Some(m), false) => format!("{m} · {narrow}"),
-        (Some(m), true) => m,
-        (None, _) => narrow,
-    };
-    let mut line = String::new();
-    if !wide.is_empty() || !narrow.is_empty() {
-        line.push_str("<span class=\"info\">");
-        if !wide.is_empty() {
-            line.push_str(&format!("<span class=\"wide\">{}</span>", html_escape(&wide)));
-        }
-        if !narrow.is_empty() {
-            line.push_str(&format!("<span class=\"narrow\">{}</span>", html_escape(&narrow)));
-        }
-        for w in info.map(|i| i.warn.as_slice()).unwrap_or_default() {
-            line.push_str(&format!(" <span class=\"warn\">{}</span>", html_escape(w)));
-        }
-        line.push_str("</span>");
-    }
-    format!("{line}{buttons}")
+    ends
 }
 
 /// A backend verb's link, which the shell claims: the row, the verb, and the
@@ -2196,15 +2286,14 @@ fn act_href(state: &State, href: &str, id: &str) -> String {
     )
 }
 
-/// One button of a row's strip: a mark and its word, always both — the strip
-/// has the width for them, and a row of bare marks under a row is a puzzle.
-fn strip_button(class: &str, href: &str, icon: &str, label: &str, title: &str) -> String {
+/// One mark at a row's far end, its words the title and what is read out.
+fn end_button(class: &str, href: &str, icon: &str, title: &str) -> String {
     format!(
-        "<a class=\"btn{}\" href=\"{}\" title=\"{}\">{icon}<span>{}</span></a>",
+        "<a class=\"end{}\" href=\"{}\" title=\"{t}\" aria-label=\"{t}\">{}</a>",
         if class.is_empty() { String::new() } else { format!(" {class}") },
         html_escape(href),
-        html_escape(title),
-        html_escape(label),
+        svg_icon(icon),
+        t = html_escape(title),
     )
 }
 
@@ -2263,32 +2352,28 @@ fn search_results(
         if recursive { " (recursive)" } else { "" },
         if truncated { ", truncated" } else { "" }
     );
-    let mut rows = String::new();
-    for (erel, e) in &results {
-        let mut full = rel.to_vec();
-        full.extend(erel.iter().cloned());
-        let mut href = href_path(&full);
-        if e.is_dir {
-            href.push('/');
-        }
-        rows.push_str(&format!(
-            "<tr><td>{}<a href=\"{}\">{}</a></td><td class=\"size\">{}</td><td class=\"time\">{}</td></tr>",
-            entry_icon(&e.name, e.is_dir),
-            html_escape(&href),
-            html_escape(&erel.join("/")),
-            if e.is_dir {
-                "&mdash;".to_string()
-            } else {
-                human_size(e.size)
-            },
-            e.mtime.map(fmt_time).unwrap_or_default(),
-        ));
+    // The same rows as the folder's own list, each asked of the backend on
+    // its own: the matches come from many folders, so there is no one
+    // listing to ask for all of them at once.
+    let now = std::time::SystemTime::now();
+    let fulls: Vec<Vec<String>> = results
+        .iter()
+        .map(|(erel, _)| rel.iter().chain(erel).cloned().collect())
+        .collect();
+    let infos: Vec<Option<crate::vfs::RowInfo>> =
+        fulls.iter().map(|f| vfs.row_info(&VfsPath::new(f.clone()))).collect();
+    let mut rows = String::from(
+        "<li class=\"head\"><span class=\"hn\">Path</span><span class=\"sz\">Size</span>\
+         <span class=\"when\">Modified</span></li>",
+    );
+    if state.cfg.app_ui {
+        rows.push_str(&badge_hint(&infos));
+    }
+    for (((erel, e), full), info) in results.iter().zip(&fulls).zip(&infos) {
+        rows.push_str(&entry_row(state, vfs, full, &erel.join("/"), e, info.as_ref(), false, now));
     }
     if !results.is_empty() {
-        out.push_str(&format!(
-            "<table class=\"listing\"><tr><th>Path</th><th class=\"size\">Size</th><th class=\"time\">Modified</th></tr>{}</table>",
-            rows
-        ));
+        out.push_str(&format!("<div class=\"entries-box\"><ul class=\"entries\">{rows}</ul></div>"));
     }
     out
 }
@@ -2778,7 +2863,7 @@ mod tests {
         let prefs = Prefs { sidebar: true, open: &open, ..prefs() };
         let html = listing_page(&state, &root, prefs, &shut, &VfsPath::new(shut.clone()), &[], "/shut/");
         assert!(html.contains("Permission denied."), "{html}");
-        assert!(!html.contains("<table class=\"listing\">"), "an empty table for a refusal");
+        assert!(!html.contains("<ul class=\"entries\">"), "an empty list for a refusal");
         // And the pane, where the reader has just clicked an arrow to find out
         // which of the two this is.
         assert!(html.contains("<li class=\"more\">not readable</li>"), "{html}");
@@ -3478,15 +3563,18 @@ mod tests {
             listing_page(state, &root, p, &rel, &VfsPath::new(rel.clone()), &q, "/")
         };
 
-        // A desktop's own folder, below the root: As root, and Download in
-        // the strip under a file's ⋯; and, on a desktop, Delete — which the
-        // shell sends to the Trash, folders included — and New folder.
+        // A desktop's own folder, below the root: As root, and Download at a
+        // file row's far end; and, on a desktop, Delete — which the shell
+        // sends to the Trash, folders included — and New folder.
         let sub = page(&state, Arc::clone(&plain.vfs), &["sub"], "");
         assert!(sub.contains("<span class=\"lbl\">As root</span>"), "{sub}");
         assert!(sub.contains("href=\"/.ts/root?path="), "{sub}");
-        assert!(sub.contains("<th class=\"act\"></th>"), "{sub}");
-        assert!(sub.contains("<details class=\"more\"><summary title=\"More for a.txt\""), "{sub}");
-        assert!(sub.contains("href=\"/sub/a.txt?dl=1\" title=\"Save a copy of a.txt\""), "{sub}");
+        assert!(sub.contains("<a class=\"end\" href=\"/sub/a.txt?dl=1\" title=\"Save a copy of a.txt\""), "{sub}");
+        // The time and its age, each in both lengths.
+        assert!(sub.contains("<span class=\"when\"><span class=\"t\"><span class=\"wide\">"), "{sub}");
+        // The way up is a whole row, saying what it is.
+        assert!(sub.contains("<li class=\"row parent\"><a href=\"/\">"), "{sub}");
+        assert!(sub.contains("<span class=\"dots\">..</span> (to folder <span class=\"to\">"), "{sub}");
         assert_eq!(sub.contains("/.ts/remove?path=%2Fsub%2Fdeeper%2F"), cfg!(not(target_os = "android")), "{sub}");
         assert_eq!(sub.contains("<a href=\"?new=folder\""), cfg!(not(target_os = "android")), "{sub}");
         // The pane's directory rows are a name and an arrow, no button.
@@ -3506,34 +3594,37 @@ mod tests {
         let html = page(&state, Arc::clone(&w), &["sub"], "");
         let token = &state.cfg.action_token;
         assert!(html.contains(&format!("/.ts/upload?dir=%2Fsub%2F&amp;t={token}")), "{html}");
-        // And Delete, last in each row's strip, folders included.
+        // And Delete, last at each row's far end, folders included.
         assert!(html.contains(&format!("href=\"/.ts/remove?path=%2Fsub%2Fa.txt&amp;t={token}\"")), "{html}");
         assert!(html.contains(&format!("href=\"/.ts/remove?path=%2Fsub%2Fdeeper%2F&amp;t={token}\"")), "{html}");
 
-        // The form, and a name sent back refused: kept in the box, the reason
-        // on a row of its own under it.
+        // The form, in the filter's place, and a name sent back refused: kept
+        // in the box, the reason under it.
         let html = page(&state, Arc::clone(&w), &["sub"], "new=folder&name=a.txt&err=Something%20named%20a.txt%20is%20already%20here.");
-        assert!(html.contains("<form method=\"get\" action=\"/.ts/mkdir\">"), "{html}");
+        assert!(html.contains("<form class=\"filter newdir\" method=\"get\" action=\"/.ts/mkdir\">"), "{html}");
+        assert!(!html.contains("name=\"q\""), "the filter gives way: {html}");
         assert!(html.contains(&format!("name=\"t\" value=\"{token}\"")), "{html}");
         assert!(html.contains("name=\"name\" value=\"a.txt\""), "{html}");
-        let form = html.find("class=\"newdir\"").unwrap();
-        let err = html.find("<tr class=\"newdir-err\"><td colspan=\"4\" role=\"alert\">Something named a.txt is already here.</td></tr>").expect(&html);
+        let form = html.find("class=\"filter newdir\"").unwrap();
+        let err = html.find("<p class=\"err\" role=\"alert\">Something named a.txt is already here.</p></form>").expect(&html);
         assert!(form < err, "the reason goes under the box");
 
         // What the shell just made is lit.
         let html = page(&state, Arc::clone(&w), &["sub"], "made=a.txt");
-        assert!(html.contains("<tr class=\"made\"><td>"), "{html}");
+        assert!(html.contains("<li class=\"row made\">"), "{html}");
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A backend's own say about its rows: the strip's line first, then its
-    /// verbs in order, then Download and Delete; a mark after a name; a row
-    /// with nothing behind it greyed and unlinked; a notice over the page; and
-    /// the verbs it wants on a file's own page, lit when on.
+    /// A backend's own say about its rows: its toggle as the row's icon, a
+    /// state it cannot change as the icon's badge greyed, its line and the
+    /// verbs on it under the name, its other verbs at the far end before
+    /// Download and Delete; a row with nothing behind it greyed and unlinked; a
+    /// hint while no toggle is on; a notice over the page; and the verbs it
+    /// wants on a file's own page, lit when on.
     #[test]
-    fn a_backend_adds_to_the_strip_and_the_page() {
-        use crate::vfs::{Notice, RowAction, RowInfo, RowLine};
+    fn a_backend_adds_to_the_rows_and_the_page() {
+        use crate::vfs::{Notice, Place, RowAction, RowInfo, RowLine, Words};
         use std::sync::Arc;
         struct Keeps(Arc<dyn Vfs>);
         impl Vfs for Keeps {
@@ -3560,29 +3651,41 @@ mod tests {
             }
             fn row_info(&self, p: &VfsPath) -> Option<RowInfo> {
                 let name = p.segments().last()?.as_str();
-                let keep = |on: bool| RowAction {
-                    id: "keep".into(),
+                let verb = |id: &str, label: &str, on: bool, place: Place| RowAction {
+                    id: id.into(),
                     icon: "<path d=\"M1 1h1\"/>".into(),
-                    label: "Keep offline".into(),
-                    title: "Keep a copy".into(),
+                    label: label.into(),
+                    title: format!("{label} it"),
                     on,
                     confirm: None,
-                    on_file_page: true,
+                    on_file_page: id == "keep",
+                    place,
                 };
                 match name {
                     "kept.txt" => Some(RowInfo {
-                        line: Some(RowLine { wide: "Held since noon".into(), narrow: "since 12:00".into() }),
-                        warn: vec!["changed on the server".into()],
+                        line: Some(RowLine {
+                            lead: "Offline".into(),
+                            lit: true,
+                            wide: "since noon".into(),
+                            narrow: "since 12:00".into(),
+                        }),
+                        warn: vec![Words { wide: "changed on the server".into(), narrow: "changed".into() }],
                         label: None,
                         mark: Some("Kept offline".into()),
-                        actions: vec![keep(true)],
+                        actions: vec![
+                            verb("update", "Update", false, Place::LineEnd),
+                            verb("forget", "Forget", false, Place::Line),
+                            verb("check", "Check", false, Place::Button),
+                            verb("keep", "Keep offline", true, Place::Badge),
+                        ],
                         unreachable: false,
                     }),
+                    "held.txt" => Some(RowInfo { mark: Some("Kept with its folder".into()), ..Default::default() }),
                     "away.txt" => Some(RowInfo { unreachable: true, ..Default::default() }),
                     _ => Some(RowInfo {
                         label: Some(format!("…{}", &name[name.len() - 5..])),
-                        line: Some(RowLine { wide: "Not held".into(), narrow: "not held".into() }),
-                        actions: vec![keep(false)],
+                        line: Some(RowLine { wide: "Not held".into(), narrow: "not held".into(), ..Default::default() }),
+                        actions: vec![verb("keep", "Keep offline", false, Place::Badge)],
                         ..Default::default()
                     }),
                 }
@@ -3606,7 +3709,7 @@ mod tests {
         }
 
         let dir = tmp_dir("extras");
-        for f in ["kept.txt", "plain.txt", "away.txt"] {
+        for f in ["kept.txt", "plain.txt", "away.txt", "held.txt"] {
             fs::write(dir.join(f), b"hello").unwrap();
         }
         let mut state = state_at(dir.clone());
@@ -3622,28 +3725,51 @@ mod tests {
         fs::create_dir_all(dir.join("subfolder")).unwrap();
         let sub = listing_page(&state, &root, prefs(), &["subfolder".into()], &VfsPath::new(vec!["subfolder".into()]), &[], "/subfolder/");
         assert!(sub.contains(&format!("<a class=\"again\" href=\"/.ts/act?path=%2Fsubfolder&amp;a=update&amp;t={token}\">Update</a>")), "{sub}");
-        // Kept: the mark, the backend's line in both forms, the warning, then the
-        // lit toggle, Download, and Delete — in that order.
-        let kept = html.find("<a href=\"/kept.txt\">kept.txt</a><span class=\"rowmark\" title=\"Kept offline\"").expect(&html);
+        // Kept: the icon is the toggle, lit, the bookmark filled on it; the
+        // name, the time, then the line — its lead lit, its words in both
+        // lengths, the verb on them; the slack; the verb on what changed and
+        // the change — and at the far end the backend's other verb, Download,
+        // and Delete, in that order.
+        let kept = html.find(&format!(
+            "<a class=\"icon badge on\" href=\"/.ts/act?path=%2Fkept.txt&amp;a=keep&amp;t={token}\" title=\"Keep offline it\" \
+             aria-label=\"Keep offline it\" aria-pressed=\"true\">"
+        )).expect(&html);
         let after = &html[kept..];
-        let line = after.find("<span class=\"wide\">Held since noon</span>").expect(after);
-        // Narrow, the row's modified time leads, since that column goes.
-        assert!(after.contains("<span class=\"narrow\">Modified "), "{after}");
-        assert!(after.contains(" · since 12:00</span>"), "{after}");
-        let warn = after.find("<span class=\"warn\">changed on the server</span>").expect(after);
-        let toggle = after.find(&format!("<a class=\"btn on\" href=\"/.ts/act?path=%2Fkept.txt&amp;a=keep&amp;t={token}\"")).expect(after);
-        let dl = after.find("href=\"/kept.txt?dl=1\"").expect(after);
-        let del = after.find("href=\"/.ts/remove?path=%2Fkept.txt").expect(after);
-        assert!(line < warn && warn < toggle && toggle < dl && dl < del, "{after}");
-        // Nothing held: said so, and the toggle off.
+        let name = after.find("<a class=\"name\" href=\"/kept.txt\">kept.txt</a>").expect(after);
+        let when = after.find("<span class=\"when\">").expect(after);
+        let line = after.find("<span class=\"line\"><span class=\"start\"><span class=\"lead lit\">Offline</span> <span class=\"words\">\
+             <span class=\"wide\">since noon</span><span class=\"narrow\">since 12:00</span></span>").expect(after);
+        let forget = after.find(&format!("<a class=\"say\" href=\"/.ts/act?path=%2Fkept.txt&amp;a=forget&amp;t={token}\" title=\"Forget it\">Forget</a>")).expect(after);
+        let gap = after.find("<span class=\"end\">").expect(after);
+        let update = after.find("a=update").expect(after);
+        let warn = after.find("<span class=\"warn\"><span class=\"wide\">changed on the server</span><span class=\"narrow\">changed</span></span>").expect(after);
+        let check = after.find(&format!("<a class=\"end\" href=\"/.ts/act?path=%2Fkept.txt&amp;a=check&amp;t={token}\"")).expect(after);
+        let dl = after.find("<a class=\"end\" href=\"/kept.txt?dl=1\"").expect(after);
+        let del = after.find("<a class=\"end danger\" href=\"/.ts/remove?path=%2Fkept.txt").expect(after);
+        let order = [name, when, line, forget, gap, update, warn, check, dl, del];
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?} {after}");
+        // Neither toggle nor verb twice: each verb is in one place.
+        assert_eq!(after[..del].matches("a=keep").count(), 1, "{after}");
+        // A state with no toggle: the bookmark greyed on an icon that is no link.
+        assert!(html.contains("<span class=\"icon badge held\" title=\"Kept with its folder\""), "{html}");
+        // Not held: the toggle off, its bookmark outlined.
+        assert!(html.contains(&format!("<a class=\"icon badge\" href=\"/.ts/act?path=%2Fplain.txt&amp;a=keep&amp;t={token}\"")), "{html}");
         assert!(html.contains("<span class=\"wide\">Not held</span>"), "{html}");
         // A label is what the row shows; its name stays the address and the title.
-        assert!(html.contains("<a href=\"/plain.txt\" title=\"plain.txt\">…n.txt</a>"), "{html}");
-        assert!(html.contains(&format!("<a class=\"btn\" href=\"/.ts/act?path=%2Fplain.txt&amp;a=keep&amp;t={token}\"")), "{html}");
+        assert!(html.contains("<a class=\"name\" href=\"/plain.txt\" title=\"plain.txt\">…n.txt</a>"), "{html}");
+        // No lead, no lit lead.
+        assert!(!html.contains("<span class=\"lead\""), "{html}");
         // Nothing behind it: greyed, a name and not a link, and no Download.
-        assert!(html.contains("<tr class=\"miss\"><td>"), "{html}");
-        assert!(html.contains("<span>away.txt</span>"), "{html}");
+        assert!(html.contains("<li class=\"row miss\">"), "{html}");
+        assert!(html.contains("<span class=\"name\">away.txt</span>"), "{html}");
         assert!(!html.contains("/away.txt?dl=1"), "{html}");
+        // Something here is kept, so no hint; where nothing is, the hint, in
+        // the toggle's words.
+        assert!(!html.contains("class=\"hint\""), "{html}");
+        fs::write(dir.join("subfolder").join("other.txt"), b"hello").unwrap();
+        let sub = listing_page(&state, &root, prefs(), &["subfolder".into()], &VfsPath::new(vec!["subfolder".into()]), &[], "/subfolder/");
+        assert!(sub.contains("<li class=\"hint\"><span class=\"tap\">Tap</span><span class=\"click\">Click</span> \
+             an icon to keep offline</li>"), "{sub}");
 
         // The file's own page: the notice, and the toggle after Download, lit.
         let rel = vec!["kept.txt".to_string()];

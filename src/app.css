@@ -23,6 +23,10 @@
   /* How much of `--link` a switch that is on is filled with. More in dark,
      where 14% of a blue over near-black was a fill nobody could see. */
   --on-tint: 14%;
+  /* The same tints as plain colours, for the press highlight, which the
+     WebView draws only from a colour it can read without working it out. */
+  --press: rgba(9, 105, 218, .14);
+  --press-err: rgba(207, 34, 46, .14);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -42,6 +46,8 @@
     --warning: #d29922;
     --caution: #f85149;
     --on-tint: 28%;
+    --press: rgba(68, 147, 248, .28);
+    --press-err: rgba(255, 123, 114, .28);
   }
 }
 :root[data-theme="dark"] {
@@ -61,6 +67,8 @@
   --warning: #d29922;
   --caution: #f85149;
   --on-tint: 28%;
+  --press: rgba(68, 147, 248, .28);
+  --press-err: rgba(255, 123, 114, .28);
 }
 
 * { box-sizing: border-box; }
@@ -1076,98 +1084,250 @@ table.listing td.size, table.listing td.time, table.listing th.size, table.listi
   text-align: right;
 }
 /* A handset held upright: 1.5rem of side padding per cell was a fifth of the
-   row across four columns, and with the actions column the table no longer
-   fit 360px — the whole page scrolled sideways by a sliver. Tighter cells
-   give it back, and the names the room they were wrapping for. Modified goes
-   too: a row's strip says it, in the short form, when ⋯ is opened. */
+   row, and the table no longer fit 360px. Tighter cells give it back, and
+   Modified goes. Search results only; a folder's rows are below. */
 @media (max-width: 30rem) {
   table.listing th, table.listing td { padding-left: .4rem; padding-right: .4rem; }
-  table.listing td.act, table.listing th.act { padding: 0; }
   table.listing td.time, table.listing th.time { display: none; }
 }
-/* A row's ⋯, at its far end: a mark in a box the row's height, narrow enough
-   that the column costs little and wide enough to aim at. A `<details>` with
-   nothing inside, so the page needs no script to open it; what it opens is the
-   strip in the next row, below. */
-table.listing td.act, table.listing th.act { width: 2.75rem; padding: 0; text-align: center; }
-details.more summary {
+
+/* A folder's rows: everything a row offers is in it, nothing behind a menu.
+   Each row is a grid, so one set of markup lays out two ways, by the list's
+   own width rather than the window's — beside an open pane a wide window has
+   a narrow list.
+
+   Wide: the icon, the name and its size, Modified as the time over its age,
+   and the marks; the icon, Modified and the marks span both lines of the row
+   and the backend's line, where there is one, is the second line of Name and
+   Size. Without a line the row is one band.
+
+   The list is the grid and each row a subgrid of its columns, so Size,
+   Modified and the marks line up down the list however many marks a row has.
+   The box around it is what the width is asked of: a container cannot ask
+   its own width. */
+.entries-box { container-type: inline-size; max-width: 60rem; }
+ul.entries {
   list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto auto auto;
+  column-gap: .6rem;
+}
+.entries > li { grid-column: 1 / -1; border-bottom: 1px solid var(--border); }
+.entries .row, .entries .head {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-template-areas: "ic nm sz when ends";
+  align-items: center;
+  padding: var(--row-air) .4rem;
+}
+.entries .row.lined { grid-template-areas: "ic nm sz when ends" "ic line line when ends"; }
+.entries .head { font-size: .8rem; font-weight: 600; color: var(--muted); padding-top: .3rem; padding-bottom: .3rem; }
+.entries .head .hn { grid-column: 2; grid-row: 1; }
+.entries .nm { grid-area: nm; display: contents; }
+/* The name starts where the words of the line under it do, inside the
+   line's padding, so a row with a line and one without read as one column;
+   the heading over them too. */
+.entries .name { grid-area: nm; overflow-wrap: anywhere; padding-left: .5rem; }
+.entries .head .hn { padding-left: .5rem; }
+.entries .sz, .entries .when { color: var(--muted); font-size: .85rem; text-align: right; white-space: nowrap; }
+.entries .sz { grid-area: sz; }
+.entries .when { grid-area: when; line-height: 1.35; }
+.entries .when > span { display: block; }
+.entries .when .ago { font-size: .8rem; }
+.entries .narrow { display: none; }
+/* Icons a size up from the rest of the app's marks: the icon is also the
+   row's toggle, and a thumb's target. */
+.entries .icon {
+  grid-area: ic;
+  position: relative;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.entries .icon > svg.mark { width: 28px; height: 28px; stroke-width: 1.05; }
+/* Folders grey as files are: the name says which is which, and a blue icon
+   beside a blue badge read as one mark. The way up keeps the link colour. */
+.entries .icon.dir { color: var(--muted); }
+.entries .row.parent .icon { color: var(--link); }
+/* The row opens from anywhere on it that is not a control of its own: the
+   name's link is stretched over the row, and the icon, the line and the marks
+   sit above it. Only the name is drawn as a link. */
+.entries .row { position: relative; }
+.entries a.name::after { content: ""; position: absolute; inset: 0; }
+.entries .row > .icon, .entries .line, .entries .ends { position: relative; z-index: 1; }
+@media (hover: hover) {
+  .entries .row:hover { background: var(--bg-subtle); --row-bg: var(--bg-subtle); }
+}
+
+/* The way up: the whole row is the link. Not `.up`, which is the header's Up. */
+.entries .row.parent { padding: 0; }
+.entries .row.parent > a {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: var(--row-air) .4rem;
+  text-decoration: none;
+  background: var(--bg-subtle);
+}
+/* One line of text, so the dots and the words share a baseline whatever the
+   font: as two boxes centred apart, each sat by its own font's measures, and
+   a lift that levelled them on Android left them high on Windows. The dots
+   sit where the font puts them, on the baseline. They and the folder are the
+   link's colour, the words between them muted. */
+.entries .row.parent .way { color: var(--muted); font-size: .9rem; }
+.entries .row.parent .dots { color: var(--link); font-weight: 700; }
+.entries .row.parent .to { color: var(--link); }
+
+/* The badge: a small bookmark on the icon's lower right, in a patch of the
+   row's own background so it reads as stuck on rather than drawn into the
+   icon. In the link colour, outlined and filled with the page when the
+   toggle is off and filled when on; filled grey for a state the row cannot
+   change itself — kept with its folder, say — on an icon that is then no
+   link. */
+.icon .pin {
+  position: absolute;
+  right: -1px;
+  bottom: 2px;
+  display: flex;
+  padding: 1px;
+  border-radius: 3px;
+  background: var(--row-bg, var(--bg));
+  color: var(--muted);
+}
+.icon .pin svg.mark { width: 16px; height: 16px; stroke-width: 1.5; }
+.icon.badge .pin { color: var(--link); }
+.icon.badge:not(.on):not(.held) .pin path { fill: var(--row-bg, var(--bg)); }
+.icon.badge.held .pin { color: var(--muted); }
+a.icon.badge { text-decoration: none; border-radius: 10px; }
+/* Under the pointer the switch answers: a tint behind the icon, as the marks
+   at the far end have, and an off bookmark filled part way toward on, in the
+   same blue. A grey one is no link and does not answer. The words say what a
+   press does, in the title. */
+@media (hover: hover) {
+  a.icon.badge:hover {
+    background: color-mix(in srgb, var(--link) var(--on-tint), transparent);
+    /* The bookmark's patch takes the tint too, over the hovered row's grey. */
+    --row-bg: color-mix(in srgb, var(--link) var(--on-tint), var(--bg-subtle));
+  }
+  a.icon.badge:not(.on):hover .pin path { fill: color-mix(in srgb, var(--link) 40%, var(--row-bg, var(--bg))); }
+}
+
+/* The backend's line: a sentence in two halves with the slack between them —
+   *Offline* and when, then Forget; at the far end Update and what changed.
+   The lead is bold, in the text colour where the row is kept and muted
+   where not; never the link colour, since it is no link. A faint tint ties the line to its row. On a touch screen its words
+   take more height than their text to be aimed at, without moving it. */
+/* Two halves: the start runs as text — the lead, the words, the verbs on
+   them — and the end, the verbs on what changed and the change, takes the
+   right end. Where both do not fit on one line the end goes under the start,
+   still at the right, rather than squeezing it; a word is broken only where
+   it cannot fit a line at all, so a date stays whole. */
+.entries .line {
+  grid-area: line;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: .3rem .75rem;
+  min-width: 0;
+  margin-top: .3rem;
+  padding: .2rem .5rem;
+  border-radius: 6px;
+  font-size: .8rem;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--link) 5%, transparent);
+}
+.line .start { flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
+.line .end { flex: none; margin-left: auto; display: flex; align-items: center; gap: .3rem; white-space: nowrap; }
+.line .lead { font-weight: 600; }
+.line .lead.lit { color: var(--fg); }
+.line a.say { color: var(--link); text-decoration: none; font-weight: 500; white-space: nowrap; }
+.line .start a.say { margin-left: .4rem; }
+:root[data-touch] .line a.say { padding: .4rem 0; }
+.line .warn { color: var(--warning); }
+
+/* The marks at a row's far end: the backend's verbs, Download, Delete. Marks
+   alone, each a box the size of the icon, in the muted colour every other
+   mark in the listing has. Delete turns red only under the pointer or the
+   thumb, since a column of red bins down a listing would shout at every row. */
+.entries .ends { grid-area: ends; display: flex; justify-content: flex-end; gap: .25rem; }
+a.end {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 2.5rem;
-  min-height: var(--row-min);
-  border-radius: 8px;
+  height: 2.5rem;
+  border-radius: 50%;
   color: var(--muted);
-  cursor: pointer;
 }
-details.more summary::-webkit-details-marker { display: none; }
-details.more[open] summary {
-  color: var(--link);
+a.end svg.mark { width: 20px; height: 20px; }
+a.end.on { color: var(--link); }
+/* A press. A finger gets the WebView's own highlight the moment it lands,
+   in the shape of what it landed on — `:active` comes a beat later, held
+   back in case the touch is a scroll — so the highlight is drawn in the press
+   tint, the link's colour much dimmer and red for Delete. Then `:active`
+   takes over with the same tint, the mark in its colour and an off bookmark
+   filled part way, and holds while the finger does. */
+a, button, label { -webkit-tap-highlight-color: var(--press); }
+a.end.danger { -webkit-tap-highlight-color: var(--press-err); }
+a.end:active { color: var(--link); background: color-mix(in srgb, var(--link) var(--on-tint), transparent); }
+a.end.danger:active { color: var(--err); background: color-mix(in srgb, var(--err) var(--on-tint), transparent); }
+a.icon.badge:active {
   background: color-mix(in srgb, var(--link) var(--on-tint), transparent);
+  --row-bg: color-mix(in srgb, var(--link) var(--on-tint), var(--bg-subtle));
 }
+a.icon.badge:not(.on):active .pin path { fill: color-mix(in srgb, var(--link) 40%, var(--row-bg, var(--bg))); }
+/* The hover's tint is the link's, not the row's grey, which a hovered row
+   already is and against which a grey tint does not show. */
 @media (hover: hover) {
-  details.more summary:hover { color: var(--link); background: var(--bg-subtle); }
+  a.end:hover { color: var(--link); background: color-mix(in srgb, var(--link) var(--on-tint), transparent); }
+  a.end.danger:hover { color: var(--err); background: color-mix(in srgb, var(--err) var(--on-tint), transparent); }
 }
-/* The strip, shown only under a row whose ⋯ is open. Written as a hide, so an
-   engine without `:has` shows every strip rather than none of them. */
-table.listing tr:not(:has(details.more[open])) + tr.strip { display: none; }
-table.listing tr.strip td {
-  padding: .3rem .75rem .5rem 2.1rem;
-  background: color-mix(in srgb, var(--link) 6%, transparent);
-}
-tr.strip .acts { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
-/* What is known first, then what can be done: the words, then the buttons in
-   their fixed order. Wide, one line; narrow, the words take a line of their
-   own and the buttons wrap under them — and Delete keeps the far end. */
-tr.strip .info { color: var(--muted); font-size: .85rem; margin-right: .4rem; }
-tr.strip .info .narrow { display: none; }
-tr.strip .warn {
-  font-size: .75rem;
-  color: var(--warning);
-  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
-  border-radius: 9px;
-  padding: 0 .4rem;
-  white-space: nowrap;
-}
-@media (max-width: 30rem) {
-  table.listing tr.strip td { padding-left: .6rem; padding-right: .6rem; }
-  tr.strip .info { flex-basis: 100%; }
-  tr.strip .info .wide { display: none; }
-  tr.strip .info .narrow { display: inline; }
-}
-tr.strip a.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: .35rem;
-  min-height: 2.25rem;
-  padding: 0 .7rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: .9rem;
-  text-decoration: none;
-  white-space: nowrap;
-}
-tr.strip a.btn.on {
-  color: var(--link);
-  border-color: var(--link);
-  background: color-mix(in srgb, var(--link) var(--on-tint), var(--bg));
-}
-tr.strip a.btn.danger { color: var(--err); margin-left: auto; }
-@media (hover: hover) {
-  tr.strip a.btn:hover { border-color: var(--link); }
-  tr.strip a.btn.danger:hover { border-color: var(--err); }
-}
-/* The one state of a row worth showing before ⋯ is opened — a copy kept on
-   this device, say — as a filled mark after its name. */
-.rowmark { color: var(--link); margin-left: .3rem; }
-.rowmark svg { vertical-align: -2px; }
+
+/* The hint over the rows while no icon here is switched on, worded for the
+   pointer at hand. */
+.entries .hint { padding: .2rem .4rem; font-size: .8rem; color: var(--muted); border-bottom-style: dashed; }
+.hint .tap, :root[data-touch] .hint .click { display: none; }
+:root[data-touch] .hint .tap { display: inline; }
+.entries .empty { padding: var(--row-air) .4rem; }
+
 /* A row with nothing behind it that can be served now: greyed, and its name is
    not a link. */
-table.listing tr.miss td, table.listing tr.miss .icon { color: var(--muted); }
-table.listing tr.miss td:first-child span:not(.icon) { opacity: .7; }
+.entries .row.miss .icon, .entries .row.miss .name { color: var(--muted); }
+.entries .row.miss .name { opacity: .7; }
+
+/* Narrow: no heading, since there are no columns to head. The name over its
+   time is one block, and the icon and the marks are centred on it; the line
+   runs under all three. A name and its size wrap as two items with the
+   slack between them, so a name too long for the line takes the lines it
+   needs and the size drops to the last, at the right. The time and its age
+   are one short line; the line's words and the changes their short forms. */
+@container (max-width: 40rem) {
+  .entries .head { display: none; }
+  ul.entries { grid-template-columns: 2.5rem minmax(0, 1fr) auto; column-gap: .5rem; }
+  .entries .row { grid-template-areas: "ic nm ends" "ic when ends"; }
+  .entries .row.lined { grid-template-areas: "ic nm ends" "ic when ends" "line line line"; }
+  .entries .nm { display: flex; flex-wrap: wrap; column-gap: .5rem; align-items: baseline; align-self: end; }
+  .entries .sz { margin-left: auto; }
+  .entries .sz.none { display: none; }
+  .entries .when { align-self: start; text-align: left; font-size: .8rem; }
+  .entries .when > span { display: inline; }
+  .entries .when .ago::before { content: " · "; }
+  .entries .when .ago { font-size: inherit; }
+  .entries .wide { display: none; }
+  .entries .narrow { display: inline; }
+  .entries .name { padding-left: 0; }
+  .line .warn .narrow {
+    font-size: .75rem;
+    border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+    border-radius: 9px;
+    padding: 0 .4rem;
+  }
+}
 /* A page that is not what it seems — a copy, served while its source does not
    answer — says so over its content. */
 .notice {
@@ -1195,6 +1355,10 @@ table.listing tr.miss td:first-child span:not(.icon) { opacity: .7; }
 .icon svg { vertical-align: -3px; }
 
 form.filter { margin: 0 0 1rem; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; max-width: 60rem; }
+/* The box gives and takes the room, so the box, *recursive* and Filter keep
+   one line on a 400px phone rather than Filter wrapping under them. Its cap
+   is past what a phone held upright has left, so there it takes the whole
+   line; on its side, or anything wider, it stops at the cap. */
 form.filter input[type="text"] {
   background: var(--bg);
   color: var(--fg);
@@ -1202,7 +1366,9 @@ form.filter input[type="text"] {
   border-radius: 6px;
   padding: .3rem .6rem;
   font: inherit;
-  width: 14rem;
+  flex: 1 1 6rem;
+  min-width: 0;
+  max-width: 20rem;
 }
 form.filter label { font-size: .85rem; color: var(--muted); }
 form.filter button {
@@ -1219,23 +1385,19 @@ form.filter button {
 }
 .matchnote { color: var(--muted); font-size: .85rem; margin: 0 0 .75rem; }
 
-/* New folder's row, at the top of the table: the name box with its two
-   buttons, the filter's shapes, and Create filled as the thing Enter does.
-   On a phone the box takes the line and the buttons go under it. */
-table.listing tr.newdir td { background: color-mix(in srgb, var(--link) 6%, transparent); }
-tr.newdir form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0; }
-tr.newdir input[type="text"] {
-  flex: 1 1 14rem;
-  max-width: 24rem;
+/* New folder's form, in the filter's place over the rows: the name box with
+   its two buttons, the filter's shapes, and Create filled as the thing Enter
+   does. The box gives way, as the filter's does, so all of it keeps one
+   line on a phone; why a
+   name came back takes a line of its own under them, since beside the box a
+   long reason squeezed it and pushed the buttons off. */
+form.newdir .icon { width: auto; }
+form.newdir .icon svg.mark { width: 24px; height: 24px; }
+form.newdir input[type="text"] {
   min-height: 2.25rem;
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--link);
-  border-radius: 6px;
-  padding: .3rem .6rem;
-  font: inherit;
+  border-color: var(--link);
 }
-tr.newdir button, tr.newdir a.cancel {
+form.newdir button, form.newdir a.cancel {
   min-height: 2.25rem;
   display: inline-flex;
   align-items: center;
@@ -1248,23 +1410,15 @@ tr.newdir button, tr.newdir a.cancel {
   cursor: pointer;
   text-decoration: none;
 }
-tr.newdir button.primary { background: var(--link); border-color: var(--link); color: var(--bg); font-weight: 600; }
-/* Why the name came back, on a line of its own under the box rather than
-   beside it: beside it, a long reason squeezed the box on a phone and pushed
-   the buttons off the row. */
-table.listing tr.newdir-err td {
-  color: var(--err);
-  font-size: .85rem;
-  padding-top: 0;
-  background: color-mix(in srgb, var(--link) 6%, transparent);
-}
+form.newdir button.primary { background: var(--link); border-color: var(--link); color: var(--bg); font-weight: 600; }
+form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .85rem; }
 /* A row the shell just made — a folder, an upload — lit and then let go, so
    the eye finds it and the page does not stay marked. No script: the page is
    drawn with the class and the animation does the rest. */
 @keyframes made { from { background: color-mix(in srgb, var(--link) 22%, transparent); } }
-table.listing tr.made td { animation: made 3s ease-out; }
+.entries .row.made { animation: made 3s ease-out; }
 @media (prefers-reduced-motion: reduce) {
-  table.listing tr.made td { animation: none; background: color-mix(in srgb, var(--link) 10%, transparent); }
+  .entries .row.made { animation: none; background: color-mix(in srgb, var(--link) 10%, transparent); }
 }
 
 /* Code view: gutter + code panes share metrics so lines align. */
@@ -2011,7 +2165,7 @@ body.nothing .start .row > a.aside {
   }
   header, footer, nav.tree, #ts-drawer ~ .shell nav.tree, form.filter, .matchnote, .filemeta .lnsw,
   .drawer-toggle, .drawer-btn, .drawer-scrim,
-  table.listing .act, table.listing tr.strip { display: none; }
+  .entries .ends, .entries .hint { display: none; }
   body {
     display: block;
     height: auto;
