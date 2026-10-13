@@ -53,7 +53,7 @@ The header shows the path, and each part of it opens that folder. In a folder
 below the top, **As root** starts the tree at that folder, so you can open it
 without the dialog.
 
-**Close** (the cross on the **Files** heading) returns to the start page. At the
+**Close** (the arrow leaving a frame, on the **Files** heading) returns to the start page. At the
 top of the open folder the header button is **Start** and does the same thing.
 Nothing asks you to confirm; the folder is in Recent. **Up** is the parent
 folder.

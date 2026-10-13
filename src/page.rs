@@ -253,6 +253,12 @@ const ICON_PINNED: &str =
 const ICON_AS_ROOT: &str = "<path d=\"M9.8 3.4h2.8v9.2H9.8\"/><path d=\"M3.4 8h5.8\"/>\
      <path d=\"M6.8 5.6L9.2 8l-2.4 2.4\"/>";
 
+/// "Close this folder": `ICON_AS_ROOT` the other way round, an arrow leaving
+/// through the side of a frame. Not the cross, which on the Files heading — at
+/// the top right of a drawer, on a phone — reads as closing the drawer.
+const ICON_CLOSE_ROOT: &str = "<path d=\"M6.2 3.4H3.4v9.2h2.8\"/><path d=\"M6.8 8h5.8\"/>\
+     <path d=\"M10.2 5.6L12.6 8l-2.4 2.4\"/>";
+
 /// Line numbers: the lines they count, with the numbers beside them when they are
 /// on. Presence, not fill, for this one — the marks in the gutter *are* the
 /// numbers, so drawing them is what "on" means and anything else reads backwards.
@@ -933,8 +939,9 @@ fn head_and_header(
     };
     let drawer_btn = if drawer {
         format!(
-            "\n  <label for=\"ts-drawer\" class=\"drawer-btn\" title=\"Open the sidebar\">\
-             <span class=\"ico\">{}</span><span class=\"lbl\">Sidebar</span></label>",
+            "\n  <label for=\"ts-drawer\" class=\"drawer-btn\" title=\"Show or hide the sidebar\">\
+             <span class=\"ico\">{}</span><span class=\"lbl\" aria-hidden=\"true\">Sidebar</span>\
+             <span class=\"sr shut\">Sidebar: closed</span><span class=\"sr open\">Sidebar: open</span></label>",
             svg_icon(ICON_MENU)
         )
     } else {
@@ -1260,7 +1267,7 @@ fn pane_html(
     if state.cfg.app_ui {
         acts.push((
             "/.ts/close".to_string(),
-            ICON_CROSS.to_string(),
+            ICON_CLOSE_ROOT.to_string(),
             "Close this folder".to_string(),
         ));
     }
@@ -4064,8 +4071,11 @@ mod tests {
         assert!(on.contains("aria-label=\"Sidebar: on\""), "{on}");
         assert!(off.contains("aria-label=\"Sidebar: off\""), "{off}");
         assert!(on.contains("aria-label=\"Light, theme\""), "{on}");
-        // The drawer is the same control at a narrow width, under the same word.
-        assert!(on.contains("class=\"drawer-btn\" title=\"Open the sidebar\"><span class=\"ico\">"), "{on}");
+        // The drawer is the same control at a narrow width, under the same word,
+        // its state in the name as the switch's is: the stylesheet shows one of
+        // the two, and both start with the word on screen.
+        assert!(on.contains("class=\"drawer-btn\" title=\"Show or hide the sidebar\"><span class=\"ico\">"), "{on}");
+        assert!(on.contains("<span class=\"sr shut\">Sidebar: closed</span><span class=\"sr open\">Sidebar: open</span>"), "{on}");
         // Line numbers the same way, on the meta line now: the word is the
         // name, the paint and the name carry whether it is on.
         let ln = |ln| ln_switch(Prefs { ln, ..prefs() }, "/");

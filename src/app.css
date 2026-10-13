@@ -521,6 +521,8 @@ body.nopane nav.tree { display: none; }
    its control whatever the control is doing, which is what makes this the one
    version of "remember a click" a page with no script in it can have. */
 .drawer-toggle, .drawer-btn, .drawer-scrim { display: none; }
+/* Words for a screen reader alone: in the accessibility tree, not on screen. */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .shell { display: flex; align-items: stretch; flex: 1; min-height: 0; overflow: hidden; }
 nav.tree {
@@ -1683,9 +1685,10 @@ nav.tree {
    the listing instead of beside it.
    The drawer closes on every navigation, because a new page arrives with a
    fresh unchecked checkbox in it. That is the behaviour anyway: what you opened
-   the tree for was to go somewhere, and you are now there. */
+   the tree for was to go somewhere, and you are now there. So it slides in and,
+   from a tap outside it or on the button, out; a link in it leaves the page
+   before there is anything to slide. */
 @media (max-width: 50rem) {
-  nav.tree { display: none; }
   /* A pill like the rest, word and all: it stands in the slot the Sidebar
      switch had, under the same word, and drops it when the row does. A mark
      alone here, in a row still showing words, read as a stray. */
@@ -1724,35 +1727,86 @@ nav.tree {
   @media (hover: hover) {
     .drawer-btn:hover { color: var(--link); border-color: var(--link); }
   }
+  /* The button stays on screen while the drawer is out, lit as a switch is,
+     and closes it: it is a label for the same checkbox. The drawer's top is
+     the bottom of the header's first row, which is where this button always
+     is — the rows under it are the page's, and the drawer may cover them. A
+     close mark inside the drawer would sit beside the Files heading's own
+     marks and be taken for one of them, or they for it. */
+  #ts-drawer:checked ~ header .drawer-btn {
+    color: var(--link);
+    border-color: var(--link);
+    background: var(--bg-subtle);
+    background: color-mix(in srgb, var(--link) var(--on-tint), transparent);
+  }
+  /* Its name carries the state, as the pane switch's does — *Sidebar: open*
+     — since the checkbox is hidden from a screen reader. Read when focus next
+     lands on it, not as it changes: without a script there is no live region
+     to say so at once. */
+  .drawer-btn .open, #ts-drawer:checked ~ header .drawer-btn .shut { display: none; }
+  #ts-drawer:checked ~ header .drawer-btn .open { display: inline; }
   /* Fixed rather than absolute, so the drawer is the height of the window and
      not of a listing that may be twenty screens long. `max-width: none` undoes
      the two rules above that narrow the pane as the window does — in here the
      width is the window's to divide, and 85vw leaves enough of the listing
-     showing to say that this is over it and closes. */
-  #ts-drawer:checked ~ .shell nav.tree {
+     showing to say that this is over it and closes.
+     Always laid out and parked off the left edge, rather than `display: none`
+     until it is wanted, so that opening it is a change of `transform` that can
+     be animated. `visibility` keeps the parked drawer out of reach of Tab and
+     of a screen reader, as `display` did; it waits for the slide out to end
+     before it hides it. The id outranks `body.nopane nav.tree`: the switch that
+     turned the pane off is not on screen here to have said anything. */
+  /* The first row's pill and the `.5rem` under it: the header's bottom edge
+     where it is one row, inside the second row where there are two. */
+  body { --drawer-top: calc(max(.5rem, var(--safe-top)) + 2.5rem + .5rem); }
+  #ts-drawer ~ .shell nav.tree {
     display: block;
     position: fixed;
-    top: 0;
+    top: var(--drawer-top);
     bottom: 0;
     left: 0;
-    /* Over the window rather than inside the layout, so nothing above it has
-       already kept clear of the status bar or the gesture strip on its behalf:
-       here the drawer is the thing at the screen's edge and pays for all of it. */
-    padding-top: max(.75rem, var(--safe-top));
+    /* Only the gesture strip is the drawer's to pay for: the status bar is
+       above the header's first row, which keeps clear of it. */
+    padding-top: .75rem;
     padding-bottom: max(.8rem, var(--safe-bottom));
     width: min(17rem, 85vw);
     max-width: none;
     z-index: 30;
     overflow-y: auto;
     box-shadow: 0 0 24px rgba(0, 0, 0, .35);
+    /* The shadow on the side over the page only: upward it greyed the first
+       row, which the drawer is meant to leave as it was. */
+    clip-path: inset(0 -32px 0 0);
+    transform: translateX(calc(-100% - 24px));
+    visibility: hidden;
+    transition: transform .2s ease, visibility 0s linear .2s;
   }
-  #ts-drawer:checked ~ .shell .drawer-scrim {
+  #ts-drawer:checked ~ .shell nav.tree {
+    transform: none;
+    visibility: visible;
+    transition: transform .2s ease;
+  }
+  /* Under the same first row, so the button above it is not dimmed and a tap
+     on it reaches the button rather than this; both close the drawer anyway. */
+  .drawer-scrim {
     display: block;
     position: fixed;
-    inset: 0;
+    inset: var(--drawer-top) 0 0 0;
     z-index: 29;
     background: rgba(0, 0, 0, .35);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .2s ease, visibility 0s linear .2s;
   }
+  #ts-drawer:checked ~ .shell .drawer-scrim {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity .2s ease;
+  }
+}
+@media (max-width: 50rem) and (prefers-reduced-motion: reduce) {
+  #ts-drawer ~ .shell nav.tree, #ts-drawer ~ .shell .drawer-scrim,
+  #ts-drawer:checked ~ .shell nav.tree, #ts-drawer:checked ~ .shell .drawer-scrim { transition: none; }
 }
 
 /* Scrollbars: as narrow as the engine will make them, and nothing reserved.
@@ -1955,7 +2009,7 @@ body.nothing .start .row > a.aside {
     --warning: #9a6700;
     --caution: #cf222e;
   }
-  header, footer, nav.tree, form.filter, .matchnote, .filemeta .lnsw,
+  header, footer, nav.tree, #ts-drawer ~ .shell nav.tree, form.filter, .matchnote, .filemeta .lnsw,
   .drawer-toggle, .drawer-btn, .drawer-scrim,
   table.listing .act, table.listing tr.strip { display: none; }
   body {

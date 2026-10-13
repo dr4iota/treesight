@@ -173,7 +173,12 @@ combinator is a constraint on the markup — the input must stay a *preceding
 sibling* of `.shell`, which is why `head_and_header` emits it as the first
 child of `<body>` while `layout` emits the closing scrim inside `.shell`.
 The state is per page, so the drawer closes on every navigation; that is the
-intended behaviour, not a limitation being tolerated.
+intended behaviour, not a limitation being tolerated. It slides: the drawer is
+always laid out, parked off the left edge with `visibility: hidden`, and the
+checkbox changes its `transform`. It starts under the header's first row, so
+the drawer button stays on screen, lit, and closes it as a second tap on the
+same label — the drawer carries no close mark of its own, which would be taken
+for one of the Files heading's.
 
 ---
 
