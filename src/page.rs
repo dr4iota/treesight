@@ -1817,7 +1817,12 @@ fn tree_dir(
         return;
     }
     out.push_str("<ul>");
-    for e in entries.into_iter().take(TREE_MAX_PER_DIR) {
+    // What the backend says of the rows shown, asked once for the folder as the
+    // listing asks: here only to mark what is kept offline.
+    let shown: Vec<Entry> = entries.into_iter().take(TREE_MAX_PER_DIR).collect();
+    let infos = vfs.row_infos(&VfsPath::new(rel.clone()), &shown);
+    for (e, info) in shown.into_iter().zip(infos) {
+        let kept = tree_kept(state, info.as_ref());
         rel.push(e.name.clone());
         let is_cur = rel.as_slice() == cur;
         let on_path = cur.len() >= rel.len() && cur[..rel.len()] == rel[..];
@@ -1834,11 +1839,17 @@ fn tree_dir(
             // own header's **As root** (`as_root_flag`), not a mark on every
             // row of the pane.
             out.push_str(&format!(
-                "<li{}><span class=\"row\">{}<a class=\"dir\" href=\"{}/\">{}/</a></span>",
+                "<li{}><span class=\"row\">{}{}</span>",
                 cls,
                 twisty(open, on_path, &key, url_now),
-                html_escape(&href),
-                html_escape(&e.name),
+                match &kept {
+                    None => format!("<a class=\"dir\" href=\"{}/\">{}/</a>", html_escape(&href), html_escape(&e.name)),
+                    Some(mark) => format!(
+                        "<a class=\"dir kept\" href=\"{}/\"><span class=\"tn\">{}/</span>{mark}</a>",
+                        html_escape(&href),
+                        html_escape(&e.name)
+                    ),
+                },
             ));
             if open {
                 tree_dir(state, vfs, rel, cur, prefs, url_now, out);
@@ -1846,10 +1857,16 @@ fn tree_dir(
             out.push_str("</li>");
         } else {
             out.push_str(&format!(
-                "<li{}><a href=\"{}\">{}</a></li>",
+                "<li{}>{}</li>",
                 cls,
-                html_escape(&href),
-                html_escape(&e.name)
+                match &kept {
+                    None => format!("<a href=\"{}\">{}</a>", html_escape(&href), html_escape(&e.name)),
+                    Some(mark) => format!(
+                        "<a class=\"kept\" href=\"{}\"><span class=\"tn\">{}</span>{mark}</a>",
+                        html_escape(&href),
+                        html_escape(&e.name)
+                    ),
+                },
             ));
         }
         rel.pop();
@@ -1861,6 +1878,21 @@ fn tree_dir(
         ));
     }
     out.push_str("</ul>");
+}
+
+/// The tree's mark for a row kept by its own toggle — the backend's
+/// [`Place::Badge`] verb, on — after its name: the listing's filled bookmark,
+/// in the link colour, and no control here. A row kept only with its folder
+/// has none; the folder above it carries the mark.
+fn tree_kept(state: &State, info: Option<&crate::vfs::RowInfo>) -> Option<String> {
+    let info = info.filter(|_| state.cfg.app_ui)?;
+    let on = info.actions.iter().find(|a| a.place == Place::Badge).filter(|a| a.on)?;
+    let title = info.mark.as_deref().unwrap_or(&on.label);
+    Some(format!(
+        "<span class=\"mk\" title=\"{t}\" aria-label=\"{t}\">{}</span>",
+        svg_icon(ICON_MARK),
+        t = html_escape(title)
+    ))
 }
 
 const SEARCH_MAX_RESULTS: usize = 2000;
@@ -3770,6 +3802,14 @@ mod tests {
         let sub = listing_page(&state, &root, prefs(), &["subfolder".into()], &VfsPath::new(vec!["subfolder".into()]), &[], "/subfolder/");
         assert!(sub.contains("<li class=\"hint\"><span class=\"tap\">Tap</span><span class=\"click\">Click</span> \
              an icon to keep offline</li>"), "{sub}");
+
+        // The tree marks what is kept by its own toggle after its name, and
+        // nothing else.
+        let p = Prefs { sidebar: true, ..prefs() };
+        let side = listing_page(&state, &root, p, &[], &VfsPath::root(), &[], "/");
+        assert!(side.contains("<li><a class=\"kept\" href=\"/kept.txt\"><span class=\"tn\">kept.txt</span>\
+             <span class=\"mk\" title=\"Kept offline\""), "{side}");
+        assert!(side.contains("<li><a href=\"/plain.txt\">plain.txt</a></li>"), "{side}");
 
         // The file's own page: the notice, and the toggle after Download, lit.
         let rel = vec!["kept.txt".to_string()];

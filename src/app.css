@@ -690,6 +690,14 @@ nav.tree li .row > a.dir {
    current one is reached through either shape. */
 nav.tree .cur > a, nav.tree .cur > .row > a { font-weight: 700; background: var(--border); }
 nav.tree .more { color: var(--muted); font-style: italic; }
+/* A row kept offline carries the listing's filled bookmark right after its
+   name, in the link colour. The name gives way to it when the pane is narrow,
+   so the mark is never what the ellipsis cuts. */
+nav.tree a.kept { display: inline-flex; align-items: center; gap: .3rem; max-width: 100%; vertical-align: top; }
+nav.tree li .row > a.dir.kept { display: flex; }
+nav.tree a.kept .tn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+nav.tree a.kept .mk { flex: none; display: inline-flex; color: var(--link); }
+nav.tree a.kept .mk svg.mark { width: 13px; height: 13px; }
 /* The start page: what there is to open, when nothing is. Three lists across a
    wide window and one column down a narrow one, out of the same section markup the
    pane draws them in — so they are the same rows, and there is one place where a
