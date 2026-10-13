@@ -259,7 +259,7 @@ body.fitted .crumbs { margin-right: .65rem; }
   .controls a:hover, .controls button:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
 }
 /* A switch that is on says so by its paint, the same at every width, and its
-   word is only its name: *Ln*, not *Ln: on*. The word comes and goes with the
+   word is only its name: *Sidebar*, not *Sidebar: on*. The word comes and goes with the
    room and the mark may not change shape, so neither could carry the state on
    its own. A link says it with `.on`, a button with `aria-pressed`. The tint is
    there so it does not rest on hue alone, beside an action pill in the same
@@ -270,6 +270,23 @@ body.fitted .crumbs { margin-right: .65rem; }
   background: var(--bg-subtle);
   background: color-mix(in srgb, var(--link) var(--on-tint), transparent);
 }
+/* A joined group: one pill cut into segments — a file's or a folder's verbs,
+   or the views of a file (`group` in `page.rs`). One header item, so it wraps
+   whole. The borders overlap by a pixel, and a lit or hovered segment comes to
+   the front, so its ring shows whole. The view on screen is lit and inert. */
+.controls .group { display: inline-flex; }
+.controls .group > a { border-radius: 0; margin-left: -1px; }
+.controls .group > a:first-child { border-radius: 1rem 0 0 1rem; margin-left: 0; }
+.controls .group > a:last-child { border-radius: 0 1rem 1rem 0; }
+.controls .group > a:only-child { border-radius: 1rem; }
+.controls .group > .on, .controls .group > a:hover, .controls .group > a:focus-visible { position: relative; z-index: 1; }
+.controls .group > a[aria-current] { cursor: default; }
+/* A dimmed segment dims what is in it, not its border: the ring stays whole. */
+.controls .group > .nowhere { opacity: 1; }
+.controls .group > .nowhere > * { opacity: .3; }
+/* And it is no link, so a pointer over it does not paint it as one. Not
+   `pointer-events: none`: the tooltip is where a desktop says why. */
+.controls .group > a.nowhere:hover { color: var(--muted); border-color: var(--border); cursor: default; }
 /* Each flag carries a mark, always, and its word beside it while the header
    has room. Deliberately not emoji: those are colour glyphs that some Linux
    font stacks have nothing for, and a missing-glyph box next to the path is
@@ -1477,7 +1494,32 @@ iframe.raw {
   margin: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
 }
 
-.filemeta { color: var(--muted); font-size: .85rem; margin: .35rem 0 1rem; }
+.filemeta {
+  color: var(--muted); font-size: .85rem; margin: .35rem 0 1rem;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .6rem;
+}
+/* *Line numbers*, at the meta line's right end on a highlighted listing: a
+   smaller pill in the header's lit/unlit paint, keeping its words at every
+   width — the header's `--lbl` is not this line's to decide. */
+.filemeta .lnsw {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-size: .75rem; white-space: nowrap;
+  padding: .1rem .55rem .1rem .4rem;
+  border: 1px solid var(--border); border-radius: 1rem;
+  color: var(--muted); text-decoration: none;
+}
+.filemeta .lnsw .lbl { display: inline; }
+.filemeta .lnsw svg { width: 16px; height: 16px; }
+@media (hover: hover) {
+  .filemeta .lnsw:hover { color: var(--link); border-color: var(--link); }
+}
+.filemeta .lnsw.on {
+  color: var(--link);
+  border-color: var(--link);
+  background: var(--bg-subtle);
+  background: color-mix(in srgb, var(--link) var(--on-tint), transparent);
+}
 .bigmsg {
   border: 1px dashed var(--border);
   border-radius: 8px;
@@ -1900,7 +1942,7 @@ body.nothing .start .row > a.aside {
     --warning: #9a6700;
     --caution: #cf222e;
   }
-  header, footer, nav.tree, form.filter, .matchnote,
+  header, footer, nav.tree, form.filter, .matchnote, .filemeta .lnsw,
   .drawer-toggle, .drawer-btn, .drawer-scrim,
   table.listing .act, table.listing tr.strip { display: none; }
   body {

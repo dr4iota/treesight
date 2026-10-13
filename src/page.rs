@@ -199,7 +199,7 @@ const ICON_SUN: &str = "<path d=\"M8 4.8a3.2 3.2 0 100 6.4 3.2 3.2 0 000-6.4z\"/
 const ICON_MOON: &str = "<path d=\"M14 8.53A6 6 0 117.47 2 4.67 4.67 0 0014 8.53z\"/>";
 /// Half filled, on the same circle. The fill runs out to the middle of the
 /// stroke for the reason the pane's does: stopping at the inside of it leaves a
-/// hairline seam. Unlike `Ln` and `Tree`, this fill is not a state — the flag has
+/// hairline seam. Unlike Line numbers and the pane, this fill is not a state — the flag has
 /// three settings, so half-and-half means half of each, not "on".
 const ICON_THEME_AUTO: &str = "<path d=\"M8 2a6 6 0 100 12A6 6 0 008 2z\"/>\
      <path fill=\"currentColor\" stroke=\"none\" d=\"M8 2a6 6 0 000 12z\"/>";
@@ -353,12 +353,13 @@ pub(crate) fn flag(class: &str, href: &str, icon: &str, label: &str, title: &str
 }
 
 /// A flag whose word is not the whole of its name. A switch's word is only
-/// what it switches — *Ln*, *Sidebar* — and the theme's only the choice —
-/// *Light* — because the paint and the mark say the rest to an eye. They say
-/// nothing to a screen reader: the mark is `aria-hidden`, and the title is not
-/// the name while there is a word. So `name` is the whole of it, *Ln, line
-/// numbers: on*, and it starts with the word on screen so that a reader who
-/// says "Ln" to a voice control still lands on it. Empty for no `aria-label`.
+/// what it switches — *Sidebar*, *Line numbers* — and the theme's only the
+/// choice — *Light* — because the paint and the mark say the rest to an eye.
+/// They say nothing to a screen reader: the mark is `aria-hidden`, and the
+/// title is not the name while there is a word. So `name` is the whole of it,
+/// *Sidebar: on*, and it starts with the word on screen so that a reader who
+/// says "Sidebar" to a voice control still lands on it. Empty for no
+/// `aria-label`.
 pub(crate) fn named_flag(
     class: &str,
     href: &str,
@@ -388,6 +389,69 @@ pub(crate) fn named_flag(
     )
 }
 
+/// Flags joined into one pill cut into segments: a file's verbs, a folder's,
+/// the views of a file. One header item, so it wraps whole, and one unit to
+/// `header_fit`, which prices no gap inside it. Nothing at all for no flags,
+/// so a caller joins whatever it has without asking first.
+pub(crate) fn group(flags: &str) -> String {
+    match flags.is_empty() {
+        true => String::new(),
+        false => format!("<span class=\"group\">{flags}</span>"),
+    }
+}
+
+/// The segment of a view group that is the page on screen: lit, and inert.
+/// Pressing it would only load what is already there, so it is no link — the
+/// way the crumbs' last name is not one — and `aria-current` says which it is
+/// to a screen reader, which the paint does not reach.
+pub(crate) fn current_flag(icon: &str, label: &str, title: &str) -> String {
+    format!(
+        "<a class=\"on\" aria-current=\"page\" title=\"{}\"><span class=\"ico\">{}</span>\
+         <span class=\"lbl\">{}</span></a>",
+        html_escape(title),
+        icon,
+        html_escape(label)
+    )
+}
+
+/// A segment there to say it cannot be had here: Source on a file too big to
+/// highlight. Dimmed and no link, like Up at the top of a bare server. An
+/// `<a>` with no `href` has no role, and `aria-disabled` on nothing in
+/// particular is not announced, so it says it is a link that is off, and its
+/// name carries the reason a tooltip gives a pointer.
+pub(crate) fn dimmed_flag(icon: &str, label: &str, title: &str) -> String {
+    format!(
+        "<a class=\"nowhere\" role=\"link\" aria-disabled=\"true\" aria-label=\"{}\" title=\"{}\">\
+         <span class=\"ico\">{}</span><span class=\"lbl\">{}</span></a>",
+        html_escape(&format!("{label}, {}", title.to_lowercase())),
+        html_escape(title),
+        icon,
+        html_escape(label)
+    )
+}
+
+/// *Line numbers*, at the right end of a highlighted listing's meta line: the
+/// one view where numbers exist, so the switch sits with it rather than in a
+/// header every view shares. It scrolls away with the page, which costs little
+/// — pressing it reloads from the top anyway — and keeps its words, since that
+/// line has room the header does not. The word is the switch's name and the
+/// paint (`.on`) its state, as for the header's switches.
+pub(crate) fn ln_switch(prefs: Prefs<'_>, url_now: &str) -> String {
+    let (class, val, name, title) = if prefs.ln {
+        ("lnsw on", "0", "Line numbers: on", "Line numbers: on. Click to hide them.")
+    } else {
+        ("lnsw", "1", "Line numbers: off", "Line numbers: off. Click to show them.")
+    };
+    named_flag(
+        class,
+        &set_href("ln", val, url_now),
+        &svg_icon(icon_lineno(prefs.ln)),
+        "Line numbers",
+        name,
+        title,
+    )
+}
+
 /// The theme's flag, on every page that has a header: the choice in the word,
 /// the setting in the name (`named_flag`).
 fn theme_flag(theme: ThemeMode, url_now: &str) -> String {
@@ -413,6 +477,32 @@ fn pill_words(html: &str) -> Vec<String> {
             rest.find("</span>").map(|end| unescape(&rest[..end]))
         })
         .collect()
+}
+
+/// How many header items a row of pills is: its words, less the ones that sit
+/// in a `group` behind another, since a group's segments have no gap between
+/// them. Read off the markup for the same reason as `pill_words`.
+fn pill_units(html: &str) -> usize {
+    const OPEN: &str = "<span class=\"group\">";
+    let joined: usize = html
+        .match_indices(OPEN)
+        .map(|(i, _)| {
+            // To the group's own `</span>`: the segments' spans nest inside it.
+            let rest = &html[i + OPEN.len()..];
+            let mut depth = 1;
+            let mut at = 0;
+            while depth > 0 {
+                let (open, close) = (rest[at..].find("<span"), rest[at..].find("</span>"));
+                match (open, close) {
+                    (Some(o), Some(c)) if o < c => (depth, at) = (depth + 1, at + o + 5),
+                    (_, Some(c)) => (depth, at) = (depth - 1, at + c + 7),
+                    _ => break,
+                }
+            }
+            pill_words(&rest[..at]).len().saturating_sub(1)
+        })
+        .sum();
+    pill_words(html).len() - joined
 }
 
 /// What `html_escape` wrote, read back: a word's width is its characters',
@@ -458,7 +548,7 @@ fn text_px(text: &str, px: f32) -> f32 {
 /// line and written into the page as the media queries that say so.
 ///
 /// A stylesheet can only count pills, and a count is a poor guess at a width:
-/// *Ln* and *Download* are both one pill, and a path can be four characters or
+/// *Up* and *Download* are both one pill, and a path can be four characters or
 /// sixty. This side knows every word, so it adds them up — generously, at a
 /// character width a little over what a system font draws, since an estimate
 /// that comes out long costs a few pixels of words given up early and one that
@@ -490,7 +580,8 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
     const TAG_CHAR: f32 = 7.2;
     const TAG_BOX: f32 = 12.8 + 2.0 + 6.4;
 
-    let row = |words: &[String], with_words: bool| -> f32 {
+    // A gap between units, not words: a group's segments share their borders.
+    let row = |words: &[String], units: usize, with_words: bool| -> f32 {
         let pills: f32 = words
             .iter()
             .map(|w| match with_words {
@@ -498,10 +589,11 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
                 false => PILL_MARK,
             })
             .sum();
-        pills + PILL_GAP * words.len().saturating_sub(1) as f32
+        pills + PILL_GAP * units.saturating_sub(1) as f32
     };
     let left_words = pill_words(left);
     let control_words = pill_words(controls);
+    let control_units = pill_units(controls);
     let text: f32 = crumbs.iter().map(|c| text_px(c, CRUMB_TEXT)).sum();
     let path = (text + crumbs.len().saturating_sub(1) as f32 * SEP).max(CRUMBS_MIN);
     let tag = tag.map_or(0.0, |t| t.chars().count() as f32 * TAG_CHAR + TAG_BOX + GAP);
@@ -511,14 +603,14 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
     let line = |with_words: bool| {
         let left = left_words
             .iter()
-            .map(|w| row(std::slice::from_ref(w), with_words))
+            .map(|w| row(std::slice::from_ref(w), 1, with_words))
             .sum::<f32>()
             + match left_words.len() {
                 0 => 0.0,
                 1 => GAP,
                 n => GAP + PANE_GAP * (n - 1) as f32,
             };
-        PAD + SLACK + left + tag + path + GAP + row(&control_words, with_words)
+        PAD + SLACK + left + tag + path + GAP + row(&control_words, control_units, with_words)
     };
     let rem = |px: f32| (px / 16.0 * 4.0).ceil() / 4.0;
     format!(
@@ -544,7 +636,6 @@ fn head_and_header(
     rel: &[String],
     url_now: &str,
     extra_controls: &str,
-    show_ln_toggle: bool,
     show_pane_flag: bool,
     extra_body_class: &str,
 ) -> String {
@@ -638,10 +729,12 @@ fn head_and_header(
         ));
     }
     // The embedder's own, ahead of the page's. Refresh is this shell's and these
-    // are the shell's extension of itself, so they keep that company; Source,
-    // Raw and Download belong to the file being looked at and stay together
-    // after them. Each is one more flag for the count that decides when words
-    // become marks, which is exactly what that count is for.
+    // are the shell's extension of itself, so they keep that company; the page's
+    // own come after them — As root on its own, then the verbs group and the
+    // view group (`group`). Terminal and As root sit side by side rather than
+    // joined: they are rarely both on screen, and a group spanning this hook and
+    // the page's buttons would be a group of one on most pages. Each word is one
+    // more for the sum that decides when words become marks.
     for f in state
         .cfg
         .flags()
@@ -657,23 +750,6 @@ fn head_and_header(
         ));
     }
     controls.push_str(extra_controls);
-    if show_ln_toggle {
-        // The word is the switch's name and the paint (`.on`) is its state, as
-        // for every switch: see `.controls .on` in `app.css`.
-        let (class, val, name, title) = if prefs.ln {
-            ("on", "0", "Ln, line numbers: on", "Line numbers: on. Click to hide them.")
-        } else {
-            ("", "1", "Ln, line numbers: off", "Line numbers: off. Click to show them.")
-        };
-        controls.push_str(&named_flag(
-            class,
-            &set_href("ln", val, url_now),
-            &svg_icon(&icon_lineno(prefs.ln)),
-            "Ln",
-            name,
-            title,
-        ));
-    }
     // The switch is the pane, not the tree inside it: with the pane on, the tree
     // is what it is for and is always there, and with the pane off the listing
     // has the window. A switch for the tree alone would have left an empty
@@ -912,7 +988,6 @@ pub fn layout(
     rel: &[String],
     url_now: &str,
     extra_controls: &str,
-    show_ln_toggle: bool,
     content: &str,
 ) -> String {
     // One switch, one thing: the pane is either there with everything in it or
@@ -948,7 +1023,6 @@ pub fn layout(
             rel,
             url_now,
             extra_controls,
-            show_ln_toggle,
             true,
             ""
         ),
@@ -1059,7 +1133,6 @@ pub fn bare_layout(
             rel,
             url_now,
             extra_controls,
-            false,
             false,
             "rawview"
         ),
@@ -1763,12 +1836,13 @@ pub fn listing_page(
         content.push_str(&search_results(state, vfs, rel, canon, q, recursive));
     }
 
+    // As root on its own, the folder's verbs joined after it.
     let controls = format!(
         "{}{}",
         as_root_flag(state, root, rel, canon),
-        write_flags(state, root, rel)
+        group(&write_flags(state, root, rel))
     );
-    layout(state, root, prefs, rel, url_now, &controls, false, &content)
+    layout(state, root, prefs, rel, url_now, &controls, &content)
 }
 
 const README_NAMES: &[&str] = &["README.md", "README.markdown", "README.mdown", "README.mkd"];
@@ -2199,7 +2273,7 @@ fn waiting_layout(
 </body>
 </html>
 "#,
-        chrome = head_and_header(state, root, prefs, &[], url_now, "", false, false, "waiting"),
+        chrome = head_and_header(state, root, prefs, &[], url_now, "", false, "waiting"),
         content = content,
         footer = status_line(state, root),
     )
@@ -2419,7 +2493,7 @@ pub fn error_page(
         code,
         html_escape(msg)
     );
-    layout(state, root, prefs, rel, url_now, "", false, &content)
+    layout(state, root, prefs, rel, url_now, "", &content)
 }
 
 #[cfg(test)]
@@ -3096,36 +3170,139 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Raw's way back is the view the file's page draws, named for it — and
-    /// none where that page is a notice, which is no view to go back to.
+    /// A file's views are one group with the one on screen lit and no link,
+    /// the same group on Raw with Raw lit: Preview · Source · Raw where the app
+    /// draws the file, Source · Raw for text, none for a picture, Raw alone for
+    /// a binary notice, and for text too big to highlight Raw itself with
+    /// Source dimmed. The verbs are a group of their own, and Line numbers is
+    /// on the listing's meta line rather than in the header.
     #[test]
-    fn raw_names_its_way_back_for_the_page_it_returns_to() {
-        let dir = tmp_dir("rawback");
+    fn a_files_views_are_one_group_with_the_shown_one_lit() {
+        let dir = tmp_dir("views");
         fs::write(dir.join("a.md"), "# a\n").unwrap();
         fs::write(dir.join("b.rs"), "fn main() {}\n").unwrap();
         fs::write(dir.join("c.png"), [0u8; 4]).unwrap();
         fs::write(dir.join("d.md"), [0u8, 159, 146, 150, 0, 1]).unwrap();
         fs::write(dir.join("e.txt"), vec![b'x'; MAX_HIGHLIGHT_BYTES as usize + 1]).unwrap();
+        fs::write(dir.join("f.bin"), vec![0u8; MAX_HIGHLIGHT_BYTES as usize + 1]).unwrap();
+        fs::write(dir.join("g.tar.gz"), vec![b'x'; MAX_HIGHLIGHT_BYTES as usize + 1]).unwrap();
+        fs::write(dir.join("h.json"), "// c\n{\"a\":1}\n").unwrap();
+        fs::write(dir.join("i.csv"), format!("{}\n", vec!["c"; 1200].join(","))).unwrap();
+        fs::write(dir.join("j.csv"), "").unwrap();
+        fs::write(dir.join("k.json"), "{\"a\":1}").unwrap();
+        fs::write(dir.join("l.html"), "<b>hi</b>").unwrap();
+        {
+            use std::io::Write;
+            let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            enc.write_all(b"<b>hi</b>").unwrap();
+            fs::write(dir.join("m.html.gz"), enc.finish().unwrap()).unwrap();
+        }
         let state = state_at(dir.clone());
         let root = state.cfg.root().expect("these tests always serve one");
-        let back = |name: &str| {
+        let page = |name: &str, query: &[(String, String)]| {
             let rel = vec![name.to_string()];
-            let page = crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/");
-            match (page.contains("The file as this app shows it"), page.contains("Highlighted source")) {
-                (true, false) => "Preview",
-                (false, true) => "Source",
-                (false, false) => "none",
-                _ => panic!("both: {page}"),
-            }
+            crate::view::file_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), query, "/")
         };
-        assert_eq!(back("a.md"), "Preview");
-        assert_eq!(back("b.rs"), "Source");
-        assert_eq!(back("c.png"), "Preview");
-        // Binary under a Markdown name, and text past the highlight limit: the
-        // page is a notice either way.
-        assert_eq!(back("d.md"), "none");
-        assert_eq!(back("e.txt"), "none");
+        let raw = |name: &str| {
+            let rel = vec![name.to_string()];
+            crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/")
+        };
+        let lit = |html: &str, word: &str| {
+            let at = html.find("aria-current=\"page\"").unwrap_or_else(|| panic!("nothing lit: {html}"));
+            assert_eq!(html.matches("aria-current").count(), 1, "one lit: {html}");
+            assert!(html[at..].split("</a>").next().unwrap().contains(&format!(">{word}<")), "{word}: {html}");
+        };
+        let views = |html: &str| -> String {
+            let i = html.rfind("<span class=\"group\">").expect("a view group");
+            html[i..].split("</span></a></span>").next().unwrap().to_string()
+        };
+        let src = [("src".to_string(), "1".to_string())];
+
+        let md = page("a.md", &[]);
+        lit(&md, "Preview");
+        let g = views(&md);
+        assert!(g.contains("href=\"/a.md?src=1\"") && g.contains("href=\"/a.md?raw=1\""), "{g}");
+        let md_src = page("a.md", &src);
+        lit(&md_src, "Source");
+        assert!(views(&md_src).contains("href=\"/a.md\""), "Preview goes back");
+        lit(&raw("a.md"), "Raw");
+        assert!(views(&raw("a.md")).contains(">Preview<"), "the whole group on Raw");
+
+        let rs = page("b.rs", &[]);
+        lit(&rs, "Source");
+        assert!(!rs.contains(">Preview<"), "{rs}");
+        assert!(views(&rs).contains("href=\"/b.rs?raw=1\""), "{rs}");
+        // Line numbers on the meta line, out of the header.
+        let header = rs.split("</header>").next().unwrap();
+        assert!(!header.contains("ln="), "{header}");
+        assert!(rs.contains("<p class=\"filemeta\"><span>") && rs.contains("class=\"lnsw\""), "{rs}");
+        assert!(views(&raw("b.rs")).contains("href=\"/b.rs\""), "Source goes back");
+
+        // A picture: no view group, and the verbs group kept.
+        let png = page("c.png", &[]);
+        assert!(!png.contains("?raw=1\"") && !png.contains("aria-current"), "{png}");
+        assert!(png.contains("<span class=\"group\"><a href=\"/c.png?dl=1\""), "{png}");
+        lit(&raw("c.png"), "Raw");
+
+        // Binary: a notice and Download, no view group — no Raw, which has
+        // nothing to show as it is — and its Raw address says the same.
+        let bin = page("d.md", &[]);
+        assert!(bin.contains("Binary file.") && !bin.contains("?raw=1\"") && !bin.contains("aria-current"), "{bin}");
+        let bin_raw = raw("d.md");
+        assert!(bin_raw.contains("nothing to show as text") && !bin_raw.contains("<iframe"), "{bin_raw}");
+        // Raw's frame asks for the file as text.
+        assert!(raw("b.rs").contains("src=\"/b.rs?raw=1&amp;bare=1&amp;as=text\""), "as text");
+
+        // Too big to highlight: Raw itself, Source dimmed and saying why.
+        let big = page("e.txt", &[]);
+        assert!(big.contains("<iframe class=\"raw\""), "{big}");
+        lit(&big, "Raw");
+        assert!(big.contains("role=\"link\" aria-disabled=\"true\" aria-label=\"Source, too large to highlight\""), "{big}");
+
+        // Too big and not text, or packed: the notice, never a frame that would
+        // fetch the whole file to show nothing.
+        for name in ["f.bin", "g.tar.gz"] {
+            let html = page(name, &[]);
+            assert!(html.contains("File is too large to show here") && !html.contains("<iframe"), "{html}");
+            assert!(!html.contains("aria-current") && !html.contains("Too large to highlight"), "{html}");
+            assert!(!raw(name).contains("Too large to highlight"), "{name} raw");
+        }
+
+        // A Preview on Raw only where the page has one: not for JSON that does
+        // not parse, a table too wide to draw, or one with nothing in it — on
+        // the page, on Raw, or asked for as source.
+        for name in ["h.json", "i.csv", "j.csv"] {
+            assert!(!page(name, &[]).contains(">Preview<"), "{name}");
+            assert!(!page(name, &src).contains(">Preview<"), "{name} src");
+            assert!(!raw(name).contains(">Preview<"), "{name} raw");
+            lit(&page(name, &[]), "Source");
+        }
+        assert!(raw("k.json").contains(">Preview<"), "JSON that parses keeps it");
+
+        // HTML's Preview is the page, drawn in a frame from the file served as
+        // itself; Source and Raw are its text.
+        let html = page("l.html", &[]);
+        lit(&html, "Preview");
+        assert!(html.contains("<iframe class=\"raw\" sandbox src=\"/l.html?raw=1&amp;bare=1\""), "{html}");
+        lit(&page("l.html", &src), "Source");
+        assert!(raw("l.html").contains("src=\"/l.html?raw=1&amp;bare=1&amp;as=text\""), "Raw as text");
+        assert!(raw("l.html").contains(">Preview<"), "the whole group on Raw");
+        // Packed, it is served packed, so it has no page to draw.
+        let packed = page("m.html.gz", &[]);
+        assert!(!packed.contains(">Preview<") && !packed.contains("<iframe"), "{packed}");
+        lit(&packed, "Source");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A joined group is one header unit: its words are priced, the gaps
+    /// between its segments are not.
+    #[test]
+    fn a_group_prices_no_gap_inside_it() {
+        let words = ["Print", "Download", "Keep offline"].map(|w| flag("", "#", "", w, "")).concat();
+        assert_eq!(pill_units(&words), 3);
+        assert_eq!(pill_units(&group(&words)), 1);
+        let both = format!("{}{}{}", flag("", "#", "", "Refresh", ""), group(&words), group(&words));
+        assert_eq!(pill_units(&both), 3);
     }
 
     /// A folder's page offers what can be done with the folder: **As root**
@@ -3461,7 +3638,7 @@ mod tests {
         let html = page("t.csv", &[]);
         assert!(html.contains("<table class=\"data\"><thead><tr><th>name</th><th>qty</th>"), "{html}");
         assert!(html.contains("<td>&lt;pear&gt;</td><td class=\"n\">3</td>"), "{html}");
-        assert!(html.contains("1 row</p>"), "{html}");
+        assert!(html.contains("1 row</span></p>"), "{html}");
         assert!(html.contains("href=\"/t.csv?src=1\""), "{html}");
         let html = page("t.csv", &src);
         assert!(!html.contains("<table class=\"data\""), "{html}");
@@ -3487,11 +3664,15 @@ mod tests {
         let html = page("t.csv.gz", &[]);
         assert!(html.contains("<th>k</th><th>v</th>"), "{html}");
         assert!(html.contains("gzip, 8 B unpacked"), "{html}");
-        assert!(html.contains("href=\"/t.csv.gz?raw=1\""), "{html}");
+        // No Raw: as it is, it is gzip. Preview and Source show what it
+        // holds, Download the file, and Raw's own address says so.
+        assert!(!html.contains("?raw=1\""), "{html}");
+        assert!(html.contains("href=\"/t.csv.gz?src=1\"") && html.contains("href=\"/t.csv.gz?dl=1\""), "{html}");
+        assert!(!page("t.csv.gz", &src).contains("?raw=1\""), "nor on its source");
         // Rendered Markdown has no meta line of its own, and gets one to say so.
         let html = page("n.md.gz", &[]);
         assert!(html.contains("<div class=\"md\"><h1"), "{html}");
-        assert!(html.contains("&middot; gzip, 4 B unpacked</p>"), "{html}");
+        assert!(html.contains("&middot; gzip, 4 B unpacked</span></p>"), "{html}");
         // A packed picture is an ordinary `.gz`: its element would get the
         // packed bytes, so it is not opened.
         let html = page("p.png.gz", &[]);
@@ -3501,13 +3682,15 @@ mod tests {
         let html = page("big.log.gz", &[]);
         assert!(html.contains("too large to render once unpacked"), "{html}");
 
-        // Raw's way back names what the page draws, for a `.gz` too: nothing
-        // where the page is that notice, Source where it is the text.
+        // Raw's group names what the page draws, for a `.gz` too: Source
+        // dimmed where the page is that notice, a link where it is the text.
         let raw = |name: &str| {
             let rel = vec![name.to_string()];
             crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/")
         };
         assert!(!raw("big.log.gz").contains("title=\"Highlighted source\""), "big");
+        let packed_raw = raw("t.csv.gz");
+        assert!(packed_raw.contains("nothing to show as text") && !packed_raw.contains("<iframe"), "{packed_raw}");
         assert!(page("fake.gz", &[]).contains("plain text, not gzip"), "fake page");
         assert!(raw("fake.gz").contains("title=\"Highlighted source\""), "fake raw");
 
@@ -3765,13 +3948,13 @@ mod tests {
         assert!(on.contains("aria-label=\"Light, theme\""), "{on}");
         // The drawer is the same control at a narrow width, under the same word.
         assert!(on.contains("class=\"drawer-btn\" title=\"Open the sidebar\"><span class=\"ico\">"), "{on}");
-        // Ln the same way, on the pages that offer it: the word is the name,
-        // the paint and the name carry whether it is on.
-        let ln = |ln| layout(&state, &root, Prefs { ln, ..prefs() }, &[], "/", "", true, "");
-        let (on, off) = (ln(true), ln(false));
-        assert!(on.contains("<a class=\"on\" href=\"/.ts/set?ln=0&amp;back=%2F\" aria-label=\"Ln, line numbers: on\""), "{on}");
-        assert!(off.contains("aria-label=\"Ln, line numbers: off\""), "{off}");
-        assert!(off.contains("<span class=\"lbl\">Ln</span>"), "{off}");
+        // Line numbers the same way, on the meta line now: the word is the
+        // name, the paint and the name carry whether it is on.
+        let ln = |ln| ln_switch(Prefs { ln, ..prefs() }, "/");
+        let (lon, loff) = (ln(true), ln(false));
+        assert!(lon.contains("<a class=\"lnsw on\" href=\"/.ts/set?ln=0&amp;back=%2F\" aria-label=\"Line numbers: on\""), "{lon}");
+        assert!(loff.contains("aria-label=\"Line numbers: off\""), "{loff}");
+        assert!(loff.contains("<span class=\"lbl\">Line numbers</span>"), "{loff}");
         for html in [&on, &off] {
             assert!(html.contains("<span class=\"lbl\">Sidebar</span>"), "{html}");
             // The theme is a choice of three, not a switch: its word is the

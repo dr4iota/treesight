@@ -2,8 +2,8 @@ use crate::data::{delimiter_for, gunzip, parse_delimited, reformat_json, render_
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
 use crate::page::{
-    bare_layout, flag, layout, svg_icon, Prefs, ICON_DOWNLOAD, ICON_PRINT, ICON_PREVIEW, ICON_RAW,
-    ICON_SOURCE,
+    bare_layout, current_flag, dimmed_flag, flag, group, layout, ln_switch, svg_icon, Prefs,
+    ICON_DOWNLOAD, ICON_PRINT, ICON_PREVIEW, ICON_RAW, ICON_SOURCE,
 };
 use crate::util::*;
 use crate::vfs::VfsPath;
@@ -16,6 +16,12 @@ use crate::{Root, State};
 /// the answer here has to be the file either way.
 fn raw_href(rel: &[String]) -> String {
     format!("{}?raw=1&bare=1", href_path(rel))
+}
+
+/// The same, for the Raw view's frame: as text wherever the file is text,
+/// HTML included (`serve_raw`), since Raw is the file as written.
+fn raw_text_href(rel: &[String]) -> String {
+    format!("{}?raw=1&bare=1&as=text", href_path(rel))
 }
 
 /// Print, on the views that are documents: a rendered page and a listing of
@@ -41,20 +47,90 @@ fn print_flag(state: &State) -> String {
     }
 }
 
-fn std_controls(state: &State, rel: &[String], vfs: &dyn Vfs) -> String {
-    let base = href_path(rel);
-    format!(
-        "{}{}{}",
-        flag(
-            "",
-            &format!("{base}?raw=1"),
-            &svg_icon(ICON_RAW),
-            "Raw",
-            "The file as it is on disk"
-        ),
-        download_flag(&base, vfs),
+/// The verbs group: what can be done with the file — Print where the view is a
+/// document, Download, and the backend's own (Keep offline). None of them is a
+/// view, so none is lit but a verb that is a switch and is on.
+fn verbs(state: &State, rel: &[String], vfs: &dyn Vfs, print: bool) -> String {
+    let print = match print {
+        true => print_flag(state),
+        false => String::new(),
+    };
+    group(&format!(
+        "{print}{}{}",
+        download_flag(&href_path(rel), vfs),
         file_actions(state, rel, vfs)
-    )
+    ))
+}
+
+/// What a file's page is, as far as its views go: which of Preview, Source
+/// and Raw it offers. The rows of the header sketch's table
+/// (`docs/mockups/header-buttons.html` in telechore, section 6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shown {
+    /// Drawn, played or rendered by an element: an image, a film, a sound, a
+    /// PDF. Raw would be the same thing in a frame, so there is no group.
+    Media,
+    /// Text the app draws as well as highlights: Markdown, Mermaid, a table,
+    /// JSON laid out, HTML as a page.
+    Drawn,
+    /// Text it highlights, and nothing more.
+    Text,
+    /// Text past the highlight limit: Raw, with Source dimmed to say why.
+    TooBig,
+    /// Not text, or text that only unpacks too big: a notice and Download.
+    /// No Raw, which shows a file as it is, and there is no showing these as
+    /// they are — a frame pointed at one is blank, or a download.
+    Binary,
+    /// Nothing to draw at all: past what the backend hands over, or unreadable.
+    Nothing,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum View {
+    Preview,
+    Source,
+    Raw,
+}
+
+const PREVIEW_TITLE: &str = "The file as this app shows it";
+const SOURCE_TITLE: &str = "Highlighted source";
+
+/// The view group: how the file is shown, as one choice with the view on
+/// screen lit (`current_flag`), so a change of view changes which segment is
+/// lit and nothing else in the header. `lit` is `None` on a notice — too big
+/// once unpacked, binary — which is no view.
+///
+/// `packed` drops Raw from a file the page opened unpacked: Raw is the file
+/// as it is, and as it is it is gzip, which there is no showing. Preview and
+/// Source show what it holds, and Download hands over the file itself.
+fn view_group(shown: Shown, rel: &[String], lit: Option<View>, packed: bool) -> String {
+    let base = href_path(rel);
+    let seg = |view: View, href: &str, icon: &str, label: &str, title: &str| match lit == Some(view) {
+        true => current_flag(&svg_icon(icon), label, title),
+        false => flag("", href, &svg_icon(icon), label, title),
+    };
+    let preview = || seg(View::Preview, &base, ICON_PREVIEW, "Preview", PREVIEW_TITLE);
+    // Source is the page itself where there is no Preview, and asked for
+    // where there is.
+    let source = |href: &str| seg(View::Source, href, ICON_SOURCE, "Source", SOURCE_TITLE);
+    let raw = match packed {
+        true => String::new(),
+        false => seg(View::Raw, &format!("{base}?raw=1"), ICON_RAW, "Raw", "The file as it is on disk"),
+    };
+    let segments = match shown {
+        // Raw is not offered for these, but its address still answers: there it
+        // says how to get back.
+        Shown::Media if lit == Some(View::Raw) => format!("{}{raw}", preview()),
+        Shown::Binary if lit == Some(View::Raw) => raw,
+        Shown::Media | Shown::Nothing | Shown::Binary => String::new(),
+        Shown::Drawn => format!("{}{}{raw}", preview(), source(&format!("{base}?src=1"))),
+        Shown::Text => format!("{}{raw}", source(&base)),
+        Shown::TooBig => format!(
+            "{}{raw}",
+            dimmed_flag(&svg_icon(ICON_SOURCE), "Source", "Too large to highlight")
+        ),
+    };
+    group(&segments)
 }
 
 /// The backend's verbs that belong on a file's own page as well as under its
@@ -116,8 +192,14 @@ fn download_flag(base: &str, vfs: &dyn Vfs) -> String {
 }
 
 fn meta_line(size: u64, mtime: Option<std::time::SystemTime>, extra: &str) -> String {
+    meta_line_ending(size, mtime, extra, "")
+}
+
+/// The same, with a control at its right end: the source view's *Line
+/// numbers* (`ln_switch`).
+fn meta_line_ending(size: u64, mtime: Option<std::time::SystemTime>, extra: &str, end: &str) -> String {
     format!(
-        "<p class=\"filemeta\">{}{} &middot; {}</p>",
+        "<p class=\"filemeta\"><span>{}{} &middot; {}</span>{end}</p>",
         human_size(size),
         mtime
             .map(|t| format!(" &middot; {}", fmt_time(t)))
@@ -140,36 +222,61 @@ pub fn raw_page(
     url_now: &str,
 ) -> String {
     let name = rel.last().map(String::as_str).unwrap_or("");
-    let base = href_path(rel);
-    // The way out is the way in reversed: where every other view offers Raw,
-    // this one offers the view it came from, named for what that is (`way_back`).
-    // Download stays — it is the other thing wanted of a file one is looking at
-    // as a file.
-    let back = way_back(root.vfs.as_ref(), canon, name)
-        .map(|(icon, label, hint)| flag("", &base, &svg_icon(icon), label, hint))
-        .unwrap_or_default();
+    raw_view(state, root, prefs, rel, url_now, shown_of(root.vfs.as_ref(), canon, name))
+}
+
+/// The raw page for a file already known to be `shown`: from `raw_page`, and
+/// from `file_page` for text too big to highlight, which opens here.
+///
+/// The header is the file page's less Print: the same verbs group, and the
+/// same view group with Raw lit, so going to Raw and back changes one segment.
+fn raw_view(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str, shown: Shown) -> String {
+    let name = rel.last().map(String::as_str).unwrap_or("");
     let controls = format!(
         "{}{}",
-        back,
-        flag(
-            "",
-            &format!("{base}?dl=1"),
-            &svg_icon(ICON_DOWNLOAD),
-            "Download",
-            "Save a copy"
-        )
+        verbs(state, rel, root.vfs.as_ref(), false),
+        view_group(shown, rel, Some(View::Raw), false)
     );
-    // `sandbox` with no allowances: the framed document may be a remote
-    // machine's HTML served as itself, and the parent is a page that can
-    // reach the shell. `serve_raw` sends CSP `sandbox` on such documents
-    // too — attribute and header each cover an engine that misses the other,
-    // and both cost nothing.
-    let content = format!(
+    // A binary file's Raw is reached only by its address: there is nothing to
+    // show as it is, and a frame would fetch all of it to show nothing.
+    if shown == Shown::Binary {
+        let content = format!(
+            "<main><div class=\"bigmsg\"><p>Binary file: nothing to show as text.</p>{}</div></main>",
+            download_link(rel, root.vfs.as_ref(), "Download")
+                .map(|dl| format!("<p>{dl}</p>"))
+                .unwrap_or_default()
+        );
+        return bare_layout(state, root, prefs, rel, url_now, &controls, &content);
+    }
+    bare_layout(state, root, prefs, rel, url_now, &controls, &framed(&raw_text_href(rel), name))
+}
+
+/// HTML's Preview: the page as a browser draws it, in a frame like Raw's,
+/// served as itself (`raw_href`) where Raw asks for its text. No Print, as on
+/// Raw: what is in the frame is the engine's to lay out, not this page's.
+fn html_preview(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str) -> String {
+    let name = rel.last().map(String::as_str).unwrap_or("");
+    let controls = format!(
+        "{}{}",
+        verbs(state, rel, root.vfs.as_ref(), false),
+        view_group(Shown::Drawn, rel, Some(View::Preview), false)
+    );
+    bare_layout(state, root, prefs, rel, url_now, &controls, &framed(&raw_href(rel), name))
+}
+
+/// The frame Raw and HTML's Preview draw the file in.
+///
+/// `sandbox` with no allowances: the framed document may be a remote
+/// machine's HTML served as itself, and the parent is a page that can reach
+/// the shell. `serve_raw` sends CSP `sandbox` on such documents too —
+/// attribute and header each cover an engine that misses the other, and both
+/// cost nothing.
+fn framed(src: &str, name: &str) -> String {
+    format!(
         "<iframe class=\"raw\" sandbox src=\"{}\" title=\"{}\"></iframe>",
-        html_escape(&raw_href(rel)),
+        html_escape(src),
         html_escape(name)
-    );
-    bare_layout(state, root, prefs, rel, url_now, &controls, &content)
+    )
 }
 
 /// The name a `.gz` had before it was packed, where the page opens it to
@@ -189,59 +296,93 @@ fn unpacked_name(name: &str) -> Option<&str> {
     }
 }
 
-/// The view `file_page` draws for this file, as Raw's way back names it: Preview
-/// where the app draws, plays or renders the file, Source where it shows the
-/// text — or nothing, where that page is a notice (too large, binary,
-/// unreadable): a notice is not a view, and Raw is then the only one there is,
-/// as the header sketch's table has it. Up and the system's Back still leave.
-/// The same tests in the same order as `file_page`, which is the page this
-/// names, except that the binary test reads only the 8 KiB it looks at: the
-/// frame fetches the whole file anyway, and a remote tree should not send it
-/// twice to name a button.
-fn way_back(
-    vfs: &dyn Vfs,
-    canon: &VfsPath,
-    name: &str,
-) -> Option<(&'static str, &'static str, &'static str)> {
-    const PREVIEW: (&str, &str, &str) = (ICON_PREVIEW, "Preview", "The file as this app shows it");
+/// What `file_page` makes of this file, for the raw page's view group. The
+/// same tests in the same order, reading no more than they need: the 8 KiB
+/// the binary test looks at, and the whole file only where whether it has a
+/// Preview turns on all of it — a table that may be too wide to draw, JSON
+/// that may not parse (`needs_whole`). A `.gz` is never unpacked here: it has
+/// no Raw, so its Raw address is the notice whatever it holds.
+fn shown_of(vfs: &dyn Vfs, canon: &VfsPath, name: &str) -> Shown {
     let ext = ext_of(name);
     let size = vfs.metadata(canon).map(|m| m.len).unwrap_or(0);
     if vfs.open_limit().is_some_and(|limit| size > limit) {
-        return None;
+        return Shown::Nothing;
     }
     if [IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS].iter().any(|exts| exts.contains(&ext.as_str())) || ext == "pdf" {
-        return Some(PREVIEW);
+        return Shown::Media;
     }
     if size > MAX_HIGHLIGHT_BYTES {
-        return None;
+        return match too_big_is_text(vfs, canon, &ext) {
+            Some(true) => Shown::TooBig,
+            Some(false) => Shown::Binary,
+            None => Shown::Nothing,
+        };
     }
+    let bytes = match needs_whole(&ext) {
+        true => vfs.read(canon).ok(),
+        false => head_of(vfs, canon),
+    };
+    let Some(bytes) = bytes else {
+        return Shown::Nothing;
+    };
+    // A `.gz` that is gzip has nothing to show as it is, whatever it holds —
+    // its page shows that unpacked, and offers no Raw. One that is not gzip
+    // after all is its own bytes, as it is on the page.
+    if ext == "gz" && bytes.starts_with(&[0x1f, 0x8b]) {
+        return Shown::Binary;
+    }
+    if looks_binary(&bytes[..bytes.len().min(8192)]) {
+        return Shown::Binary;
+    }
+    match drawn_as(&ext, &String::from_utf8_lossy(&bytes), false) {
+        true => Shown::Drawn,
+        false => Shown::Text,
+    }
+}
+
+/// The first 8 KiB, which is all the binary test reads.
+fn head_of(vfs: &dyn Vfs, canon: &VfsPath) -> Option<Vec<u8>> {
     let mut head = Vec::with_capacity(8192);
     vfs.open(canon).ok()?.take(8192).read_to_end(&mut head).ok()?;
-    // A `.gz` is named for what is inside, and `file_page` refuses one past the
-    // limit unpacked, which only unpacking that far finds out: the one case
-    // here that reads more than the head, and only up to what the page would.
-    // One that is not gzip after all is its own bytes, as it is there.
-    let ext = match unpacked_name(name) {
-        Some(inner) => match gunzip(vfs.open(canon).ok()?, MAX_HIGHLIGHT_BYTES) {
-            Some((_, true)) => return None,
-            Some((mut bytes, false)) => {
-                bytes.truncate(8192);
-                head = bytes;
-                ext_of(inner)
-            }
-            None => ext,
-        },
-        None => ext,
-    };
-    if looks_binary(&head) {
-        return None;
+    Some(head)
+}
+
+/// Whether a file past the highlight limit is text, and so opens in Raw with
+/// Source dimmed, rather than a notice. Never a `.gz`, whose Raw is the packed
+/// bytes, and never what its head says is binary: a frame cannot draw either,
+/// and pointing one at an archive of hundreds of megabytes fetches all of it
+/// to show nothing. `None` where the file cannot be read.
+fn too_big_is_text(vfs: &dyn Vfs, canon: &VfsPath, ext: &str) -> Option<bool> {
+    if ext == "gz" {
+        return Some(false);
     }
-    // JSON says Preview without reading the rest to find out whether it is
-    // JSON: one that is not lands on the source, under a name that oversells it.
-    if [MARKDOWN_EXTS, MERMAID_EXTS, TABLE_EXTS, JSON_EXTS].iter().any(|exts| exts.contains(&ext.as_str())) {
-        return Some(PREVIEW);
+    head_of(vfs, canon).map(|head| !looks_binary(&head))
+}
+
+/// Whether `drawn_as` needs the whole file to answer: a table and JSON, which
+/// are drawn only if all of them can be. Markdown, Mermaid and HTML are drawn
+/// whatever is in them, so Raw reads their head only.
+fn needs_whole(ext: &str) -> bool {
+    [TABLE_EXTS, JSON_EXTS].iter().any(|exts| exts.contains(&ext))
+}
+
+/// Whether the page draws this text as well as listing it, so has a Preview:
+/// Markdown and Mermaid always, HTML unless packed (its Preview is the file
+/// served as itself, and a `.gz` is served packed), a table where there is
+/// one and it is not too wide, JSON where it parses. The one answer for the
+/// file page and Raw, so a change of view never adds or drops a segment.
+fn drawn_as(ext: &str, text: &str, packed: bool) -> bool {
+    if [MARKDOWN_EXTS, MERMAID_EXTS].iter().any(|exts| exts.contains(&ext)) {
+        return true;
     }
-    Some((ICON_SOURCE, "Source", "Highlighted source"))
+    if HTML_EXTS.contains(&ext) {
+        return !packed;
+    }
+    if TABLE_EXTS.contains(&ext) {
+        let rows = parse_delimited(text, delimiter_for(ext, text));
+        return matches!(render_table(&rows, MAX_HIGHLIGHT_BYTES as usize), Some(Ok(_)));
+    }
+    JSON_EXTS.contains(&ext) && reformat_json(text, MAX_HIGHLIGHT_BYTES as usize).is_some()
 }
 
 pub fn file_page(
@@ -271,7 +412,7 @@ pub fn file_page(
             meta_line(size, mtime, "large file"),
             human_size(size)
         );
-        return layout(state, root, prefs, rel, url_now, "", false, &content);
+        return layout(state, root, prefs, rel, url_now, "", &content);
     }
 
     if IMAGE_EXTS.contains(&ext.as_str()) {
@@ -281,7 +422,7 @@ pub fn file_page(
             html_escape(&raw_href(rel)),
             html_escape(name)
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &verbs(state, rel, vfs, false), &content);
     }
     if VIDEO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -289,7 +430,7 @@ pub fn file_page(
             meta_line(size, mtime, "video"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &verbs(state, rel, vfs, false), &content);
     }
     if AUDIO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -297,7 +438,7 @@ pub fn file_page(
             meta_line(size, mtime, "audio"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &verbs(state, rel, vfs, false), &content);
     }
     if ext == "pdf" {
         let content = format!(
@@ -305,32 +446,58 @@ pub fn file_page(
             meta_line(size, mtime, "pdf"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &verbs(state, rel, vfs, false), &content);
     }
 
     // Text-ish content from here on.
+    // Too big to highlight: text goes straight to Raw, with Source in the
+    // group dimmed to say why, rather than a page that only points there.
+    // Anything else gets the notice and Download, as any binary file does.
     if size > MAX_HIGHLIGHT_BYTES {
-        let raw = format!("<a href=\"{}?raw=1\">View raw</a>", html_escape(&href_path(rel)));
-        let ways = match download_link(rel, vfs, "download") {
-            Some(dl) => format!("{raw} or {dl}."),
-            None => format!("{raw}."),
-        };
-        let content = format!(
-            "{}<div class=\"bigmsg\"><p>File is too large to render ({}).</p><p>{ways}</p></div>",
-            meta_line(size, mtime, "large file"),
-            human_size(size)
-        );
-        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+        match too_big_is_text(vfs, canon, &ext) {
+            Some(true) => return raw_view(state, root, prefs, rel, url_now, Shown::TooBig),
+            Some(false) => {
+                let content = format!(
+                    "{}<div class=\"bigmsg\"><p>File is too large to show here ({}).</p>{}</div>",
+                    meta_line(size, mtime, "large file"),
+                    human_size(size),
+                    download_link(rel, vfs, "Download")
+                        .map(|dl| format!("<p>{dl}</p>"))
+                        .unwrap_or_default()
+                );
+                return layout(state, root, prefs, rel, url_now, &verbs(state, rel, vfs, false), &content);
+            }
+            // Not even its head: nothing past the limit is read whole.
+            None => {
+                let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
+                return layout(state, root, prefs, rel, url_now, "", &content);
+            }
+        }
+    }
+
+    // HTML's Preview is the page itself, in a frame that fetches the file:
+    // the head is all there is to read here, to see that it is text.
+    if HTML_EXTS.contains(&ext.as_str()) && query_get(query, "src") != Some("1") {
+        match head_of(vfs, canon) {
+            Some(head) if !looks_binary(&head) => return html_preview(state, root, prefs, rel, url_now),
+            // Binary under an HTML name: the notice, below.
+            Some(_) => {}
+            None => {
+                let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
+                return layout(state, root, prefs, rel, url_now, "", &content);
+            }
+        }
     }
 
     let Ok(bytes) = vfs.read(canon) else {
         let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
-        return layout(state, root, prefs, rel, url_now, "", false, &content);
+        return layout(state, root, prefs, rel, url_now, "", &content);
     };
 
     // A `.gz` is read as what it holds, under the name it had before it was
-    // packed, so `syslog.2.gz` is a log and `rows.csv.gz` a table; Raw and
-    // Download still hand over the packed file. One that is not gzip after all
+    // packed, so `syslog.2.gz` is a log and `rows.csv.gz` a table; Download
+    // hands over the packed file, and there is no Raw (`view_group`'s
+    // `packed`). One that is not gzip after all
     // falls through as its own bytes, which is the binary notice.
     let (bytes, name, ext, unpacked) = match unpacked_name(name) {
         Some(inner_name) => match gunzip(&bytes[..], MAX_HIGHLIGHT_BYTES) {
@@ -338,19 +505,19 @@ pub fn file_page(
                 let len = inner.len() as u64;
                 (inner, inner_name, ext_of(inner_name), Some(len))
             }
+            // A notice and Download, as for a binary file: Raw here would be
+            // the packed bytes, which are no text to show.
             Some((_, true)) => {
-                let raw = format!("<a href=\"{}?raw=1\">View raw</a>", html_escape(&href_path(rel)));
-                let ways = match download_link(rel, vfs, "download") {
-                    Some(dl) => format!("{raw} or {dl}."),
-                    None => format!("{raw}."),
-                };
                 let content = format!(
                     "{}<div class=\"bigmsg\"><p>File is too large to render once unpacked \
-                     (over {}).</p><p>{ways}</p></div>",
+                     (over {}).</p>{}</div>",
                     meta_line(size, mtime, "gzip"),
-                    human_size(MAX_HIGHLIGHT_BYTES)
+                    human_size(MAX_HIGHLIGHT_BYTES),
+                    download_link(rel, vfs, "Download")
+                        .map(|dl| format!("<p>{dl}</p>"))
+                        .unwrap_or_default()
                 );
-                return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+                return layout(state, root, prefs, rel, url_now, &verbs(state, rel, vfs, false), &content);
             }
             None => (bytes, name, ext, None),
         },
@@ -369,19 +536,18 @@ pub fn file_page(
                 .map(|dl| format!("<p>{dl}</p>"))
                 .unwrap_or_default()
         );
-        return layout(state, root, prefs, rel, url_now, &std_controls(state, rel, vfs), false, &content);
+        return layout(state, root, prefs, rel, url_now, &verbs(state, rel, vfs, false), &content);
     }
 
     let text = String::from_utf8_lossy(&bytes);
     let want_source = query_get(query, "src") == Some("1");
 
-    let source_flag = || {
-        flag(
-            "",
-            &format!("{}?src=1", href_path(rel)),
-            &svg_icon(ICON_SOURCE),
-            "Source",
-            "Highlighted source instead",
+    // The drawn views below: the verbs, and Preview lit.
+    let drawn_controls = || {
+        format!(
+            "{}{}",
+            verbs(state, rel, vfs, true),
+            view_group(Shown::Drawn, rel, Some(View::Preview), !unpacked.is_empty())
         )
     };
 
@@ -400,9 +566,9 @@ pub fn file_page(
                 true => format!("{body} rows &middot; first {MAX_TABLE_ROWS} shown"),
                 false => format!("{body} row{}", if body == 1 { "" } else { "s" }),
             };
-            let controls = format!("{}{}{}", print_flag(state), source_flag(), std_controls(state, rel, vfs));
+            let controls = drawn_controls();
             let content = format!("{}{table}", meta_line(size, mtime, &format!("{extra}{unpacked}")));
-            return layout(state, root, prefs, rel, url_now, &controls, false, &content);
+            return layout(state, root, prefs, rel, url_now, &controls, &content);
         }
     }
 
@@ -420,19 +586,14 @@ pub fn file_page(
             None
         };
         if let Some(body) = body {
-            let controls = format!(
-                "{}{}{}",
-                print_flag(state),
-                source_flag(),
-                std_controls(state, rel, vfs)
-            );
+            let controls = drawn_controls();
             // A rendered page has no meta line; a packed one gets one, to say so.
             let note = match unpacked.is_empty() {
                 true => String::new(),
                 false => meta_line(size, mtime, unpacked.trim_start_matches(" &middot; ")),
             };
             let content = format!("{note}<div class=\"md\">{}</div>", body);
-            return layout(state, root, prefs, rel, url_now, &controls, false, &content);
+            return layout(state, root, prefs, rel, url_now, &controls, &content);
         }
     }
 
@@ -471,26 +632,28 @@ pub fn file_page(
         String::new()
     };
 
-    let mut controls = print_flag(state);
-    if laid_out.is_some() && !want_source {
-        controls.push_str(&source_flag());
-    } else if laid_out.is_some()
-        || [MARKDOWN_EXTS, MERMAID_EXTS].iter().any(|exts| exts.contains(&ext.as_str()))
-        || (TABLE_EXTS.contains(&ext.as_str()) && !table_refused)
-    {
-        controls.push_str(&flag(
-            "",
-            &href_path(rel),
-            &svg_icon(ICON_PREVIEW),
-            "Preview",
-            "Preview instead",
-        ));
-    }
-    controls.push_str(&std_controls(state, rel, vfs));
+    // Laid-out JSON is this listing and its Preview; Markdown, Mermaid and a
+    // table that can be drawn have a Preview elsewhere; the rest is Source. A
+    // table asked for as source is asked about too (`drawn_as`), so a table
+    // too wide to draw or with nothing in it offers no Preview from here.
+    let packed = !unpacked.is_empty();
+    let shown_as = match laid_out.is_some() || (!JSON_EXTS.contains(&ext.as_str()) && drawn_as(&ext, &text, packed)) {
+        true => Shown::Drawn,
+        false => Shown::Text,
+    };
+    let lit = match laid_out.is_some() && !want_source {
+        true => View::Preview,
+        false => View::Source,
+    };
+    let controls = format!(
+        "{}{}",
+        verbs(state, rel, vfs, true),
+        view_group(shown_as, rel, Some(lit), packed)
+    );
 
     let content = format!(
         "{}<div class=\"codewrap\">{}<pre class=\"hl-code\"><code>{}</code></pre></div>",
-        meta_line(
+        meta_line_ending(
             size,
             mtime,
             &format!(
@@ -499,10 +662,11 @@ pub fn file_page(
                 line_count,
                 if line_count == 1 { "" } else { "s" },
                 if table_refused { " &middot; too big to draw as a table" } else { "" }
-            )
+            ),
+            &ln_switch(prefs, url_now)
         ),
         gutter,
         html
     );
-    layout(state, root, prefs, rel, url_now, &controls, true, &content)
+    layout(state, root, prefs, rel, url_now, &controls, &content)
 }

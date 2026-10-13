@@ -92,6 +92,19 @@ webview asks for a film a Range at a time.
    Files: `?raw=` / `?dl=` / non-HTML / subresource (`Sec-Fetch-Dest`) go
    through `serve_raw` (Range, ETag). Otherwise `view::file_page`.
 
+**Raw is the file as it is, and text is shown as text.** Most text has no
+type of its own in `mime_for_ext` — code, config, logs, tables — and
+`octet-stream` under `nosniff` is a download: a blank frame, and in the shell
+a copy in Downloads nobody asked for. So `serve_raw` sends `text/plain` for a
+file whose first 8 KiB are text where its type says nothing more
+(`octet-stream`), and the Raw view's frame asks with `as=text`, which gets
+JSON, HTML, SVG and XML as their text too; the type is decided after the 304
+check, so a revalidation reads nothing. HTML's drawn page is its Preview, the
+file served as itself in the same sandboxed frame. A binary file has no Raw —
+nothing to show as it is — only the notice and Download, and neither has a
+`.gz`, whose page shows it unpacked; text past the highlight limit opens in
+Raw. A copy being saved (`?dl=1`) keeps its type.
+
 HTML pages are `Cache-Control: no-store`. Raw bodies get an ETag from
 `(mtime, len)` in `Meta`. Theme, line numbers, sidebar and the pane's opened
 directories are cookies (`ts_theme`, `ts_ln`, `ts_sidebar`, `ts_open`), not
@@ -186,7 +199,9 @@ README / markdown body, and for a `.gz` once unpacked, read through a `take`
 so a small file that inflates to gigabytes stops there; 64 KiB for a mermaid
 fence (`md.rs`); for a table 5,000 rows, 1,000 columns and 2 MiB of HTML,
 and for laid-out JSON 2 MiB of output and 128 levels, all checked as they go
-(`data.rs`). A table or a layout past its cap is drawn as written instead. Anything bigger is offered as Raw / Download, or left as source.
+(`data.rs`). A table or a layout past its cap is drawn as written instead.
+Text bigger than that opens in Raw; anything else bigger is a notice and
+Download.
 
 JSON is laid out by a re-indenter rather than a parse into values and back:
 `serde_json` would rewrite `2.50` as `2.5` and big integers as floats unless
@@ -677,6 +692,11 @@ Public helpers the embedder is meant to call:
   (SVG path data, wrapped in this crate's own box), a word, a title and an href
   the shell claims in `actions`. Set as the root changes: a control that acts on
   the root has nothing to act on when the root is a kind it does not know.
+  Each is a pill of its own, never joined to the page's: the page's own come
+  after, As root alone, then two joined groups (`page::group`) — the verbs
+  (Print · Download · the backend's `on_file_page` actions, or Upload · New
+  folder) and the views (Preview · Source · Raw, the one on screen lit and no
+  link). Line numbers is a switch on the listing's meta line, not a flag.
 - `Vfs::downloadable()` — whether a copy of a file in this tree is worth
   offering, defaulting true. Always the same for a whole tree, which is why the
   backend answers and not the file: `SftpFs` yes, `EmbeddedFs` no (the Usage
