@@ -12,13 +12,13 @@ with a dot are not listed.
 To start the tree at a folder further down, open it and press **As root** in
 the header.
 
-The **Files** heading carries **Pin**, to keep the open folder in Pinned, and
+The **Files** heading carries **Star**, to keep the open folder in Starred, and
 **Close**, to return to the start page. **Open a folder…** is in the status line,
 which stays on screen.
 
 ## The sidebar
 
-On the start page it holds the lists: Places, Pinned, Recent, and any other list
+On the start page it holds the lists: Places, Starred, Recent, and any other list
 the app adds. Once a folder is open, the tree is at the top and those lists stay
 under it.
 

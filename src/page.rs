@@ -242,12 +242,14 @@ pub const ICON_PLUS: &str = "<path d=\"M8 3.6v8.8M3.6 8h8.8\"/>";
 /// lists had rows. Drawn to `ICON_PLUS`'s measurements, which is what puts it on
 /// the same optical weight as the one action a heading can carry.
 const ICON_CROSS: &str = "<path d=\"M4.5 4.5l7 7M11.5 4.5l-7 7\"/>";
-// A ribbon, outlined for a root that is not pinned and filled for one that is.
+// A star, outlined for a root that is not starred and filled for one that is.
 // Two states of one shape rather than two shapes: the control stays in the same
-// place and says which way round it is, which a second icon would not.
-const ICON_PIN: &str = "<path d=\"M4.2 2.6h7.6v10.8L8 10.6l-3.8 2.8z\"/>";
-const ICON_PINNED: &str =
-    "<path fill=\"currentColor\" d=\"M4.2 2.6h7.6v10.8L8 10.6l-3.8 2.8z\"/>";
+// place and says which way round it is, which a second icon would not. Not the
+// bookmark it was: that is a row's *kept offline* now, and one mark meaning two
+// things in one pane was one too many.
+const ICON_STAR: &str = "<path d=\"M8 2.3l1.75 3.55 3.9.55-2.83 2.75.67 3.88L8 11.2l-3.49 1.83.67-3.88L2.35 6.4l3.9-.55z\"/>";
+const ICON_STARRED: &str =
+    "<path fill=\"currentColor\" d=\"M8 2.3l1.75 3.55 3.9.55-2.83 2.75.67 3.88L8 11.2l-3.49 1.83.67-3.88L2.35 6.4l3.9-.55z\"/>";
 
 /// "Serve this folder as the root": an arrow going in through the side of a frame.
 const ICON_AS_ROOT: &str = "<path d=\"M9.8 3.4h2.8v9.2H9.8\"/><path d=\"M3.4 8h5.8\"/>\
@@ -1248,8 +1250,8 @@ fn pane_html(
     // in the tree carries the button for that.
     if state.cfg.app_ui {
         let (href, icon, title) = match state.cfg.is_pinned(&root.id) {
-            true => ("/.ts/unpin", ICON_PINNED, "Pinned — click to remove"),
-            false => ("/.ts/pin", ICON_PIN, "Pin this folder"),
+            true => ("/.ts/unpin", ICON_STARRED, "Starred — click to remove"),
+            false => ("/.ts/pin", ICON_STAR, "Star this folder"),
         };
         acts.push((href.to_string(), icon.to_string(), title.to_string()));
     }
@@ -1307,7 +1309,7 @@ fn pane_html(
                 [(
                     format!("/.ts/unpin?path={}", percent_encode(&p.id)),
                     ICON_CROSS.to_string(),
-                    "Unpin this folder".to_string(),
+                    "Remove from Starred".to_string(),
                 )]
             })
             .collect();
@@ -1315,7 +1317,7 @@ fn pane_html(
             &mut out,
             state,
             "pinned",
-            "Pinned",
+            "Starred",
             &[],
             // Drawn as a path, like Recent: a pin's name may be one — the
             // opener's `Thor: /home/pi/notes` — and the leaf is what tells two
@@ -2540,7 +2542,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             [(
                 format!("/.ts/unpin?path={}", percent_encode(&p.id)),
                 ICON_CROSS.to_string(),
-                "Unpin this folder".to_string(),
+                "Remove from Starred".to_string(),
             )]
         })
         .collect();
@@ -2548,7 +2550,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
         &mut lists,
         state,
         "pinned",
-        "Pinned",
+        "Starred",
         &[],
         pinned.iter().zip(&unpin).map(|(p, aside)| Row {
             as_path: false,
@@ -4284,7 +4286,7 @@ mod tests {
             "{html}"
         );
         assert!(!html.contains("/.ts/unpin"), "{html}");
-        assert!(!html.contains(">Pinned<"), "{html}");
+        assert!(!html.contains(">Starred<"), "{html}");
 
         // The open root, pinned: the same control now takes it back.
         let id = state.cfg.root().expect("served").id.clone();
@@ -4302,7 +4304,7 @@ mod tests {
         assert!(html.contains("<span class=\"leaf\">Home of it all</span></a>"), "{html}");
         assert!(
             html.contains(&format!(
-                "<a class=\"aside\" href=\"/.ts/unpin?path={}\" title=\"Unpin this folder\">",
+                "<a class=\"aside\" href=\"/.ts/unpin?path={}\" title=\"Remove from Starred\">",
                 percent_encode(&id)
             )),
             "{html}"

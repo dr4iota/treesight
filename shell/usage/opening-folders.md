@@ -23,12 +23,12 @@ is **Files**, a folder of the app's own. Where a download asks where to save
 it, nothing new lands in Files, and the row is listed only while it holds
 something.
 
-## Pinned
+## Starred
 
-What you chose to keep. **Pin** is on the **Files** heading, over the tree. It
-pins the folder that is open, not one you have walked into, and the folder gets
+What you chose to keep. **Star** is on the **Files** heading, over the tree. It
+stars the folder that is open, not one you have walked into, and the folder gets
 a row of its own, kept across launches. Press it again, or the cross on the row
-(**Unpin this folder**), and the row goes.
+(**Remove from Starred**), and the row goes.
 
 To pin a folder further down, start the tree there first — open it, then
 **As root** in its header — and then pin it.
