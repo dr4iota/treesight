@@ -1425,8 +1425,14 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
    drawn with the class and the animation does the rest. */
 @keyframes made { from { background: color-mix(in srgb, var(--link) 22%, transparent); } }
 .entries .row.made { animation: made 3s ease-out; }
+/* The bookmark's patch is the row's colour, and the row's light is a tint
+   laid over the page; the patch takes the same light, made solid, so it does
+   not sit as a page-coloured square on a lit row. */
+@keyframes made-patch { from { background: color-mix(in srgb, var(--link) 22%, var(--bg)); } }
+.entries .row.made .icon .pin { animation: made-patch 3s ease-out; }
 @media (prefers-reduced-motion: reduce) {
   .entries .row.made { animation: none; background: color-mix(in srgb, var(--link) 10%, transparent); }
+  .entries .row.made .icon .pin { animation: none; background: color-mix(in srgb, var(--link) 10%, var(--bg)); }
 }
 
 /* Code view: gutter + code panes share metrics so lines align. */

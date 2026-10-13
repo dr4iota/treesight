@@ -2122,6 +2122,11 @@ fn entry_row(
 /// on and outlined when off, so the state and the control are one thing in
 /// one place. A state with no toggle — kept because its folder is, say — is
 /// the badge greyed, on an icon that is no link.
+///
+/// The switch is a link named by the backend's title, which says the state
+/// ("Kept on this device since …, press to stop keeping it"), and not a
+/// `role="button"` with `aria-pressed`: Android's WebView hands that to a
+/// screen reader as a toggle with no name at all.
 fn row_icon(state: &State, href: &str, e: &crate::vfs::Entry, info: Option<&crate::vfs::RowInfo>) -> String {
     let dir = if e.is_dir { " dir" } else { "" };
     let art = svg_icon(icon_for(&e.name, e.is_dir));
@@ -2130,19 +2135,18 @@ fn row_icon(state: &State, href: &str, e: &crate::vfs::Entry, info: Option<&crat
         .and_then(|i| i.actions.iter().find(|a| a.place == Place::Badge));
     if let Some(a) = badge {
         return format!(
-            "<a class=\"icon{dir} badge{}\" href=\"{}\" title=\"{t}\" aria-label=\"{t}\" aria-pressed=\"{}\">{art}\
+            "<a class=\"icon{dir} badge{}\" href=\"{}\" title=\"{t}\" aria-label=\"{t}\">{art}\
              <span class=\"pin\">{}</span></a>",
             if a.on { " on" } else { "" },
             html_escape(&act_href(state, href, &a.id)),
-            a.on,
             svg_icon(if a.on { ICON_MARK } else { ICON_MARK_OPEN }),
             t = html_escape(&a.title),
         );
     }
     match info.and_then(|i| i.mark.as_deref()) {
         Some(m) => format!(
-            "<span class=\"icon{dir} badge held\" title=\"{t}\" aria-label=\"{t}\">{art}\
-             <span class=\"pin\">{}</span></span>",
+            "<span class=\"icon{dir} badge held\" title=\"{t}\">{art}\
+             <span class=\"pin\">{}</span><span class=\"sr\">{t}</span></span>",
             svg_icon(ICON_MARK),
             t = html_escape(m),
         ),
@@ -3766,7 +3770,7 @@ mod tests {
         // and Delete, in that order.
         let kept = html.find(&format!(
             "<a class=\"icon badge on\" href=\"/.ts/act?path=%2Fkept.txt&amp;a=keep&amp;t={token}\" title=\"Keep offline it\" \
-             aria-label=\"Keep offline it\" aria-pressed=\"true\">"
+             aria-label=\"Keep offline it\">"
         )).expect(&html);
         let after = &html[kept..];
         let name = after.find("<a class=\"name\" href=\"/kept.txt\">kept.txt</a>").expect(after);
@@ -3786,6 +3790,7 @@ mod tests {
         assert_eq!(after[..del].matches("a=keep").count(), 1, "{after}");
         // A state with no toggle: the bookmark greyed on an icon that is no link.
         assert!(html.contains("<span class=\"icon badge held\" title=\"Kept with its folder\""), "{html}");
+        assert!(html.contains("<span class=\"sr\">Kept with its folder</span></span>"), "{html}");
         // Not held: the toggle off, its bookmark outlined.
         assert!(html.contains(&format!("<a class=\"icon badge\" href=\"/.ts/act?path=%2Fplain.txt&amp;a=keep&amp;t={token}\"")), "{html}");
         assert!(html.contains("<span class=\"wide\">Not held</span>"), "{html}");
