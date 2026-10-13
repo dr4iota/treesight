@@ -1706,8 +1706,9 @@ fn new_folder_form(state: &State, rel: &[String], query: &[(String, String)]) ->
          <span class=\"icon dir\">{icon}</span>\
          <input type=\"hidden\" name=\"dir\" value=\"{dir}\">\
          <input type=\"hidden\" name=\"t\" value=\"{token}\">\
-         <input type=\"text\" name=\"name\" value=\"{kept}\" placeholder=\"Name of the new folder\" \
-         aria-label=\"Name of the new folder\" maxlength=\"255\" autocomplete=\"off\" autofocus>\
+         <input type=\"text\" name=\"name\" value=\"{kept}\" placeholder=\"Folder name\" \
+         aria-label=\"Name of the new folder\" maxlength=\"255\" autocomplete=\"off\" \
+         autocapitalize=\"off\" spellcheck=\"false\" autofocus>\
          <button class=\"primary\">Create</button><a class=\"cancel\" href=\"./\">Cancel</a>{err}\
          </form>\n",
         icon = svg_icon(ICON_NEW_FOLDER),
@@ -1916,7 +1917,7 @@ pub fn listing_page(
 
     let filter = || format!(
         r#"<form class="filter" method="get">
-<input type="text" name="q" value="{}" placeholder="glob, e.g. *.rs" aria-label="filter pattern">
+<input type="text" name="q" value="{}" placeholder="glob, e.g. *.rs" aria-label="filter pattern" autocapitalize="off" spellcheck="false">
 <label><input type="checkbox" name="r" value="1"{}> recursive</label>
 <button>Filter</button>{}
 </form>
