@@ -1583,10 +1583,10 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
                         row.aside
                             .iter()
                             .map(|(href, icon, title)| format!(
-                                "<a class=\"aside\" href=\"{}\" title=\"{}\">{}</a>",
+                                "<a class=\"aside\" href=\"{}\" title=\"{t}\" aria-label=\"{t}\">{}</a>",
                                 html_escape(href),
-                                html_escape(title),
-                                svg_icon(icon)
+                                svg_icon(icon),
+                                t = html_escape(title),
                             ))
                             .collect::<String>()
                     )
@@ -4310,7 +4310,7 @@ mod tests {
         assert!(html.contains("<span class=\"leaf\">Home of it all</span></a>"), "{html}");
         assert!(
             html.contains(&format!(
-                "<a class=\"aside\" href=\"/.ts/unpin?path={}\" title=\"Remove from Starred\">",
+                "<a class=\"aside\" href=\"/.ts/unpin?path={}\" title=\"Remove from Starred\" aria-label=\"Remove from Starred\">",
                 percent_encode(&id)
             )),
             "{html}"
@@ -4342,7 +4342,7 @@ mod tests {
 
         let button = concat!(
             "<a class=\"aside\" href=\"/.ts/forget?path=ssh%3Aiota%3A%2Fhome%2Fhanhua%2F~\"",
-            " title=\"Forget this folder\">"
+            " title=\"Forget this folder\" aria-label=\"Forget this folder\">"
         );
         assert!(html.contains(button), "{html}");
         // The Places row is drawn the plain way: no row wrapper, no button.
@@ -4603,7 +4603,7 @@ mod tests {
             "{html}"
         );
         assert!(
-            html.contains("<a class=\"aside\" href=\"/x/edit?id=prod-web\" title=\"Edit prod-web\">"),
+            html.contains("<a class=\"aside\" href=\"/x/edit?id=prod-web\" title=\"Edit prod-web\" aria-label=\"Edit prod-web\">"),
             "{html}"
         );
         assert!(html.contains("<span class=\"why\">gone</span>"), "{html}");
