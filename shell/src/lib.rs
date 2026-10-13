@@ -1484,8 +1484,26 @@ fn serve(
         });
     };
     let reply = treeserve::handle(state, &to_req(&request, jar));
-    jar.store(&reply);
+    if stores_cookies(&request) {
+        jar.store(&reply);
+    }
     reply_to_response(reply)
+}
+
+/// Whether a reply's cookies are kept here: only for a page the engine says
+/// the window is loading. The preferences live in cookies set by `/.ts/set`
+/// and `/.ts/tree`, and a previewed HTML page — drawn from a remote machine —
+/// could otherwise flip them with an `<img>` pointed there, no click needed.
+/// Nothing is lost by refusing the rest, a request that says nothing
+/// included (WebKitGTK sends no `Sec-Fetch-Dest` on this scheme): those two
+/// are the only routes that set a cookie, and a click on either is a
+/// navigation the shell answers itself (`set_pref`), writing the jar there.
+fn stores_cookies(request: &tauri::http::Request<Vec<u8>>) -> bool {
+    request
+        .headers()
+        .get("Sec-Fetch-Dest")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|dest| dest.eq_ignore_ascii_case("document"))
 }
 
 /// A webview request, in the terms the router speaks. `Req::url` is path and
@@ -3462,6 +3480,25 @@ fn let_go_of(app: &AppHandle, was: Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A page the window loads keeps its cookies; a picture, a prefetch, a
+    /// frame, or a request that does not say what it is for does not, so a
+    /// previewed page cannot flip the preferences.
+    #[test]
+    fn only_a_page_keeps_its_cookies() {
+        let with = |dest: Option<&str>| {
+            let mut b = tauri::http::Request::builder().uri("http://treesight.localhost/.ts/set?theme=dark");
+            if let Some(d) = dest {
+                b = b.header("Sec-Fetch-Dest", d);
+            }
+            super::stores_cookies(&b.body(Vec::new()).unwrap())
+        };
+        assert!(with(Some("document")));
+        assert!(!with(None), "WebKitGTK says nothing, for a picture too");
+        for dest in ["image", "iframe", "empty", "style"] {
+            assert!(!with(Some(dest)), "{dest}");
+        }
+    }
 
     /// One dialog at a time, and the turn comes back when the answer does —
     /// including an answer that never got as far as the dialog.

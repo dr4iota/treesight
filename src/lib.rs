@@ -1263,6 +1263,9 @@ pub fn handle(state: &State, req: &Req) -> Reply {
     if framed && wants_html(req) && !is_subresource(req) {
         return html_reply(200, view::raw_page(state, &root, prefs, &rel, &canon, &url_now));
     }
+    if want_raw && !want_dl && query_get(&query, "as") == Some("page") && HTML_EXTS.contains(&ext_of(&name).as_str()) {
+        return serve_page(root.vfs.as_ref(), &canon);
+    }
     if want_raw || want_dl || !wants_html(req) || is_subresource(req) {
         let as_text = query_get(&query, "as") == Some("text");
         return serve_raw(req, root.vfs.as_ref(), &canon, &name, want_dl, as_text);
@@ -1445,6 +1448,85 @@ fn etag_matches(given: &str, tag: &str) -> bool {
             .split(',')
             .map(str::trim)
             .any(|t| t.strip_prefix("W/").unwrap_or(t) == tag)
+}
+
+/// What HTML's Preview frame is sent: the page, unable to go anywhere by
+/// itself. The frame is `sandbox`, so no script, form, popup or top-level
+/// navigation — but a sandboxed document may still navigate *itself*, and on
+/// WebKitGTK and Android the shell's navigation hook sees a frame's
+/// navigations as it sees the window's, and acts on the `/.ts/` links it
+/// claims. Two ways in need no click: a `<meta http-equiv="refresh">`, which
+/// no policy governs, so every `http-equiv` is renamed out of effect
+/// (`disarm`); and a frame of its own pointed at such a link, which the
+/// policy refuses (`PAGE_CSP`). A link the reader clicks still goes where it
+/// says, as in any page one opens. The whole fix is a page token on every
+/// `/.ts/` action (telechore `docs/tasks/tree-browser.md`).
+///
+/// Read whole, which the page was going to be anyway: only HTML within the
+/// highlight limit has a Preview.
+///
+/// The sandbox is what stops a refresh in every spelling — WebKitGTK and
+/// Chromium both refuse a sandboxed document's `<meta refresh>` — and the
+/// policy is what stops a child frame; `disarm` is a second layer under the
+/// first. Nothing on this path may ever send a `Refresh` header: that one a
+/// sandboxed frame does follow.
+fn serve_page(vfs: &dyn Vfs, path: &VfsPath) -> Reply {
+    if vfs.metadata(path).is_ok_and(|m| m.len > MAX_HIGHLIGHT_BYTES) {
+        return Reply::plain(413, "this page is too large to preview");
+    }
+    let Ok(bytes) = vfs.read(path) else {
+        return Reply::plain(404, "not found");
+    };
+    // UTF-16, say, past a NUL-free head: `disarm` reads bytes and cannot see
+    // a name spelled two bytes a letter. Not a page to preview.
+    if bytes.contains(&0) {
+        return Reply::plain(415, "this page cannot be previewed");
+    }
+    let bytes = disarm(bytes);
+    Reply {
+        status: 200,
+        // No charset: the page's own `<meta charset>` says, as it would in a
+        // browser. Not `http-equiv`'s form of it, which `disarm` renames;
+        // an engine then falls back to its own guess.
+        headers: vec![
+            hdr("Content-Type", "text/html"),
+            hdr("X-Content-Type-Options", "nosniff"),
+            hdr("Cache-Control", "no-store"),
+            hdr("Content-Security-Policy", PAGE_CSP),
+        ],
+        body: Body::Stream {
+            len: bytes.len() as u64,
+            reader: Box::new(std::io::Cursor::new(bytes)),
+        },
+    }
+}
+
+/// The Preview frame's policy: sandboxed as Raw's documents are, and with no
+/// frame, object or embed of its own, any of which could be pointed at a link
+/// the shell acts on and would load without a click.
+const PAGE_CSP: &str = "sandbox; frame-src 'none'; child-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+
+/// Every `http-equiv`, any case, renamed `data-equiv`, and every `srcdoc`
+/// renamed `data-x` — the same lengths, so nothing else moves. A `refresh`
+/// is the one that matters: it navigates the frame with nothing to click.
+/// `srcdoc` because its value is a document of its own, entity-decoded
+/// before it is parsed, so `http&#45;equiv` there is the real name by then;
+/// renamed, there is no such document. The rest (a charset, a policy) are
+/// lost too, which costs a page at most its declared encoding.
+fn disarm(mut html: Vec<u8>) -> Vec<u8> {
+    const NAMES: [(&[u8], &[u8]); 2] = [(b"http-equiv", b"data"), (b"srcdoc", b"data-x")];
+    let mut i = 0;
+    'scan: while i < html.len() {
+        for (name, with) in NAMES {
+            if html.len() - i >= name.len() && html[i..i + name.len()].eq_ignore_ascii_case(name) {
+                html[i..i + with.len()].copy_from_slice(with);
+                i += name.len();
+                continue 'scan;
+            }
+        }
+        i += 1;
+    }
+    html
 }
 
 fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: bool, as_text: bool) -> Reply {
@@ -1667,6 +1749,38 @@ mod tests {
         };
         assert!(sandboxed("a.html"), "an html document sandboxes");
         assert!(!sandboxed("b.png"), "a picture does not");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// HTML's Preview cannot go anywhere by itself: no refresh, no frame of
+    /// its own, sandboxed.
+    #[test]
+    fn a_previewed_page_cannot_navigate_by_itself() {
+        let page = b"<META HTTP-EQUIV=\"refresh\" content=\"0;url=/.ts/root?path=/\"><meta http-equiv=refresh content=0><p>http-equiv</p>\
+            <iframe SrcDoc=\"&lt;meta http&#45;equiv=refresh content=0&gt;\"></iframe>".to_vec();
+        let out = String::from_utf8(super::disarm(page)).unwrap();
+        assert!(!out.to_ascii_lowercase().contains("http-equiv"), "{out}");
+        assert!(!out.to_ascii_lowercase().contains("srcdoc"), "{out}");
+        assert!(out.starts_with("<META data-EQUIV=\"refresh\""), "{out}");
+        assert!(out.contains("<iframe data-x=\""), "{out}");
+        for rule in ["sandbox", "frame-src 'none'", "child-src 'none'", "object-src 'none'"] {
+            assert!(super::PAGE_CSP.contains(rule), "{rule}");
+        }
+        let dir = std::env::temp_dir().join(format!("ts-page-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.html"), "<meta http-equiv=refresh content=0><b>hi</b>").unwrap();
+        let vfs = super::vfs::LocalFs::new(dir.canonicalize().unwrap());
+        let reply = super::serve_page(&vfs, &super::vfs::VfsPath::new(vec!["a.html".to_string()]));
+        assert!(reply.headers.iter().any(|(k, v)| k == "Content-Security-Policy" && v == super::PAGE_CSP));
+        let mut body = String::new();
+        if let super::Body::Stream { mut reader, .. } = reply.body {
+            reader.read_to_string(&mut body).unwrap();
+        }
+        assert_eq!(body, "<meta data-equiv=refresh content=0><b>hi</b>");
+        // Two bytes a letter: refused, since `disarm` cannot read it.
+        std::fs::write(dir.join("u.html"), b"\xff\xfeh\0i\0").unwrap();
+        let reply = super::serve_page(&vfs, &super::vfs::VfsPath::new(vec!["u.html".to_string()]));
+        assert_eq!(reply.status, 415);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

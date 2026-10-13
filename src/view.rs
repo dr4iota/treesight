@@ -252,8 +252,9 @@ fn raw_view(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_no
 }
 
 /// HTML's Preview: the page as a browser draws it, in a frame like Raw's,
-/// served as itself (`raw_href`) where Raw asks for its text. No Print, as on
-/// Raw: what is in the frame is the engine's to lay out, not this page's.
+/// served as a page that cannot navigate by itself (`as=page`, `serve_page`)
+/// where Raw asks for its text. No Print, as on Raw: what is in the frame is
+/// the engine's to lay out, not this page's.
 fn html_preview(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str) -> String {
     let name = rel.last().map(String::as_str).unwrap_or("");
     let controls = format!(
@@ -261,7 +262,8 @@ fn html_preview(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], ur
         verbs(state, rel, root.vfs.as_ref(), false),
         view_group(Shown::Drawn, rel, Some(View::Preview), false)
     );
-    bare_layout(state, root, prefs, rel, url_now, &controls, &framed(&raw_href(rel), name))
+    let src = format!("{}?raw=1&bare=1&as=page", href_path(rel));
+    bare_layout(state, root, prefs, rel, url_now, &controls, &framed(&src, name))
 }
 
 /// The frame Raw and HTML's Preview draw the file in.

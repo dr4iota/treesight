@@ -3283,7 +3283,7 @@ mod tests {
         // itself; Source and Raw are its text.
         let html = page("l.html", &[]);
         lit(&html, "Preview");
-        assert!(html.contains("<iframe class=\"raw\" sandbox src=\"/l.html?raw=1&amp;bare=1\""), "{html}");
+        assert!(html.contains("<iframe class=\"raw\" sandbox src=\"/l.html?raw=1&amp;bare=1&amp;as=page\""), "{html}");
         lit(&page("l.html", &src), "Source");
         assert!(raw("l.html").contains("src=\"/l.html?raw=1&amp;bare=1&amp;as=text\""), "Raw as text");
         assert!(raw("l.html").contains(">Preview<"), "the whole group on Raw");
