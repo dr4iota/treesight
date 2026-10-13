@@ -3109,7 +3109,6 @@ fn raise(app: &AppHandle, msg: &str, kind: MessageDialogKind, fatal: bool) {
     let app = app.clone();
     let msg = msg.to_string();
     let _ = app.clone().run_on_main_thread(move || {
-        #[cfg_attr(mobile, allow(unused_mut))]
         // Titled by the program the reader is running, which is the
         // embedder's on a downstream app — "treesight" over a Telechore
         // window named a program they have never heard of. The build's own
@@ -3119,6 +3118,8 @@ fn raise(app: &AppHandle, msg: &str, kind: MessageDialogKind, fatal: bool) {
             .try_state::<Serving>()
             .and_then(|s| s.state().cfg.app_name.clone())
             .unwrap_or_else(|| app.package_info().name.clone());
+        // Mutable only for the desktop's `parent` below.
+        #[cfg_attr(mobile, allow(unused_mut))]
         let mut dialog = app.dialog().message(msg).kind(kind).title(title);
         // No `parent` on the builder on mobile, where a dialog belongs to the
         // one activity and has nothing to get lost behind.
