@@ -349,6 +349,26 @@ shell's capability:
   navigation and does the work. `/.ts/set` and `/.ts/tree` are server routes the
   shell answers itself as well — see the cookie jar above.
 
+#### Links carry no host
+
+Every link a page renders is hostless — a path, `/.ts/…` or a folder's own —
+and resolves against whatever address the page came from. That address is
+`treesight://localhost` on Linux and macOS, `http://treesight.localhost` on
+Windows and Android, and the embedder's own scheme beside it; only the shell
+knows which, so a page that named one would be wrong on the others. Full URLs
+are built in Rust (`Serving::entry`/`home`, an embedder's own) and only for
+navigations the shell makes itself.
+
+The rule runs the other way too: **an href with a scheme is not ours.** The
+injected `WAIT` script relies on it to tell a link out of the app (handed to
+the system's browser, the page stays) from one that leaves the page. The
+Navigation API's `navigate` event reports an address already resolved, so
+there the shell's own list of origins decides, filled into the script by
+`window_script` and matched as `origin_allowed` matches it — the shell and the
+page then agree on which navigations stay in this window. A fragment on the
+same document is not leaving either. `no_page_links_to_the_app_by_its_address`
+(`src/page.rs`) holds the listing, wait and start pages to it.
+
 `?dl=1` is intercepted the same way: `resolve_in_root`, then a native Save
 dialog (non-blocking, main thread), and the copy itself — `Vfs::open` →
 `File::create` → `io::copy` — on a `std::thread`, so a backend reading over a

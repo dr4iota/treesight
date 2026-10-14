@@ -3049,6 +3049,40 @@ mod tests {
         );
     }
 
+    /// **A link of ours carries no host.** The app's address differs by
+    /// platform — `treesight://localhost`, `http://treesight.localhost`, a port
+    /// on the loopback — and only the shell knows which, so a page that named
+    /// one would be wrong on the others. And the shell's wait tells leaving
+    /// from staying by it: an href with a scheme is somebody else's.
+    #[test]
+    fn no_page_links_to_the_app_by_its_address() {
+        let dir = tmp_dir("hostless");
+        fs::create_dir_all(dir.join("sub/inner")).unwrap();
+        fs::write(dir.join("sub/a.txt"), "a").unwrap();
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let open = [String::from("sub")];
+        let prefs = Prefs { sidebar: true, open: &open, ..prefs() };
+        let root = state.cfg.root().expect("these tests always serve one");
+        let sub = vec!["sub".to_string()];
+        let pages = [
+            listing_page(&state, &root, prefs, &[], &VfsPath::root(), &[], "/"),
+            listing_page(&state, &root, prefs, &sub, &VfsPath::new(sub.clone()), &[], "/sub/"),
+            wait_page(&state, Some(&root), prefs, "/.ts/wait?path=sub", "sub"),
+            start_page(&state, prefs, "/"),
+        ];
+        for html in &pages {
+            for href in html.split("href=\"").skip(1).filter_map(|t| t.split('"').next()) {
+                let h = href.to_ascii_lowercase();
+                assert!(
+                    !h.starts_with("treesight:") && !h.contains(".localhost") && !h.starts_with("//"),
+                    "a page named the app's address: {href}"
+                );
+            }
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Nothing to offer and nothing to ask this platform for: a sentence, not an
     /// empty row where a button should be.
     #[test]

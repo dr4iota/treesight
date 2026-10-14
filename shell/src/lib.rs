@@ -2946,7 +2946,7 @@ fn close_folder(app: &AppHandle) {
 /// that reaches for the window through `eval` has to ask this first — see
 /// `Serving::loaded`, and `open_failed`, which is the second place that learned
 /// it the hard way.
-fn committed(app: &AppHandle) -> bool {
+fn committed<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {
     app.try_state::<Serving>()
         .is_some_and(|s| s.loaded.load(Ordering::Relaxed))
 }
@@ -2977,7 +2977,7 @@ fn is_home_url(url: &str) -> bool {
 /// Ahead of the page-load hook rather than instead of it: a decision may be
 /// taken before the load it follows has finished, and this makes the answer
 /// right from the moment the page was asked for.
-fn note_page(app: &AppHandle, url: &str) {
+fn note_page<R: tauri::Runtime>(app: &AppHandle<R>, url: &str) {
     if let Some(serving) = app.try_state::<Serving>() {
         serving.at_home.store(is_home_url(url), Ordering::Relaxed);
     }
@@ -3052,11 +3052,12 @@ pub fn show_tree(app: &AppHandle) {
 /// whatever root is current now. `location.replace` changes the page and leaves
 /// the history alone, which is what all of them want.
 ///
-/// Public because a downstream shell navigates the same window for the same
+/// Public, and generic over the runtime so a plugin's commands can call it,
+/// because a downstream shell navigates the same window for the same
 /// reasons, and getting this wrong is invisible until someone presses Back —
 /// or, on Android, swipes and finds the gesture doing nothing several times
 /// before it leaves.
-pub fn replace_page(app: &AppHandle, url: &str) {
+pub fn replace_page<R: tauri::Runtime>(app: &AppHandle<R>, url: &str) {
     let Some(win) = app.get_webview_window(WINDOW) else {
         return;
     };
