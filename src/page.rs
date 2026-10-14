@@ -142,6 +142,23 @@ pub const ICON_MARK: &str =
     "<path fill=\"currentColor\" d=\"M4.4 2.6h7.2v11l-3.6-2.6-3.6 2.6z\"/>";
 /// The same bookmark outlined: the badge on a row's icon whose toggle is off.
 const ICON_MARK_OPEN: &str = "<path d=\"M4.4 2.6h7.2v11l-3.6-2.6-3.6 2.6z\"/>";
+/// The bookmark torn in two along a zigzag, the lower half fallen a little.
+const ICON_MARK_TORN: &str = "<path fill=\"currentColor\" transform=\"rotate(-8 4.4 7)\" \
+     d=\"M4.4 2.6h7.2v4.6l-1.2 1-1.2-1-1.2 1-1.2-1-1.2 1-1.2-1z\"/><path fill=\"currentColor\" \
+     transform=\"translate(.9 1.4) rotate(6 11.6 9)\" d=\"M4.4 9l1.2-1 1.2 1 1.2-1 1.2 1 1.2-1 1.2 \
+     1v4.6l-3.6-2.6-3.6 2.6z\"/>";
+/// The bookmark whole, with a crack from its top edge in the background colour.
+const ICON_MARK_CRACKED: &str = "<path fill=\"currentColor\" d=\"M4.4 2.6h7.2v11l-3.6-2.6-3.6 2.6z\"/>\
+     <path class=\"crack\" d=\"M9.2 2.6l-1.3 1.6 1.2 1.1-1.4 1.5\"/>";
+
+/// The filled bookmark in a look.
+fn mark_in(look: crate::vfs::PinLook) -> &'static str {
+    match look {
+        crate::vfs::PinLook::Whole => ICON_MARK,
+        crate::vfs::PinLook::Torn => ICON_MARK_TORN,
+        crate::vfs::PinLook::Cracked => ICON_MARK_CRACKED,
+    }
+}
 /// `</>`: the source, highlighted — the mark code is spelled with everywhere.
 pub const ICON_SOURCE: &str = "<path d=\"M5.4 4.6L2.2 8l3.2 3.4\"/><path d=\"M10.6 4.6L13.8 8l-3.2 3.4\"/>\
      <path d=\"M9.1 3.2L6.9 12.8\"/>";
@@ -1893,7 +1910,7 @@ fn tree_kept(state: &State, info: Option<&crate::vfs::RowInfo>) -> Option<String
     let title = info.mark.as_deref().unwrap_or(&on.label);
     Some(format!(
         "<span class=\"mk\" title=\"{t}\" aria-label=\"{t}\">{}</span>",
-        svg_icon(ICON_MARK),
+        svg_icon(mark_in(on.look)),
         t = html_escape(title)
     ))
 }
@@ -2140,15 +2157,15 @@ fn row_icon(state: &State, href: &str, e: &crate::vfs::Entry, info: Option<&crat
              <span class=\"pin\">{}</span></a>",
             if a.on { " on" } else { "" },
             html_escape(&act_href(state, href, &a.id)),
-            svg_icon(if a.on { ICON_MARK } else { ICON_MARK_OPEN }),
+            svg_icon(if a.on { mark_in(a.look) } else { ICON_MARK_OPEN }),
             t = html_escape(&a.title),
         );
     }
-    match info.and_then(|i| i.mark.as_deref()) {
-        Some(m) => format!(
+    match info.and_then(|i| i.mark.as_deref().map(|m| (m, i.mark_look))) {
+        Some((m, look)) => format!(
             "<span class=\"icon{dir} badge held\" title=\"{t}\">{art}\
              <span class=\"pin\">{}</span><span class=\"sr\">{t}</span></span>",
-            svg_icon(ICON_MARK),
+            svg_icon(mark_in(look)),
             t = html_escape(m),
         ),
         None => icon_cell(e.is_dir, icon_for(&e.name, e.is_dir)),
@@ -3666,7 +3683,7 @@ mod tests {
     /// wants on a file's own page, lit when on.
     #[test]
     fn a_backend_adds_to_the_rows_and_the_page() {
-        use crate::vfs::{Notice, Place, RowAction, RowInfo, RowLine, Words};
+        use crate::vfs::{Notice, PinLook, Place, RowAction, RowInfo, RowLine, Words};
         use std::sync::Arc;
         struct Keeps(Arc<dyn Vfs>);
         impl Vfs for Keeps {
@@ -3702,6 +3719,7 @@ mod tests {
                     confirm: None,
                     on_file_page: id == "keep",
                     place,
+                    look: PinLook::Whole,
                 };
                 match name {
                     "kept.txt" => Some(RowInfo {
@@ -3714,6 +3732,7 @@ mod tests {
                         warn: vec![Words { wide: "changed on the server".into(), narrow: "changed".into() }],
                         label: None,
                         mark: Some("Kept offline".into()),
+                        mark_look: PinLook::Whole,
                         actions: vec![
                             verb("update", "Update", false, Place::LineEnd),
                             verb("forget", "Forget", false, Place::Line),
@@ -3723,6 +3742,15 @@ mod tests {
                         unreachable: false,
                     }),
                     "held.txt" => Some(RowInfo { mark: Some("Kept with its folder".into()), ..Default::default() }),
+                    "torn.txt" => Some(RowInfo {
+                        actions: vec![RowAction { look: PinLook::Torn, ..verb("forget", "Forget", true, Place::Badge) }],
+                        ..Default::default()
+                    }),
+                    "heldtorn.txt" => Some(RowInfo {
+                        mark: Some("Kept with its folder, changed".into()),
+                        mark_look: PinLook::Torn,
+                        ..Default::default()
+                    }),
                     "away.txt" => Some(RowInfo { unreachable: true, ..Default::default() }),
                     _ => Some(RowInfo {
                         label: Some(format!("…{}", &name[name.len() - 5..])),
@@ -3751,7 +3779,7 @@ mod tests {
         }
 
         let dir = tmp_dir("extras");
-        for f in ["kept.txt", "plain.txt", "away.txt", "held.txt"] {
+        for f in ["kept.txt", "plain.txt", "away.txt", "held.txt", "torn.txt", "heldtorn.txt"] {
             fs::write(dir.join(f), b"hello").unwrap();
         }
         let mut state = state_at(dir.clone());
@@ -3795,6 +3823,16 @@ mod tests {
         // A state with no toggle: the bookmark greyed on an icon that is no link.
         assert!(html.contains("<span class=\"icon badge held\" title=\"Kept with its folder\""), "{html}");
         assert!(html.contains("<span class=\"sr\">Kept with its folder</span></span>"), "{html}");
+        // A look is drawn as given, on a toggle and on a held mark: the torn
+        // bookmark on both, and the whole one where the look is whole.
+        let row = |name: &str| {
+            let at = html.find(&format!("<a class=\"name\" href=\"/{name}\"")).expect(name);
+            let start = html[..at].rfind("<li").unwrap();
+            &html[start..at]
+        };
+        assert!(row("torn.txt").contains("class=\"icon badge on\"") && row("torn.txt").contains("rotate(-8 4.4 7)"), "{}", row("torn.txt"));
+        assert!(row("heldtorn.txt").contains("badge held") && row("heldtorn.txt").contains("rotate(-8 4.4 7)"), "{}", row("heldtorn.txt"));
+        assert!(!row("kept.txt").contains("rotate(-8 4.4 7)") && !row("held.txt").contains("rotate(-8 4.4 7)"));
         // Not held: the toggle off, its bookmark outlined.
         assert!(html.contains(&format!("<a class=\"icon badge\" href=\"/.ts/act?path=%2Fplain.txt&amp;a=keep&amp;t={token}\"")), "{html}");
         assert!(html.contains("<span class=\"wide\">Not held</span>"), "{html}");
@@ -3821,6 +3859,11 @@ mod tests {
         assert!(side.contains("<li><a class=\"kept\" href=\"/kept.txt\"><span class=\"tn\">kept.txt</span>\
              <span class=\"mk\" title=\"Kept offline\""), "{side}");
         assert!(side.contains("<li><a href=\"/plain.txt\">plain.txt</a></li>"), "{side}");
+        // In its look: torn where the toggle is, and a held mark, torn or not,
+        // is no mark here.
+        let torn = side.find("<span class=\"tn\">torn.txt</span>").expect(&side);
+        assert!(side[torn..].split("</li>").next().unwrap().contains("rotate(-8 4.4 7)"), "{side}");
+        assert!(side.contains("<li><a href=\"/heldtorn.txt\">heldtorn.txt</a></li>"), "{side}");
 
         // The file's own page: the notice, and the toggle after Download, lit.
         let rel = vec!["kept.txt".to_string()];

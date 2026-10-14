@@ -206,6 +206,8 @@ pub struct RowInfo {
     /// folder is, say — drawn as a greyed badge on its icon, with this title.
     /// A [`Place::Badge`] verb takes the spot instead where the row has one.
     pub mark: Option<String>,
+    /// How [`Self::mark`]'s bookmark is drawn.
+    pub mark_look: PinLook,
     /// The backend's own verbs, in order, each where its [`Place`] puts it.
     /// Download and Delete are the page's and follow the buttons.
     pub actions: Vec<RowAction>,
@@ -251,6 +253,19 @@ pub struct RowAction {
     /// Also a pill on the file's own page, after Download.
     pub on_file_page: bool,
     pub place: Place,
+    /// How a [`Place::Badge`] toggle's bookmark is drawn while it is on.
+    pub look: PinLook,
+}
+
+/// How a bookmark is drawn: whole, torn in two, or whole with a crack from
+/// its top edge. What a look *means* is the backend's to say, in the title
+/// beside it; this only draws it, on the row's icon and in the tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PinLook {
+    #[default]
+    Whole,
+    Torn,
+    Cracked,
 }
 
 /// Where a row's verb is drawn.

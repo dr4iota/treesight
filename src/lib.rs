@@ -37,7 +37,7 @@ use hl::Hl;
 use page::{Prefs, ThemeMode};
 use util::*;
 pub use vfs::{
-    new_name, Confirm, Entry, LocalFs, Meta, Notice, Place, Prepared, ReadSeek, ResolveError, RowAction,
+    new_name, Confirm, Entry, LocalFs, Meta, Notice, PinLook, Place, Prepared, ReadSeek, ResolveError, RowAction,
     RowInfo, RowLine, Vfs, VfsPath, Words, WriteFile,
 };
 

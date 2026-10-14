@@ -1211,6 +1211,10 @@ ul.entries {
 .icon.badge .pin { color: var(--link); }
 .icon.badge:not(.on):not(.held) .pin path { fill: var(--row-bg, var(--bg)); }
 .icon.badge.held .pin { color: var(--muted); }
+/* A cracked bookmark's crack, in what is behind the bookmark: the row's own
+   colour on an icon, the pane's in the tree. */
+.icon .pin path.crack { stroke: var(--row-bg, var(--bg)); stroke-width: 1.3; fill: none; }
+nav.tree .mk path.crack { stroke: var(--bg); stroke-width: 1.3; fill: none; }
 a.icon.badge { text-decoration: none; border-radius: 10px; }
 /* Under the pointer the switch answers: a tint behind the icon, as the marks
    at the far end have, and an off bookmark filled part way toward on, in the
