@@ -1238,12 +1238,15 @@ a.icon.badge { text-decoration: none; border-radius: 10px; }
    them — and the end, the verbs on what changed and the change, takes the
    right end. Where both do not fit on one line the end goes under the start,
    still at the right, rather than squeezing it; a word is broken only where
-   it cannot fit a line at all, so a date stays whole. */
+   it cannot fit a line at all, so a date stays whole. The halves meet on
+   their text's baseline, not their tops: on a touch screen a verb's padding
+   counts in the end, a flex box, and not in the start, which is text, so
+   top-aligned the end's words sat 6px below the start's. */
 .entries .line {
   grid-area: line;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: baseline;
   gap: .3rem .75rem;
   min-width: 0;
   margin-top: .3rem;
