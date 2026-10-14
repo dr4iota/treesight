@@ -1281,6 +1281,9 @@ a.end.on { color: var(--link); }
    takes over with the same tint, the mark in its colour and an off bookmark
    filled part way, and holds while the finger does. */
 a, button, label { -webkit-tap-highlight-color: var(--press); }
+/* The row's controls are links only because the page has no script: a long
+   press on one, on a phone, picked it up as a link to drag, ghost and all. */
+a.icon.badge, a.end, a.say { -webkit-user-drag: none; -webkit-touch-callout: none; }
 a.end.danger { -webkit-tap-highlight-color: var(--press-err); }
 a.end:active { color: var(--link); background: color-mix(in srgb, var(--link) var(--on-tint), transparent); }
 a.end.danger:active { color: var(--err); background: color-mix(in srgb, var(--err) var(--on-tint), transparent); }

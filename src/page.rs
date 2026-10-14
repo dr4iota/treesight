@@ -2192,12 +2192,15 @@ fn row_line(state: &State, href: &str, info: Option<&crate::vfs::RowInfo>) -> St
         info.actions
             .iter()
             .filter(|a| a.place == place)
+            // Named by the word and then the title, which says what it acts
+            // on: a reader of the link alone heard *Forget*, of nothing in
+            // particular, since Android's WebView does not read a title.
             .map(|a| {
                 format!(
-                    "<a class=\"say\" href=\"{}\" title=\"{}\">{}</a>",
+                    "<a class=\"say\" href=\"{}\" title=\"{t}\" aria-label=\"{l}. {t}\">{l}</a>",
                     html_escape(&act_href(state, href, &a.id)),
-                    html_escape(&a.title),
-                    html_escape(&a.label),
+                    t = html_escape(&a.title),
+                    l = html_escape(&a.label),
                 )
             })
             .collect()
@@ -3778,7 +3781,7 @@ mod tests {
         let when = after.find("<span class=\"when\">").expect(after);
         let line = after.find("<span class=\"line\"><span class=\"start\"><span class=\"lead lit\">Offline</span> <span class=\"words\">\
              <span class=\"wide\">since noon</span><span class=\"narrow\">since 12:00</span></span>").expect(after);
-        let forget = after.find(&format!("<a class=\"say\" href=\"/.ts/act?path=%2Fkept.txt&amp;a=forget&amp;t={token}\" title=\"Forget it\">Forget</a>")).expect(after);
+        let forget = after.find(&format!("<a class=\"say\" href=\"/.ts/act?path=%2Fkept.txt&amp;a=forget&amp;t={token}\" title=\"Forget it\" aria-label=\"Forget. Forget it\">Forget</a>")).expect(after);
         let gap = after.find("<span class=\"end\">").expect(after);
         let update = after.find("a=update").expect(after);
         let warn = after.find("<span class=\"warn\"><span class=\"wide\">changed on the server</span><span class=\"narrow\">changed</span></span>").expect(after);
