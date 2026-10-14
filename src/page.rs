@@ -1147,8 +1147,9 @@ fn notice_html(state: &State, root: &Root, rel: &[String]) -> String {
         })
         .unwrap_or_default();
     format!(
-        "<div class=\"notice{}\" role=\"status\"><span>{}</span>{link}</div>\n",
+        "<div class=\"notice{}\" role=\"status\"{}><span>{}</span>{link}</div>\n",
         if n.warn { " warn" } else { "" },
+        if n.wait { " data-wait" } else { "" },
         html_escape(&n.text)
     )
 }
@@ -3767,6 +3768,7 @@ mod tests {
                         text: "2 files here changed.".into(),
                         link: None,
                         verb: Some(("Update".into(), "update".into())),
+                        wait: true,
                     });
                 }
                 Some(Notice {
@@ -3774,6 +3776,7 @@ mod tests {
                     text: "thor cannot be reached.".into(),
                     link: Some(("Try again".into(), "/.ts/reload".into())),
                     verb: None,
+                    wait: false,
                 })
             }
         }
@@ -3795,6 +3798,9 @@ mod tests {
         fs::create_dir_all(dir.join("subfolder")).unwrap();
         let sub = listing_page(&state, &root, prefs(), &["subfolder".into()], &VfsPath::new(vec!["subfolder".into()]), &[], "/subfolder/");
         assert!(sub.contains(&format!("<a class=\"again\" href=\"/.ts/act?path=%2Fsubfolder&amp;a=update&amp;t={token}\">Update</a>")), "{sub}");
+        // A notice that waits says so to the page, which asks again (`WAIT`).
+        assert!(sub.contains("<div class=\"notice\" role=\"status\" data-wait>"), "{sub}");
+        assert!(!html.contains("data-wait"), "and one that does not, does not");
         // Kept: the icon is the toggle, lit, the bookmark filled on it; the
         // name, the time, then the line — its lead lit, its words in both
         // lengths, the verb on them; the slack; the verb on what changed and

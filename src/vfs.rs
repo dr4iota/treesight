@@ -319,6 +319,11 @@ pub struct Notice {
     /// one of [`Vfs::row_info`]'s actions on this page's path). The page makes
     /// the link, since the token in it is the page's; only in the app.
     pub verb: Option<(String, String)>,
+    /// Something is under way that will change this page — a fetch the
+    /// backend started for it — and the page draws itself again once this
+    /// notice has gone. Asked by the page, not told it, so the answer is
+    /// always about the page on screen (`WAIT` in the shell).
+    pub wait: bool,
 }
 
 /// A file being written into a desktop's own folder: straight to its name if

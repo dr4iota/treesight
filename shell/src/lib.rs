@@ -169,6 +169,143 @@ addEventListener('pageshow', function (e) {
 });
 "#;
 
+/// A page whose notice waits (`Notice::wait`) — a fetch its backend started
+/// for it — draws itself again once that notice is gone. The page asks, every
+/// few seconds, rather than being told when it is done: a word evaluated into
+/// the window lands in whatever document is there at that moment, which on a
+/// fast fetch was the one being replaced, and the page then kept *Fetching…*.
+///
+/// **Never under the reader's hand.** Not while a field has the caret, or
+/// holds text typed and not sent, which a reload would empty; not for three seconds after a tap, a click, a key or
+/// a wheel; not while the window is hidden. **And never once the page is being
+/// left**: a link followed or a form sent keeps the old document up until the
+/// next one arrives, which on a remote listing is often more than three
+/// seconds, and a reload then cancelled the navigation. A link the shell
+/// answers in place — a verb, Download, Print — is not leaving, and the wait
+/// goes on after it, and so does a link out of the tree, which opens in the
+/// system's browser. Back counts as leaving too: where the engine has the
+/// Navigation API every navigation that leaves this document says so — not
+/// the scroll keeper's fragment — and elsewhere the keys that go back or
+/// forward hold it off for a few seconds, since there they may go nowhere.
+/// A reload that finds
+/// the notice still there asks again later.
+const WAIT: &str = r#"
+(function () {
+  var touched = 0;
+  // Until when the page counts as being left: for good once a link or a
+  // form has gone, for a few seconds after a key that may not go anywhere.
+  var leaving = 0;
+  var leave = function (ms) {
+    leaving = ms ? Math.max(leaving, Date.now() + ms) : Infinity;
+  };
+  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) {
+    addEventListener(t, function () { touched = Date.now(); }, true);
+  });
+  // The shell's own links that it answers in place — a row's verb, Delete,
+  // Download, Print, New folder, Upload, Cancel, Open a folder — leave the
+  // page up, often behind a question that may be dismissed: following one is
+  // not leaving, and the wait goes on.
+  // And a link out of the app, which the shell hands to the system's own
+  // browser or drops: this page stays where it is. **A link of ours carries
+  // no host** (docs/architecture.md, *Links carry no host*), so an href
+  // that names a scheme is somebody else's — plain localhost included.
+  var inPlace = function (u) {
+    return /^\/\.ts\/(act|remove|print|mkdir|upload|cancel|open)$/.test(u.pathname)
+      || u.searchParams.has('dl');
+  };
+  addEventListener('click', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a[href]');
+    if (!a) return;
+    var href = a.getAttribute('href');
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || /^\/\//.test(href)) return;
+    var u = new URL(href, location.href);
+    // A fragment on this document — a README's heading, a footnote — moves
+    // the page and loads nothing.
+    if (u.hash && u.pathname === location.pathname && u.search === location.search) return;
+    if (!inPlace(u)) leave();
+  }, true);
+  // A navigation the engine reports comes with its address resolved, so
+  // there the origin decides — the shell's own list, filled in by
+  // `window_script`, matched as `origin_allowed` matches it: by scheme for an
+  // entry ending in a colon, by whole origin otherwise. Anything else the
+  // shell hands to the browser or drops, and this page stays.
+  var OURS = __TS_OURS__;
+  var stays = function (url) {
+    var u = new URL(url);
+    var ours = OURS.some(function (a) {
+      return /:$/.test(a) && a.indexOf('/') < 0 ? u.protocol === a : u.origin === a;
+    });
+    return !ours || inPlace(u);
+  };
+  // **Back** is a leaving with no click: the back gesture, Alt+Left, the
+  // shell's own history.back(). Where the engine says so — the Navigation
+  // API, which Android's WebView and WebView2 have — every navigation tells
+  // the page, a step through history included; this page's own reload does
+  // not count. Where it does not, the keys that go back are watched instead.
+  // Not one that stays on this document — the scroll keeper's #ts fragment,
+  // put there by location.replace as the pane and the listing scroll.
+  if (window.navigation && navigation.addEventListener) {
+    navigation.addEventListener('navigate', function (e) {
+      if (e.navigationType === 'reload' || e.hashChange || e.destination.sameDocument) return;
+      if (e.navigationType === 'traverse' || !stays(e.destination.url)) leave();
+    });
+  } else {
+    // Back and Forward by key, which may go nowhere: `history.length` counts
+    // the entries ahead as well as behind, and WebKitGTK does not traverse
+    // out of a custom scheme's tree at all. So for a few seconds only — a
+    // step that does go lands on a page of ours that is quick to draw, and a
+    // page still here after it was not left.
+    addEventListener('keydown', function (e) {
+      if ((e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))
+          || e.key === 'BrowserBack' || e.key === 'BrowserForward') leave(5000);
+    }, true);
+  }
+  // Not `beforeunload`: Chromium fires it as soon as a link starts to
+  // navigate, before the shell cancels one it answers in place, so a Delete
+  // dismissed, or a link out, ended the wait for good (Pixel 7, 14 Oct 2026).
+  addEventListener('submit', function () { leave(); }, true);
+  // Nor while a field holds what was typed into it and not sent — the
+  // filter's pattern, a new folder's name — which a reload would wipe even
+  // after the caret has left it.
+  var typed = function () {
+    return Array.prototype.some.call(document.querySelectorAll('input, textarea'), function (f) {
+      return f.type !== 'hidden' && f.type !== 'checkbox' && f.type !== 'radio' && f.value !== f.defaultValue;
+    });
+  };
+  // Nor while the pane is drawn out over a phone's page: the drawer is a
+  // bare checkbox, and a reload shuts it under the reader.
+  var drawn = function () {
+    var d = document.getElementById('ts-drawer');
+    return !!(d && d.checked);
+  };
+  var busy = function () {
+    var a = document.activeElement;
+    return document.hidden || Date.now() - touched < 3000 || typed() || drawn()
+      || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable));
+  };
+  // One timer, whoever set it.
+  var timer = 0;
+  var later = function (ms) { clearTimeout(timer); timer = setTimeout(check, ms); };
+  var check = function () {
+    if (leaving === Infinity || !document.querySelector('.notice[data-wait]')) return;
+    if (Date.now() < leaving || busy()) { later(1000); return; }
+    location.reload();
+  };
+  // The shell took a link and answered it with a refusal instead of a page —
+  // a folder nothing can open, a new folder's name refused — so this page
+  // was not left after all (`fail`), and the wait takes up again.
+  window.__tsStay = function () {
+    if (leaving !== Infinity) return;
+    leaving = 0;
+    touched = Date.now();
+    later(3000);
+  };
+  addEventListener('DOMContentLoaded', function () {
+    if (document.querySelector('.notice[data-wait]')) later(3000);
+  });
+})();
+"#;
+
 /// Where each of this window's scrollers was, kept across the reload that is how
 /// every change of state here arrives.
 ///
@@ -716,13 +853,22 @@ addEventListener('DOMContentLoaded', function () {
 });
 "#;
 
-fn window_script(custom: Option<String>) -> String {
+/// The page scripts, with what only the shell knows filled in: the start
+/// page's address, and the origins it keeps in this window (`ours`, as
+/// `origin_allowed` reads them) for `WAIT` to tell a navigation that leaves
+/// from one the shell hands to the browser.
+fn window_script(custom: Option<String>, ours: &[String]) -> String {
+    let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{RESTORE}\n{SCROLLERS}\n{PROGRESS}\n{}",
+        "{VIEWPORT}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
+    .replace(OURS_SLOT, &format!("[{ours}]"))
 }
+
+/// Where `window_script` writes the origins this window keeps.
+const OURS_SLOT: &str = "__TS_OURS__";
 
 /// Where the start page's address goes in a window script. See [`window_script`].
 pub const HOME_SLOT: &str = "__TS_HOME__";
@@ -747,7 +893,10 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         // either way: an embedder swapping key bindings is not asking for a
         // window that draws behind the status bar, or for a page restored from
         // the back/forward cache to go on saying what was true before it.
-        init_script: window_script(ext.init_script),
+        init_script: window_script(
+            ext.init_script,
+            &[shell_origins(), ext.allowed_origins.clone()].concat(),
+        ),
         picker: ext.picker,
         // Resolved once, here, so nothing later has to remember that an absent
         // stamp means this crate's own.
@@ -3100,7 +3249,17 @@ fn notify(app: &AppHandle, msg: &str) {
 }
 
 /// Reports a problem in a native dialog, since a GUI build has nowhere to print.
+///
+/// Most of these answer a link or a form the page took for leaving — the
+/// shell's `WAIT` stops a page's own reload at that — and it is still there,
+/// so it is told (`__tsStay`). Only while that page is the one committed: a
+/// navigation of ours in flight is leaving it for real.
 fn fail(app: &AppHandle, msg: &str, fatal: bool) {
+    if committed(app)
+        && let Some(win) = app.get_webview_window(WINDOW)
+    {
+        let _ = win.eval("window.__tsStay && window.__tsStay()");
+    }
     raise(app, msg, MessageDialogKind::Error, fatal);
 }
 
@@ -3546,8 +3705,15 @@ mod tests {
     /// either.
     #[test]
     fn an_embedders_shortcuts_replace_the_keys_and_nothing_else() {
-        let mine = window_script(None);
+        let mine = window_script(None, &[]);
         assert!(mine.contains("pageshow"), "no restore");
+        assert!(mine.contains(".notice[data-wait]"), "no wait for a notice that waits");
+        assert!(mine.contains("if (leaving === Infinity ||"), "a page being left would be reloaded under its navigation");
+        assert!(mine.contains("(act|remove|print|mkdir|upload|cancel|open)"), "a link the shell answers in place would end the wait");
+        assert!(mine.contains("navigationType === 'traverse'"), "Back would reload under its navigation");
+        assert!(mine.contains("f.value !== f.defaultValue"), "a reload would wipe a field's unsent text");
+        assert!(mine.contains("getElementById('ts-drawer')"), "a reload would shut the drawer under the reader");
+        assert!(mine.contains("window.__tsStay = function"), "a link refused with a dialog would end the wait");
         assert!(mine.contains("data-touch"), "no platform script");
         assert!(mine.contains("ArrowLeft"), "no keys");
         assert!(mine.contains("#ts"), "no scroll keeper");
@@ -3556,15 +3722,22 @@ mod tests {
         // for, in a script of ours or of theirs.
         assert!(mine.contains(treeserve::HOME_PATH), "the key was left a placeholder");
         assert!(!mine.contains(HOME_SLOT), "{mine}");
+        // And the origins it keeps, as the navigation handler reads them.
+        let kept = window_script(None, &["treesight:".into(), "http://x.localhost".into()]);
+        assert!(kept.contains("var OURS = ['treesight:', 'http://x.localhost'];"), "{kept}");
+        assert!(!mine.contains(OURS_SLOT), "{mine}");
 
         let theirs = window_script(Some(
             format!("addEventListener('keydown', function () {{ location.assign('{HOME_SLOT}'); }});")
-        ));
+        ), &[]);
         assert!(theirs.contains(treeserve::HOME_PATH), "not filled in for an embedder");
         assert!(theirs.contains("pageshow"), "the restore went with the keys");
+        assert!(theirs.contains(".notice[data-wait]"), "the wait went with the keys");
         assert!(theirs.contains("data-touch"), "the platform script went with the keys");
         assert!(theirs.contains("#ts"), "the scroll keeper went with the keys");
-        assert!(!theirs.contains("ArrowLeft"), "the keys are the embedder's now");
+        // The binding, not the key's name: the wait watches Alt+Left too, to
+        // know Back is under way, and binds nothing.
+        assert!(!theirs.contains("e.key === 'ArrowLeft') { history.back(); }"), "the keys are the embedder's now");
     }
 
     /// The pane's offset rides out on the link, or a file opened from a long
@@ -3577,7 +3750,7 @@ mod tests {
     /// anchor in a rendered document, and an address of somebody else's.
     #[test]
     fn the_pane_rides_out_on_a_link_and_not_over_a_heading() {
-        let script = window_script(None);
+        let script = window_script(None, &[]);
         assert!(script.contains("addEventListener('click', carry, true)"), "no carrier");
         assert!(script.contains("a.hash = 'ts'"), "nothing written onto the link");
         assert!(script.contains("a.target || a.hash"), "a heading anchor is not spared");
