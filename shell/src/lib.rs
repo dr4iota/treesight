@@ -405,6 +405,14 @@ impl Serving {
         &self.origin
     }
 
+    /// Whether the page in the window has committed, the window's own first
+    /// load included ([`Serving::loaded`]). An embedder that puts up a root of
+    /// its own as the app starts waits for this: the first page is the start
+    /// page, and a request for that page closes whatever root is open.
+    pub fn committed(&self) -> bool {
+        self.loaded.load(Ordering::Relaxed)
+    }
+
     /// Where a fresh navigation should start: the served root.
     pub fn entry(&self) -> &str {
         &self.entry
