@@ -483,6 +483,24 @@ pub trait Vfs: Send + Sync {
         Err(io::ErrorKind::Unsupported.into())
     }
 
+    /// [`Self::create_file`], given the permission bits of the file it is a
+    /// copy of, where the source has them — an upload from a Unix desktop. A
+    /// file made new asks for them as `open(2)` does, so the destination's
+    /// umask still applies: a script keeps its `x`, a private key stays
+    /// private, as `sftp put` does. A replacement keeps the mode of the file
+    /// it replaces, whatever `mode` says. Only the nine permission bits are
+    /// asked for — never setuid, setgid or sticky. A backend with no modes
+    /// ignores it.
+    fn create_file_with(
+        &self,
+        dir: &VfsPath,
+        name: &str,
+        replace: bool,
+        _mode: Option<u32>,
+    ) -> io::Result<Box<dyn WriteFile>> {
+        self.create_file(dir, name, replace)
+    }
+
     /// Whether a document from here came off the machine this is running on.
     ///
     /// Not a claim about the *bytes* — a cloned repository is somebody else's
@@ -682,6 +700,10 @@ impl Vfs for LocalFs {
     /// finishes, wearing the old file's permissions, so until then the file is
     /// the one it was. A folder or a link of that name is refused either way.
     fn create_file(&self, dir: &VfsPath, name: &str, replace: bool) -> io::Result<Box<dyn WriteFile>> {
+        self.create_file_with(dir, name, replace, None)
+    }
+
+    fn create_file_with(&self, dir: &VfsPath, name: &str, replace: bool, mode: Option<u32>) -> io::Result<Box<dyn WriteFile>> {
         let target = self.child(dir, name)?;
         let there = fs::symlink_metadata(&target).ok();
         match &there {
@@ -709,7 +731,15 @@ impl Vfs for LocalFs {
             }
             None => (target.clone(), None),
         };
-        let file = fs::File::options().write(true).create_new(true).open(&write_to)?;
+        let mut options = fs::File::options();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if let (Some(mode), None) = (mode, &replacing) {
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode & 0o777);
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+        let file = options.open(&write_to)?;
         Ok(Box::new(LocalWrite { file: Some(file), write_to, target, replacing, done: false }))
     }
 
@@ -864,13 +894,25 @@ mod tests {
         assert_eq!(fs::read(dir.join("new.txt")).unwrap(), b"new");
         assert_eq!(v.create_file(&root, "new.txt", false).err().unwrap().kind(), io::ErrorKind::AlreadyExists);
 
+        // A new file made with the source's bits, under the umask: an `x`
+        // kept, and nothing added that the source did not have.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut w = v.create_file_with(&root, "run.sh", false, Some(0o4700)).unwrap();
+            w.write_all(b"#!/bin/sh\n").unwrap();
+            w.finish().unwrap();
+            assert_eq!(fs::metadata(dir.join("run.sh")).unwrap().permissions().mode() & 0o7777, 0o700, "no setuid");
+        }
+
         // A replacement: the old file until it finishes, and its permissions after.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(dir.join("old.txt"), fs::Permissions::from_mode(0o640)).unwrap();
         }
-        let mut w = v.create_file(&root, "old.txt", true).unwrap();
+        // The source's mode does not reach a replacement.
+        let mut w = v.create_file_with(&root, "old.txt", true, Some(0o777)).unwrap();
         w.write_all(b"replaced").unwrap();
         assert_eq!(fs::read(dir.join("old.txt")).unwrap(), b"old");
         w.finish().unwrap();

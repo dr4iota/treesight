@@ -242,6 +242,10 @@ pub(crate) fn mkdir(app: &AppHandle, url: &tauri::Url) {
 pub struct PickedFile {
     pub name: String,
     pub len: Option<u64>,
+    /// Its permission bits (`0o777`), where the platform has them — a Unix
+    /// desktop's file, not a Windows one or a phone's document — for a new
+    /// file to be made with ([`crate::Vfs::create_file_with`]).
+    pub mode: Option<u32>,
     #[allow(clippy::type_complexity)]
     pub open: Box<dyn FnOnce() -> io::Result<Box<dyn Read + Send>> + Send>,
 }
@@ -359,10 +363,18 @@ fn pick_on_desktop(app: &AppHandle, t: Target) {
 #[cfg(desktop)]
 fn picked_path(path: PathBuf) -> PickedFile {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let len = fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.len());
+    let meta = fs::metadata(&path).ok().filter(|m| m.is_file());
+    let len = meta.as_ref().map(|m| m.len());
+    #[cfg(unix)]
+    // The nine permission bits and no more, as `sftp put` sends: a setuid
+    // or setgid bit is not something an upload should ask for.
+    let mode = meta.as_ref().map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o777);
+    #[cfg(not(unix))]
+    let mode = None;
     PickedFile {
         name,
         len,
+        mode,
         open: Box::new(move || {
             // Only a regular file is opened: a fifo or a device would block in
             // the open, before Cancel is ever looked at. The rest is only what
@@ -475,10 +487,10 @@ fn send(app: &AppHandle, t: Target, files: Vec<PickedFile>) {
     let mut todo = todo.into_iter().enumerate();
     while let Some((i, (file, name))) = todo.next() {
         let what = format!("Uploading {} of {n} · {name}", i + 1);
-        let PickedFile { len, open, .. } = file;
+        let PickedFile { len, open, mode, .. } = file;
         let res = (|| -> io::Result<Option<String>> {
             let mut from = open()?;
-            let mut to = t.vfs.create_file(&t.dir, &name, replace && clash.contains(&name))?;
+            let mut to = t.vfs.create_file_with(&t.dir, &name, replace && clash.contains(&name), mode)?;
             // A file that does not finish is the backend's to take away
             // (`WriteFile`): only it knows whether it made a new file or a
             // temporary one beside a file being replaced, and removing "the
