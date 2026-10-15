@@ -940,6 +940,16 @@ nav.tree .chooser .leaf, footer .where .leaf, body.nothing .start .leaf {
   max-width: 100%;
 }
 nav.tree .chooser .head, body.nothing .start .head { color: var(--muted); }
+/* A label that is not a path — a server's name — is one span, and in the
+   sidebar, where a row is one line, it is cut as a path is. Left as bare text it
+   had nothing to carry an ellipsis and ran on under the row's word. The start
+   page has the width to let it wrap, and does. */
+nav.tree .chooser .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* A shortcut whose check came back badly. The lists are drawn before anything is
    checked — a check can block for as long as a dead network drive takes to admit
    it — so this is what an answer looks like when it arrives: the entry dimmed to

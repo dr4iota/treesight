@@ -1569,7 +1569,10 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
                 html_escape(row.id),
                 match row.label {
                     Some(l) if row.as_path => path_label(l),
-                    Some(l) => html_escape(l),
+                    // In a span, so it can be cut short as a path's two
+                    // halves are: bare text in a flex link has nothing to
+                    // put an ellipsis on, and ran over the row's word.
+                    Some(l) => format!("<span class=\"name\">{}</span>", html_escape(l)),
                     None => path_label(row.id),
                 }
             );
@@ -4434,7 +4437,7 @@ mod tests {
         // The Places row is drawn the plain way: no row wrapper, no button.
         let place = concat!(
             "<li data-root=\"/home/x\"><a href=\"/.ts/place?path=%2Fhome%2Fx\"",
-            " title=\"/home/x\">Home</a></li>"
+            " title=\"/home/x\"><span class=\"name\">Home</span></a></li>"
         );
         assert!(html.contains(place), "{html}");
         assert_eq!(html.matches("/.ts/forget").count(), 1, "{html}");
@@ -4684,7 +4687,7 @@ mod tests {
         assert!(
             html.contains(
                 "<li data-root=\"ssh:prod-web:/var/www\" class=\"noted gone\"><span class=\"row\"><a href=\"/x/open?path=\
-                 ssh%3Aprod-web%3A%2Fvar%2Fwww\" title=\"ssh:prod-web:/var/www\">prod-web</a>"
+                 ssh%3Aprod-web%3A%2Fvar%2Fwww\" title=\"ssh:prod-web:/var/www\"><span class=\"name\">prod-web</span></a>"
             ),
             "{html}"
         );
