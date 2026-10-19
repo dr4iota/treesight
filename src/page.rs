@@ -358,8 +358,25 @@ fn icon_for(name: &str, is_dir: bool) -> &'static str {
     }
 }
 
-fn set_href(key: &str, val: &str, back: &str) -> String {
-    format!("/.ts/set?{}={}&back={}", key, val, percent_encode(back))
+fn set_href(token: &str, key: &str, val: &str, back: &str) -> String {
+    crate::with_token(&format!("/.ts/set?{}={}&back={}", key, val, percent_encode(back)), token)
+}
+
+/// `href` as this page draws it: with the page's token where it is an action
+/// (`crate::with_token`). Every `/.ts/` link the page itself draws goes
+/// through this, the embedder's included; a document's own links never do.
+pub(crate) fn act(state: &State, href: &str) -> String {
+    crate::with_token(href, &state.cfg.action_token)
+}
+
+/// The page's token where a script of the shell's can read it: the keyboard's
+/// Ctrl+O and Ctrl+P navigate from script, to links nothing on the page drew.
+/// Only in the app, where there is a shell to read it.
+fn token_meta(state: &State) -> String {
+    match state.cfg.app_ui {
+        true => format!("<meta name=\"ts-token\" content=\"{}\">\n", html_escape(&state.cfg.action_token)),
+        false => String::new(),
+    }
 }
 
 /// A control that spells itself out when there is room and shrinks to a symbol
@@ -454,7 +471,7 @@ pub(crate) fn dimmed_flag(icon: &str, label: &str, title: &str) -> String {
 /// — pressing it reloads from the top anyway — and keeps its words, since that
 /// line has room the header does not. The word is the switch's name and the
 /// paint (`.on`) its state, as for the header's switches.
-pub(crate) fn ln_switch(prefs: Prefs<'_>, url_now: &str) -> String {
+pub(crate) fn ln_switch(token: &str, prefs: Prefs<'_>, url_now: &str) -> String {
     let (class, val, name, title) = if prefs.ln {
         ("lnsw on", "0", "Line numbers: on", "Line numbers: on. Click to hide them.")
     } else {
@@ -462,7 +479,7 @@ pub(crate) fn ln_switch(prefs: Prefs<'_>, url_now: &str) -> String {
     };
     named_flag(
         class,
-        &set_href("ln", val, url_now),
+        &set_href(token, "ln", val, url_now),
         &svg_icon(icon_lineno(prefs.ln)),
         "Line numbers",
         name,
@@ -472,11 +489,11 @@ pub(crate) fn ln_switch(prefs: Prefs<'_>, url_now: &str) -> String {
 
 /// The theme's flag, on every page that has a header: the choice in the word,
 /// the setting in the name (`named_flag`).
-fn theme_flag(theme: ThemeMode, url_now: &str) -> String {
+fn theme_flag(token: &str, theme: ThemeMode, url_now: &str) -> String {
     let (mark, why) = theme_icon(theme);
     named_flag(
         "",
-        &set_href("theme", theme.next().as_str(), url_now),
+        &set_href(token, "theme", theme.next().as_str(), url_now),
         &svg_icon(mark),
         theme.label(),
         &format!("{}, theme", theme.label()),
@@ -833,7 +850,7 @@ fn head_and_header(
     {
         controls.push_str(&flag(
             "",
-            &f.href,
+            &act(state, &f.href),
             &svg_icon(&f.icon),
             &f.label,
             &f.title,
@@ -862,7 +879,7 @@ fn head_and_header(
             "\n  {}",
             named_flag(
                 pane_class,
-                &set_href("sidebar", pane_val, url_now),
+                &set_href(&state.cfg.action_token, "sidebar", pane_val, url_now),
                 &svg_icon(&icon_pane(prefs.sidebar)),
                 "Sidebar",
                 pane_name,
@@ -873,7 +890,7 @@ fn head_and_header(
         // of, at any width.
         false => String::new(),
     };
-    controls.push_str(&theme_flag(prefs.theme, url_now));
+    controls.push_str(&theme_flag(&state.cfg.action_token, prefs.theme, url_now));
 
     // Up, the way a file manager means it: the folder that contains this one.
     //
@@ -911,7 +928,7 @@ fn head_and_header(
             "\n  {}",
             flag(
                 "up start",
-                "/.ts/close",
+                &act(state, "/.ts/close"),
                 &svg_icon(ICON_START),
                 "Start",
                 "Back to the start page",
@@ -988,7 +1005,7 @@ fn head_and_header(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>{title}</title>
+{token_meta}<title>{title}</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%234c8dff' stroke-width='1.4' stroke-linejoin='round'><path d='M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z'/></svg>">
 <link rel="stylesheet" href="/.ts/app.css">
 <link rel="stylesheet" href="/.ts/math.css">
@@ -1002,6 +1019,7 @@ fn head_and_header(
 </header>"#,
         data_theme = data_theme,
         title = html_escape(&title),
+        token_meta = token_meta(state),
         syntax_css = syntax_css,
         fit = fit,
         classes = classes,
@@ -1028,11 +1046,11 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
     // the embedder (`Config::home_slot`). Class `up`: the same slot and the
     // same pill.
     let slot = match &state.cfg.home_slot {
-        Some(f) => format!("\n  {}", flag("up", &f.href, &svg_icon(&f.icon), &f.label, &f.title)),
+        Some(f) => format!("\n  {}", flag("up", &act(state, &f.href), &svg_icon(&f.icon), &f.label, &f.title)),
         None => String::new(),
     };
     let mut controls = String::new();
-    controls.push_str(&theme_flag(prefs.theme, url_now));
+    controls.push_str(&theme_flag(&state.cfg.action_token, prefs.theme, url_now));
     let data_theme = match prefs.theme {
         ThemeMode::Auto => String::new(),
         m => format!(" data-theme=\"{}\"", m.as_str()),
@@ -1043,7 +1061,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>{title}</title>
+{token_meta}<title>{title}</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%234c8dff' stroke-width='1.4' stroke-linejoin='round'><path d='M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z'/></svg>">
 <link rel="stylesheet" href="/.ts/app.css">
 </head>
@@ -1063,6 +1081,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
 "#,
         data_theme = data_theme,
         title = html_escape(&state.cfg.title()),
+        token_meta = token_meta(state),
         slot = slot,
         controls = controls,
         content = content,
@@ -1137,6 +1156,7 @@ fn notice_html(state: &State, root: &Root, rel: &[String]) -> String {
         .map(|(words, id)| (words, act_href(state, &href_path(rel), &id)));
     let link = n
         .link
+        .map(|(words, href)| (words, act(state, &href)))
         .or(verb)
         .map(|(words, href)| {
             format!(
@@ -1183,7 +1203,7 @@ fn status_line(state: &State, root: &Root) -> String {
     let pick = if state.cfg.app_ui && state.cfg.picker {
         flag(
             "pick",
-            "/.ts/open",
+            &act(state, "/.ts/open"),
             &svg_icon(ICON_FOLDER),
             "Open a folder…",
             "Open a folder… (Ctrl+O)",
@@ -1286,7 +1306,7 @@ fn pane_html(
     }
     out.push_str(&format!(
         "<section class=\"files\"><h2>Files{}</h2>",
-        heading_acts(&acts)
+        heading_acts(state, &acts)
     ));
     tree_dir(
         state,
@@ -1437,7 +1457,7 @@ struct Row<'a> {
 /// for a single control — `h2:has(a.secact)` is what turns the bar into a line
 /// with two ends, and `.acts` is what keeps several of them together at one of
 /// them.
-fn heading_acts(acts: &[(String, String, String)]) -> String {
+fn heading_acts(state: &State, acts: &[(String, String, String)]) -> String {
     if acts.is_empty() {
         return String::new();
     }
@@ -1446,7 +1466,7 @@ fn heading_acts(acts: &[(String, String, String)]) -> String {
         .map(|(href, icon, title)| {
             format!(
                 "<a class=\"secact\" href=\"{}\" title=\"{}\">{}</a>",
-                html_escape(href),
+                html_escape(&act(state, href)),
                 html_escape(title),
                 svg_icon(icon)
             )
@@ -1563,9 +1583,8 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
         .map(|row| {
             let note = state.cfg.row_note(row.id);
             let link = format!(
-                "<a href=\"{}?path={}\" title=\"{}\">{}</a>",
-                row.action,
-                percent_encode(row.id),
+                "<a href=\"{}\" title=\"{}\">{}</a>",
+                html_escape(&act(state, &format!("{}?path={}", row.action, percent_encode(row.id)))),
                 html_escape(row.id),
                 match row.label {
                     Some(l) if row.as_path => path_label(l),
@@ -1605,7 +1624,7 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
                             .iter()
                             .map(|(href, icon, title)| format!(
                                 "<a class=\"aside\" href=\"{}\" title=\"{t}\" aria-label=\"{t}\">{}</a>",
-                                html_escape(href),
+                                html_escape(&act(state, href)),
                                 svg_icon(icon),
                                 t = html_escape(title),
                             ))
@@ -1622,7 +1641,7 @@ fn root_list<'a, I: Iterator<Item = Row<'a>>>(
         "<section class=\"{}\"><h2>{}{}</h2><ul>{}</ul></section>",
         html_escape(class),
         html_escape(heading),
-        heading_acts(acts),
+        heading_acts(state, acts),
         links
     ));
 }
@@ -1763,7 +1782,7 @@ fn as_root_flag(state: &State, root: &Root, rel: &[String], path: &VfsPath) -> S
     }
     flag(
         "",
-        &format!("/.ts/root?path={}", percent_encode(&full)),
+        &act(state, &format!("/.ts/root?path={}", percent_encode(&full))),
         &svg_icon(ICON_AS_ROOT),
         "As root",
         &format!("Start the tree at {full}"),
@@ -1785,7 +1804,7 @@ const ON_PATH: &str = "Open while you are inside it";
 /// where you are. So it is hollow, where the arrows that do something are
 /// filled; it says why to a pointer that rests on it; and `app.css` keeps it
 /// from reading as text — a bare span drew the text cursor over the arrow.
-fn twisty(open: bool, on_path: bool, key: &str, back: &str) -> String {
+fn twisty(token: &str, open: bool, on_path: bool, key: &str, back: &str) -> String {
     const DOWN: &str = "&#x25BE;";
     const RIGHT: &str = "&#x25B8;";
     const HOLLOW_DOWN: &str = "&#x25BF;";
@@ -1796,11 +1815,13 @@ fn twisty(open: bool, on_path: bool, key: &str, back: &str) -> String {
         true => ("shut", DOWN, "Collapse"),
         false => ("open", RIGHT, "Expand"),
     };
+    let href = crate::with_token(
+        &format!("/.ts/tree?{}={}&back={}", param, percent_encode(key), percent_encode(back)),
+        token,
+    );
     format!(
-        "<a class=\"twisty\" href=\"/.ts/tree?{}={}&amp;back={}\" title=\"{} {}\">{}</a>",
-        param,
-        percent_encode(key),
-        percent_encode(back),
+        "<a class=\"twisty\" href=\"{}\" title=\"{} {}\">{}</a>",
+        html_escape(&href),
         what,
         html_escape(key),
         mark
@@ -1865,7 +1886,7 @@ fn tree_dir(
             out.push_str(&format!(
                 "<li{}><span class=\"row\">{}{}</span>",
                 cls,
-                twisty(open, on_path, &key, url_now),
+                twisty(&state.cfg.action_token, open, on_path, &key, url_now),
                 match &kept {
                     None => format!("<a class=\"dir\" href=\"{}/\">{}/</a>", html_escape(&href), html_escape(&e.name)),
                     Some(mark) => format!(
@@ -2643,7 +2664,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             match &n.link {
                 Some((label, href)) => format!(
                     " <a href=\"{}\">{}</a>",
-                    html_escape(href),
+                    html_escape(&act(state, href)),
                     html_escape(label)
                 ),
                 None => String::new(),
@@ -2669,14 +2690,15 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
     let mut ways = String::new();
     if state.cfg.picker {
         ways.push_str(&format!(
-            "<a class=\"open\" href=\"/.ts/open\">{} Open a folder&hellip;</a>",
+            "<a class=\"open\" href=\"{}\">{} Open a folder&hellip;</a>",
+            html_escape(&act(state, "/.ts/open")),
             svg_icon(ICON_FOLDER)
         ));
     }
     for (href, icon, label) in state.cfg.intro_acts().iter() {
         ways.push_str(&format!(
             "<a class=\"open\" href=\"{}\">{} {}</a>",
-            html_escape(href),
+            html_escape(&act(state, href)),
             svg_icon(icon),
             html_escape(label)
         ));
@@ -2740,11 +2762,12 @@ mod tests {
         }
     }
 
+    /// A page's token is random; these tests draw with a known one, so a link
+    /// can be spelled whole, token and all.
     fn state_at(root: PathBuf) -> State {
-        State {
-            cfg: Config::new(root),
-            hl: Hl::for_tests(),
-        }
+        let mut cfg = Config::new(root);
+        cfg.action_token = "tok".into();
+        State { cfg, hl: Hl::for_tests() }
     }
 
     fn tmp_dir(tag: &str) -> PathBuf {
@@ -2780,7 +2803,7 @@ mod tests {
         assert!(html.contains("<a class=\"dir\" href=\"/other/\">other/</a>"), "{html}");
         // A closed row offers to open, and says where to come back to.
         assert!(
-            html.contains("<a class=\"twisty\" href=\"/.ts/tree?open=other&amp;back=%2Fhere%2F\""),
+            html.contains("<a class=\"twisty\" href=\"/.ts/tree?open=other&amp;back=%2Fhere%2F&amp;t=tok\""),
             "{html}"
         );
         // Nothing under it is drawn until it is open.
@@ -2795,7 +2818,7 @@ mod tests {
         let html = page(Prefs { open: &open, ..shut });
         assert!(html.contains(">deep/</a>"), "{html}");
         assert!(
-            html.contains("<a class=\"twisty\" href=\"/.ts/tree?shut=other&amp;back=%2Fhere%2F\""),
+            html.contains("<a class=\"twisty\" href=\"/.ts/tree?shut=other&amp;back=%2Fhere%2F&amp;t=tok\""),
             "{html}"
         );
 
@@ -3174,6 +3197,7 @@ mod tests {
             cfg: Config::rootless(),
             hl: Hl::for_tests(),
         };
+        state.cfg.action_token = "tok".into();
         state.cfg.app_ui = true;
         state.cfg.picker = true;
         state.cfg.places = vec![("Home".to_string(), "/home/x".to_string())];
@@ -3198,7 +3222,7 @@ mod tests {
 
         assert!(html.contains("<body class=\"app nothing\">"), "{html}");
         assert!(!html.contains("<nav class=\"tree\">"), "no pane on this page");
-        assert!(html.contains("href=\"/.ts/open\""), "the way in");
+        assert!(html.contains("href=\"/.ts/open?t=tok\""), "the way in");
         for want in ["Places", "Servers", "Recent", "Home", "Iota", "/x/manage"] {
             assert!(html.contains(want), "missing {want} in {html}");
         }
@@ -3253,7 +3277,7 @@ mod tests {
         // No picker on this platform: say so instead of drawing a dead button.
         state.cfg.picker = false;
         let html = start_page(&state, prefs(), "/");
-        assert!(!html.contains("href=\"/.ts/open\""), "{html}");
+        assert!(!html.contains("href=\"/.ts/open?"), "{html}");
         assert!(html.contains("Open one of the places below"), "{html}");
     }
 
@@ -3279,20 +3303,20 @@ mod tests {
 
         state.cfg.app_ui = true;
         let html = page(&state);
-        assert!(html.contains("href=\"/.ts/close\""), "a way out without a picker");
-        assert!(html.contains("href=\"/.ts/pin\""), "and a way to keep it");
-        assert!(!html.contains("href=\"/.ts/open\""), "no picker on this platform");
+        assert!(html.contains("href=\"/.ts/close?t=tok\""), "a way out without a picker");
+        assert!(html.contains("href=\"/.ts/pin?t=tok\""), "and a way to keep it");
+        assert!(!html.contains("href=\"/.ts/open?"), "no picker on this platform");
 
         // With a picker, it is a flag in the status line and not an act on this
         // heading — the same link, drawn once.
         state.cfg.picker = true;
         let html = page(&state);
-        assert!(html.contains("class=\"pick\" href=\"/.ts/open\""), "{html}");
+        assert!(html.contains("class=\"pick\" href=\"/.ts/open?t=tok\""), "{html}");
         assert!(
-            !html.contains("class=\"secact\" href=\"/.ts/open\""),
+            !html.contains("class=\"secact\" href=\"/.ts/open?"),
             "the picker left the heading: {html}"
         );
-        assert!(html.contains("href=\"/.ts/close\""), "{html}");
+        assert!(html.contains("href=\"/.ts/close?t=tok\""), "{html}");
 
         // Beside the picker, the two things this line says: what is running, and
         // which folder is open. The path is in a box of its own so that what the
@@ -4240,7 +4264,7 @@ mod tests {
         state.cfg.app_ui = true;
         let html = page(&state, &[]);
         assert!(
-            html.contains("<a class=\"up start\" href=\"/.ts/close\""),
+            html.contains("<a class=\"up start\" href=\"/.ts/close?t=tok\""),
             "{html}"
         );
         assert!(html.contains(">Start</span>"), "{html}");
@@ -4341,7 +4365,7 @@ mod tests {
         assert!(on.contains("<span class=\"sr shut\">Sidebar: closed</span><span class=\"sr open\">Sidebar: open</span>"), "{on}");
         // Line numbers the same way, on the meta line now: the word is the
         // name, the paint and the name carry whether it is on.
-        let ln = |ln| ln_switch(Prefs { ln, ..prefs() }, "/");
+        let ln = |ln| ln_switch("", Prefs { ln, ..prefs() }, "/");
         let (lon, loff) = (ln(true), ln(false));
         assert!(lon.contains("<a class=\"lnsw on\" href=\"/.ts/set?ln=0&amp;back=%2F\" aria-label=\"Line numbers: on\""), "{lon}");
         assert!(loff.contains("aria-label=\"Line numbers: off\""), "{loff}");
@@ -4377,7 +4401,7 @@ mod tests {
         // open, and no list is drawn.
         let html = page(&state);
         assert!(
-            html.contains("<span class=\"acts\"><a class=\"secact\" href=\"/.ts/pin\""),
+            html.contains("<span class=\"acts\"><a class=\"secact\" href=\"/.ts/pin?t=tok\""),
             "{html}"
         );
         assert!(!html.contains("/.ts/unpin"), "{html}");
@@ -4391,15 +4415,15 @@ mod tests {
         }]);
         let html = page(&state);
         assert!(
-            html.contains("<span class=\"acts\"><a class=\"secact\" href=\"/.ts/unpin\""),
+            html.contains("<span class=\"acts\"><a class=\"secact\" href=\"/.ts/unpin?t=tok\""),
             "{html}"
         );
-        assert!(!html.contains("href=\"/.ts/pin\""), "{html}");
+        assert!(!html.contains("href=\"/.ts/pin?"), "{html}");
         // Under the name it was pinned with, and with a row of its own to undo.
         assert!(html.contains("<span class=\"leaf\">Home of it all</span></a>"), "{html}");
         assert!(
             html.contains(&format!(
-                "<a class=\"aside\" href=\"/.ts/unpin?path={}\" title=\"Remove from Starred\" aria-label=\"Remove from Starred\">",
+                "<a class=\"aside\" href=\"/.ts/unpin?path={}&amp;t=tok\" title=\"Remove from Starred\" aria-label=\"Remove from Starred\">",
                 percent_encode(&id)
             )),
             "{html}"
@@ -4411,7 +4435,7 @@ mod tests {
             label: None,
         }]);
         let html = page(&state);
-        assert!(html.contains("href=\"/.ts/pin\""), "{html}");
+        assert!(html.contains("href=\"/.ts/pin?t=tok\""), "{html}");
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -4430,13 +4454,13 @@ mod tests {
         let html = listing_page(&state, &root, prefs, &[], &VfsPath::root(), &[], "/");
 
         let button = concat!(
-            "<a class=\"aside\" href=\"/.ts/forget?path=ssh%3Aiota%3A%2Fhome%2Fhanhua%2F~\"",
+            "<a class=\"aside\" href=\"/.ts/forget?path=ssh%3Aiota%3A%2Fhome%2Fhanhua%2F~&amp;t=tok\"",
             " title=\"Forget this folder\" aria-label=\"Forget this folder\">"
         );
         assert!(html.contains(button), "{html}");
         // The Places row is drawn the plain way: no row wrapper, no button.
         let place = concat!(
-            "<li data-root=\"/home/x\"><a href=\"/.ts/place?path=%2Fhome%2Fx\"",
+            "<li data-root=\"/home/x\"><a href=\"/.ts/place?path=%2Fhome%2Fx&amp;t=tok\"",
             " title=\"/home/x\"><span class=\"name\">Home</span></a></li>"
         );
         assert!(html.contains(place), "{html}");

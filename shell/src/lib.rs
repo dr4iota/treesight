@@ -436,13 +436,19 @@ const SCROLLERS: &str = r#"
 
 const SHORTCUTS: &str = r#"
 addEventListener('keydown', function (e) {
+  // The page's token, for the two that act: Open and Print are links nothing
+  // on the page drew, so they carry what the page says (`ts-token`).
+  function act(href) {
+    var m = document.querySelector('meta[name="ts-token"]');
+    return m ? href + '?t=' + encodeURIComponent(m.content) : href;
+  }
   if (e.altKey && !e.ctrlKey && e.key === 'ArrowLeft') { history.back(); }
   else if (e.altKey && !e.ctrlKey && e.key === 'ArrowRight') { history.forward(); }
   else if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) { location.reload(); }
   else if (e.key === 'F5' && !e.ctrlKey && !e.altKey) { location.reload(); }
   else if (e.ctrlKey && e.key === 'Home') { location.assign('__TS_HOME__'); }
-  else if (e.ctrlKey && (e.key === 'o' || e.key === 'O')) { location.assign('/.ts/open'); }
-  else if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { location.assign('/.ts/print'); }
+  else if (e.ctrlKey && (e.key === 'o' || e.key === 'O')) { location.assign(act('/.ts/open')); }
+  else if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { location.assign(act('/.ts/print')); }
   else { return; }
   e.preventDefault();
 });
@@ -2043,6 +2049,19 @@ fn build_window(
         let ext = Arc::clone(&ext);
         let shell = shell_origins();
         move |url| {
+            // **An action needs the page's token**, before anything acts on it
+            // — the embedder's actions included, which are claimed by path
+            // alone. A document the reader opened can lay a link to any of
+            // them over itself, in a Preview frame or a README drawn inline,
+            // and on WebKitGTK and Android a frame's navigations arrive here
+            // as the window's do. The pages this shell draws carry the token
+            // (`treeserve::page::act`); a document's links never do.
+            if let Some(serving) = app.try_state::<Serving>()
+                && untokened(url, &serving.state().cfg.action_token)
+            {
+                fail(&app, "That link did not come from this window.", false);
+                return false;
+            }
             // Downstream actions first: a URL an extension claims is handled
             // entirely by it, the way `/.ts/open` is handled below.
             if ext.actions.iter().any(|a| a(&app, url)) {
@@ -2833,6 +2852,13 @@ fn percent_decode(s: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether `url` is an action (`treeserve::is_action`) that does not carry
+/// `token`: a link this window's pages did not draw.
+fn untokened(url: &tauri::Url, token: &str) -> bool {
+    treeserve::is_action(url.path())
+        && url.query_pairs().find(|(k, _)| k == "t").map(|(_, v)| v.into_owned()).as_deref() != Some(token)
 }
 
 /// Handles the page's own controls, which are links rather than script: the
@@ -3760,6 +3786,39 @@ fn let_go_of(app: &AppHandle, was: Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// What the gate lets through: an action with this window's token, a page,
+    /// Refresh, a link out; and what it stops: an action with none, with
+    /// another's, with the token in the wrong place.
+    #[test]
+    fn an_action_without_the_token_is_stopped() {
+        use super::untokened;
+        let u = |s: &str| tauri::Url::parse(s).unwrap();
+        let k = "k1";
+        for ok in [
+            "treesight://localhost/.ts/open?t=k1",
+            "http://treesight.localhost/.ts/root?path=%2Fx&t=k1",
+            "telechore://localhost/.ts/term?id=prod&t=k1",
+            "treesight://localhost/src/",
+            "treesight://localhost/.ts/home",
+            "treesight://localhost/.ts/reload",
+            "treesight://localhost/.ts/cancel",
+            "https://example.com/",
+        ] {
+            assert!(!untokened(&u(ok), k), "{ok}");
+        }
+        for bad in [
+            "treesight://localhost/.ts/open",
+            "treesight://localhost/.ts/forget?path=%2Fx",
+            "telechore://localhost/.ts/term?id=prod",
+            "http://telechore.localhost/.ts/ssh-config",
+            "treesight://localhost/.ts/root?path=%2Fx&t=other",
+            "treesight://localhost/.ts/root?path=%2Fx#t=k1",
+            "treesight://localhost/.ts/set?theme=dark&back=%2F",
+        ] {
+            assert!(untokened(&u(bad), k), "{bad}");
+        }
+    }
     use super::*;
 
     /// A page the window loads keeps its cookies; a picture, a prefetch, a

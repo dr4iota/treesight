@@ -19,6 +19,52 @@ pub use http::{spawn, Serving};
 /// forward. A disagreement would be a Back button that silently stopped working.
 pub const HOME_PATH: &str = "/.ts/home";
 
+/// Whether a `/.ts/` path *does* something — opens, closes, forgets, pins,
+/// dials, changes a preference — and so takes the page's token (`t=`,
+/// [`Config::action_token`]): only a page this window drew knows it. A
+/// document the reader opened does not, wherever its links point: a framed
+/// Preview, a README drawn inline, a link laid invisibly over either.
+///
+/// Not an action: the pages and stylesheets the router serves, Refresh, and
+/// the transfer bar's Cancel, which undo nothing and can do no harm from
+/// anywhere. Everything else under `/.ts/` is, and that includes paths an
+/// embedder claims — the shell checks before any of them sees the link.
+pub fn is_action(path: &str) -> bool {
+    path.starts_with("/.ts/")
+        && !matches!(
+            path,
+            HOME_PATH
+                | "/.ts/wait"
+                | "/.ts/reload"
+                | "/.ts/cancel"
+                | "/.ts/app.css"
+                | "/.ts/math.css"
+                | "/.ts/syntax-light.css"
+                | "/.ts/syntax-dark.css"
+        )
+}
+
+/// `href` with the page's `token` on it where it is an action
+/// ([`is_action`]), and as it was otherwise — a folder, a file, the start
+/// page, a link out. Unescaped: the caller escapes it for the attribute, as
+/// any `href`.
+pub fn with_token(href: &str, token: &str) -> String {
+    let path = href.split(['?', '#']).next().unwrap_or(href);
+    if !is_action(path) || token.is_empty() {
+        return href.to_string();
+    }
+    let (head, frag) = match href.split_once('#') {
+        Some((h, f)) => (h, format!("#{f}")),
+        None => (href, String::new()),
+    };
+    let sep = match head.contains('?') {
+        true if head.ends_with('?') || head.ends_with('&') => "",
+        true => "&",
+        false => "?",
+    };
+    format!("{head}{sep}t={token}{frag}")
+}
+
 pub mod md;
 pub mod modes;
 pub mod page;
@@ -1689,6 +1735,27 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
 mod tests {
     use super::{leaf_of, open_cookie, open_from, open_path, root_id_is_local, toggle_open, Req};
     use super::{parse_query, OPEN_MAX};
+
+    /// What takes the page's token and what does not, and the token put on
+    /// whatever query the link already has.
+    #[test]
+    fn an_action_wears_the_token_and_a_page_does_not() {
+        use super::{is_action, with_token, HOME_PATH};
+        for a in ["/.ts/open", "/.ts/root", "/.ts/forget", "/.ts/set", "/.ts/tree", "/.ts/term", "/.ts/ssh-config"] {
+            assert!(is_action(a), "{a}");
+        }
+        for p in ["/", "/src/main.rs", HOME_PATH, "/.ts/wait", "/.ts/reload", "/.ts/cancel", "/.ts/app.css"] {
+            assert!(!is_action(p), "{p}");
+        }
+        assert_eq!(with_token("/.ts/open", "k"), "/.ts/open?t=k");
+        assert_eq!(with_token("/.ts/root?path=%2Fx", "k"), "/.ts/root?path=%2Fx&t=k");
+        assert_eq!(with_token("/.ts/term?", "k"), "/.ts/term?t=k");
+        assert_eq!(with_token("/.ts/open?at=downloads#x", "k"), "/.ts/open?at=downloads&t=k#x");
+        assert_eq!(with_token("/.ts/reload", "k"), "/.ts/reload");
+        assert_eq!(with_token("/docs/", "k"), "/docs/");
+        assert_eq!(with_token("https://example.com/.ts/open", "k"), "https://example.com/.ts/open");
+        assert_eq!(with_token("/.ts/open", ""), "/.ts/open");
+    }
 
     fn req(cookie: &str) -> Req {
         Req {

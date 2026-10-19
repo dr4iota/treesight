@@ -313,6 +313,18 @@ size — with words in the status line and Cancel, and answer another question
 nothing and the drawn `Confirm` is asked. A notice may end in one of the
 page's own verbs (`Notice::verb`) rather than a link; the page makes the link,
 with its token.
+
+**Every action carries the page's token.** `is_action` names what does
+something — every `/.ts/` path but the router's pages and stylesheets,
+Refresh and Cancel — and the page draws each through `page::act`
+(`with_token`), the embedder's flags, rows and notices included, and never a
+document's own links. The shell refuses an action without it in
+`on_navigation`, ahead of its own routes and the embedder's, which are
+claimed by path from any origin: a document can lay a link over itself, in a
+Preview frame or drawn inline, and a frame's navigations arrive as the
+window's do. The token is in the page's `<meta name="ts-token">` for the
+shortcuts that navigate from script; an embedder's own pages ask for it.
+
 A verb marked `on_file_page` is a pill on the file's own page too, and
 `Vfs::notice` is a line over any page — a copy served while its source does not
 answer, say. Nothing in these names a remote: the embedder's cache is the first

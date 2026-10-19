@@ -37,7 +37,7 @@ fn print_flag(state: &State) -> String {
     if state.cfg.app_ui {
         flag(
             "",
-            "/.ts/print",
+            &crate::page::act(state, "/.ts/print"),
             &svg_icon(ICON_PRINT),
             "Print",
             "Print (Ctrl+P)",
@@ -665,7 +665,7 @@ pub fn file_page(
                 if line_count == 1 { "" } else { "s" },
                 if table_refused { " &middot; too big to draw as a table" } else { "" }
             ),
-            &ln_switch(prefs, url_now)
+            &ln_switch(&state.cfg.action_token, prefs, url_now)
         ),
         gutter,
         html
