@@ -385,7 +385,8 @@ sticky never, and an `x` only on what runs at the other end:
 
 - **Download** to a Unix desktop: the tree's `x` is kept on a script, or on a
   program for this machine's OS and CPU, and dropped on everything else. A
-  download never adds one. A phone's copy into Files, and the save sheet's,
+  download never adds one, and a new file is less this process's umask, as
+  `sftp get` makes it (a `777` document lands `644` under `022`). A phone's copy into Files, and the save sheet's,
   are given no mode: nothing runs from either.
 - **Upload** with a real mode (a Unix desktop's own disk): its `x` is kept on
   a script or a program — for this machine where the tree is on this device,

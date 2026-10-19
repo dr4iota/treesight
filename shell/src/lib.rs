@@ -2495,7 +2495,10 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
 /// name never wears another. Over a file already at `dest`: that file's own,
 /// as a replacement in the tree keeps the old file's. A new name: the tree's
 /// `mode`, as `treeserve::modes::downloaded` trims it for this machine, judged
-/// by the copy's own first bytes; with none, the umask's.
+/// by the copy's own first bytes, and less this process's umask, as `sftp get`
+/// and `cp` make a file — a document the tree has as `777` came out `666`,
+/// writable by everyone here. With no mode, the part file's, which the umask
+/// already made.
 fn part_mode(part: &Path, dest: &Path, mode: Option<u32>) {
     #[cfg(unix)]
     {
@@ -2506,7 +2509,7 @@ fn part_mode(part: &Path, dest: &Path, mode: Option<u32>) {
                 let head = fs::File::open(part)
                     .and_then(|mut f| treeserve::modes::head(&mut f))
                     .unwrap_or_default();
-                treeserve::modes::downloaded(mode, &head)
+                treeserve::modes::downloaded(mode, &head) & !umask()
             }),
         };
         if let Some(mode) = mode {
@@ -2517,9 +2520,24 @@ fn part_mode(part: &Path, dest: &Path, mode: Option<u32>) {
     let _ = (part, dest, mode);
 }
 
+/// This process's umask, read where it can be read without changing it — the
+/// one call that sets it is process-wide, and a download runs beside the rest
+/// of the app. Linux says it in `/proc/self/status`; elsewhere the usual `022`.
+#[cfg(unix)]
+fn umask() -> u32 {
+    fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("Umask:"))
+                .and_then(|v| u32::from_str_radix(v.trim(), 8).ok())
+        })
+        .unwrap_or(0o022)
+}
+
 #[cfg(all(test, unix))]
 mod part_mode_tests {
-    use super::part_mode;
+    use super::{part_mode, umask};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
@@ -2541,8 +2559,16 @@ mod part_mode_tests {
     }
 
     /// A copy on this disk: the tree's `x` on a script and on a program for
-    /// this machine, none on another CPU's or on a document, never setuid; and
-    /// a file saved over keeping its own mode through the rename.
+    /// this machine, none on another CPU's or on a document, never setuid, all
+    /// less the umask; and a file saved over keeping its own mode through the
+    /// rename.
+    #[test]
+    fn the_umask_is_read_not_set() {
+        let before = umask();
+        assert_eq!(before & !0o777, 0, "{before:o}");
+        assert_eq!(umask(), before);
+    }
+
     #[test]
     fn a_saved_copy_keeps_x_only_where_it_runs_here() {
         let dir = std::env::temp_dir().join(format!("ts-saved-mode-{}", std::process::id()));
@@ -2555,12 +2581,14 @@ mod part_mode_tests {
             h
         };
         let here = cfg!(all(target_os = "linux", target_arch = "x86_64"));
+        // Less the umask, as any new file here is made.
+        let m = !umask();
         for (name, body, tree, want) in [
-            ("run.sh", b"#!/bin/sh\n".to_vec(), 0o4755, 0o755),
-            ("key", b"secret\n".to_vec(), 0o600, 0o600),
-            ("doc.txt", b"notes\n".to_vec(), 0o777, 0o666),
-            ("pi-tool", elf(40), 0o755, 0o644),
-            ("tool", elf(62), 0o755, if here { 0o755 } else { 0o644 }),
+            ("run.sh", b"#!/bin/sh\n".to_vec(), 0o4755, 0o755 & m),
+            ("key", b"secret\n".to_vec(), 0o600, 0o600 & m),
+            ("doc.txt", b"notes\n".to_vec(), 0o777, 0o666 & m),
+            ("pi-tool", elf(40), 0o755, 0o644 & m),
+            ("tool", elf(62), 0o755, if here { 0o755 } else { 0o644 } & m),
         ] {
             assert_eq!(mode_of(&save(&dir, name, &body, Some(tree))), want, "{name}");
         }
