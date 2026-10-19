@@ -20,6 +20,7 @@ pub use http::{spawn, Serving};
 pub const HOME_PATH: &str = "/.ts/home";
 
 pub mod md;
+pub mod modes;
 pub mod page;
 pub mod util;
 pub mod vfs;

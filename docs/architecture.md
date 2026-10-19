@@ -373,8 +373,30 @@ same document is not leaving either. `no_page_links_to_the_app_by_its_address`
 dialog (non-blocking, main thread), and the copy itself — `Vfs::open` →
 `File::create` → `io::copy` — on a `std::thread`, so a backend reading over a
 network cannot freeze the window for the length of the transfer. A failure
-comes back through `run_on_main_thread`. Permission bits from `Meta.mode` are
-restored on Unix.
+comes back through `run_on_main_thread`. On Unix the copy takes the bits
+`modes::downloaded` gives it, and a file saved over keeps its own.
+
+**Permission bits across the copy** (`src/modes.rs`). The tree may be another
+machine, of another OS and CPU; treesight knows of it only what
+`Vfs::on_this_device` says, and of a file only its first 64 bytes. A `#!` is
+a script; an ELF or Mach-O header is a program, and names its CPU; `MZ` is a
+Windows program. Read and write bits travel as they are, setuid, setgid and
+sticky never, and an `x` only on what runs at the other end:
+
+- **Download** to a Unix desktop: the tree's `x` is kept on a script, or on a
+  program for this machine's OS and CPU, and dropped on everything else. A
+  download never adds one. A phone's copy into Files, and the save sheet's,
+  are given no mode: nothing runs from either.
+- **Upload** with a real mode (a Unix desktop's own disk): its `x` is kept on
+  a script or a program — for this machine where the tree is on this device,
+  any where it is not, since that machine is not known here.
+- **Upload** with no mode — from Windows, a phone (the embedder's
+  `PickedFile`), or a disk that makes its modes up (FAT, exFAT, NTFS, SMB,
+  WSL's 9p by `statfs`; any file reading `777`): a script or such a program
+  asks for every bit, so the tree's umask leaves an `x` beside each `r`, and
+  anything else asks for nothing, the tree's default.
+- A **replacement** keeps the old file's mode, in the tree (the backend's
+  `create_file_with`) and here (Save As over a file).
 
 ### Nothing open
 

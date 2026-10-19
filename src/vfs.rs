@@ -55,7 +55,7 @@ pub struct Meta {
     pub len: u64,
     pub mtime: Option<SystemTime>,
     /// Unix permission bits, when the backend knows them — what Save As
-    /// restores on a copy, so a downloaded script stays executable.
+    /// gives a copy, its `x` only where the copy runs here (`modes`).
     pub mode: Option<u32>,
 }
 

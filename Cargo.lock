@@ -4355,6 +4355,7 @@ dependencies = [
 name = "treesight-shell"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "tauri",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",

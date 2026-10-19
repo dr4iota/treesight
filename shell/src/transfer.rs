@@ -360,15 +360,58 @@ fn pick_on_desktop(app: &AppHandle, t: Target) {
     });
 }
 
+/// Whether `path` is on a disk that makes its files' modes up rather than
+/// keeping them: FAT, exFAT, NTFS, a Windows share, or a Windows drive under
+/// WSL (9p). By the filesystem's magic number, which needs no reading of the
+/// file. FUSE is not on the list — `ntfs-3g` is FUSE, and so is `sshfs`,
+/// which keeps modes — and `ntfs-3g`'s `777` is caught by
+/// `treeserve::modes::believable` instead.
+#[cfg(all(desktop, target_os = "linux"))]
+fn modes_made_up(path: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    const MADE_UP: [u32; 8] = [
+        0x4d44,      // FAT
+        0x2011_bab0, // exFAT
+        0x5346_544e, // NTFS, the old driver
+        0x7366_746e, // NTFS, ntfs3
+        0xff53_4d42, // CIFS
+        0xfe53_4d42, // SMB2
+        0x517b,      // SMB
+        0x0102_1997, // 9p: a Windows drive under WSL
+    ];
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c` is a NUL-terminated path and `st` a statfs to fill.
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
+        return false;
+    }
+    // `f_type` is signed and as wide as a long; the magic is its low half.
+    MADE_UP.contains(&(st.f_type as u32))
+}
+
+/// Elsewhere a made-up mode is the `777` that `believable` catches: a Mac
+/// mounts FAT and exFAT so.
+#[cfg(all(desktop, unix, not(target_os = "linux")))]
+fn modes_made_up(_path: &std::path::Path) -> bool {
+    false
+}
+
 #[cfg(desktop)]
 fn picked_path(path: PathBuf) -> PickedFile {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let meta = fs::metadata(&path).ok().filter(|m| m.is_file());
     let len = meta.as_ref().map(|m| m.len());
     #[cfg(unix)]
-    // The nine permission bits and no more, as `sftp put` sends: a setuid
-    // or setgid bit is not something an upload should ask for.
-    let mode = meta.as_ref().map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o777);
+    // The nine permission bits and no more: a setuid or setgid bit is not
+    // something an upload should ask for. And only where the disk keeps them —
+    // a USB stick's or a Windows drive's are the mount's, the same on every
+    // file, so the upload is one with no mode (`treeserve::modes::uploaded`).
+    let mode = meta
+        .as_ref()
+        .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o777)
+        .filter(|&m| treeserve::modes::believable(m) && !modes_made_up(&path));
     #[cfg(not(unix))]
     let mode = None;
     PickedFile {
@@ -490,6 +533,12 @@ fn send(app: &AppHandle, t: Target, files: Vec<PickedFile>) {
         let PickedFile { len, open, mode, .. } = file;
         let res = (|| -> io::Result<Option<String>> {
             let mut from = open()?;
+            // Its first bytes say whether it runs (`treeserve::modes`), and a
+            // new file asks for its mode as it is made, so they are read first
+            // and sent ahead of the rest.
+            let head = treeserve::modes::head(&mut from)?;
+            let mode = treeserve::modes::uploaded(mode, &head, t.vfs.on_this_device());
+            let mut from = io::Cursor::new(head).chain(from);
             let mut to = t.vfs.create_file_with(&t.dir, &name, replace && clash.contains(&name), mode)?;
             // A file that does not finish is the backend's to take away
             // (`WriteFile`): only it knows whether it made a new file or a
@@ -880,6 +929,50 @@ fn after_change(app: &AppHandle, r: &Row) {
     };
     let href = format!("{}/", treeserve::util::href_path(at.segments()).trim_end_matches('/'));
     replace_page(app, &format!("{}{href}", serving.origin));
+}
+
+#[cfg(all(test, desktop, target_os = "linux"))]
+mod disk_tests {
+    use super::modes_made_up;
+    use std::path::Path;
+
+    /// The root keeps its modes; a Windows drive under WSL does not.
+    #[test]
+    fn a_windows_drive_makes_its_modes_up() {
+        assert!(!modes_made_up(Path::new("/")));
+        if Path::new("/mnt/c/Windows").is_dir() {
+            assert!(modes_made_up(Path::new("/mnt/c/Windows")));
+        }
+    }
+
+    /// What the picker hands an upload: this disk's own bits, and none for a
+    /// `777` (a disk that has no modes) or a file on a Windows drive.
+    #[test]
+    fn a_picked_file_carries_only_a_mode_its_disk_keeps() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ts-picked-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (mode, want) in [(0o755, Some(0o755)), (0o600, Some(0o600)), (0o777, None)] {
+            let p = dir.join(format!("f{mode:o}"));
+            std::fs::write(&p, b"x").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(super::picked_path(p).mode, want, "{mode:o}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Windows' own temporary folder, seen from WSL: whatever it reads,
+        // it is not a mode to carry.
+        if let Some(temp) = std::fs::read_dir("/mnt/c/Users").ok().and_then(|users| {
+            users.flatten().map(|u| u.path().join("AppData/Local/Temp")).find(|t| t.is_dir())
+        }) {
+            let p = temp.join(format!("ts-picked-{}.txt", std::process::id()));
+            if std::fs::write(&p, b"x").is_ok() {
+                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644));
+                let picked = super::picked_path(p.clone()).mode;
+                let _ = std::fs::remove_file(&p);
+                assert_eq!(picked, None);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

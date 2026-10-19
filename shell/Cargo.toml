@@ -43,6 +43,11 @@ tauri-plugin-single-instance = "2"
 [target.'cfg(target_os = "android")'.dependencies]
 tauri-runtime-wry = "2"
 
+# `statfs`, for a picked file's disk: one that makes its modes up gives an
+# upload none to carry. Already in the tree under tauri.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 # For `GetLogicalDrives`, which is the only way to ask which drive letters exist
 # without asking the drives themselves. Already in the tree under tauri, so this
 # is a name for something we were building anyway.

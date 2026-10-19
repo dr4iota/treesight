@@ -2472,28 +2472,108 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
         thread::spawn(move || {
             // Streamed through the backend rather than `fs::copy`, which only a
             // local path could satisfy. The read/write shape is carried over
-            // from the backend where it knows it — a 0600 stays private — but
-            // never the execute or setuid bits: the file came from a machine the
-            // reader is browsing, and a download that is silently runnable
-            // because the far end said `0755` is a trap a browser would not set.
-            let mode = vfs.metadata(&src).ok().and_then(|m| m.mode).map(|m| m & 0o666);
-            let copied = copy_bounded(&app, &vfs, &src, &dest);
+            // from the backend where it knows it — a 0600 stays private — and
+            // the `x` only where the file runs on this machine
+            // (`treeserve::modes::downloaded`): the tree may be another OS's or
+            // another CPU's, and a copy that is runnable because the far end
+            // said `0755` of a document is a trap a browser would not set. A
+            // file saved over keeps the mode it had (`part_mode`).
+            let mode = vfs.metadata(&src).ok().and_then(|m| m.mode);
+            let copied = copy_bounded(&app, &vfs, &src, &dest, mode);
             match copied {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => fail(&app, &format!("Could not save {}: {e}", dest.display()), false),
-                Ok(_) => {
-                    #[cfg(unix)]
-                    if let Some(mode) = mode {
-                        use std::os::unix::fs::PermissionsExt;
-                        let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(mode));
-                    }
-                    #[cfg(not(unix))]
-                    let _ = mode;
-                }
+                Ok(_) => {}
             }
         });
     });
     });
+    }
+}
+
+/// A finished download's mode, put on its part file before the rename, so the
+/// name never wears another. Over a file already at `dest`: that file's own,
+/// as a replacement in the tree keeps the old file's. A new name: the tree's
+/// `mode`, as `treeserve::modes::downloaded` trims it for this machine, judged
+/// by the copy's own first bytes; with none, the umask's.
+fn part_mode(part: &Path, dest: &Path, mode: Option<u32>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = match fs::metadata(dest) {
+            Ok(old) => Some(old.permissions().mode() & 0o7777),
+            Err(_) => mode.map(|mode| {
+                let head = fs::File::open(part)
+                    .and_then(|mut f| treeserve::modes::head(&mut f))
+                    .unwrap_or_default();
+                treeserve::modes::downloaded(mode, &head)
+            }),
+        };
+        if let Some(mode) = mode {
+            let _ = fs::set_permissions(part, fs::Permissions::from_mode(mode));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (part, dest, mode);
+}
+
+#[cfg(all(test, unix))]
+mod part_mode_tests {
+    use super::part_mode;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    fn mode_of(p: &std::path::Path) -> u32 {
+        fs::metadata(p).unwrap().permissions().mode() & 0o7777
+    }
+
+    /// `copy_bounded`'s last steps: the part file as `create_new` makes it,
+    /// its mode, and the rename onto the name.
+    fn save(dir: &Path, name: &str, body: &[u8], tree: Option<u32>) -> std::path::PathBuf {
+        let dest = dir.join(name);
+        let part = dir.join(format!("{name}.part"));
+        fs::write(&part, body).unwrap();
+        fs::set_permissions(&part, fs::Permissions::from_mode(0o644)).unwrap();
+        part_mode(&part, &dest, tree);
+        fs::rename(&part, &dest).unwrap();
+        dest
+    }
+
+    /// A copy on this disk: the tree's `x` on a script and on a program for
+    /// this machine, none on another CPU's or on a document, never setuid; and
+    /// a file saved over keeping its own mode through the rename.
+    #[test]
+    fn a_saved_copy_keeps_x_only_where_it_runs_here() {
+        let dir = std::env::temp_dir().join(format!("ts-saved-mode-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let elf = |machine: u16| {
+            let mut h = b"\x7fELF\x02\x01\x01".to_vec();
+            h.resize(18, 0);
+            h.extend(machine.to_le_bytes());
+            h.resize(64, 0);
+            h
+        };
+        let here = cfg!(all(target_os = "linux", target_arch = "x86_64"));
+        for (name, body, tree, want) in [
+            ("run.sh", b"#!/bin/sh\n".to_vec(), 0o4755, 0o755),
+            ("key", b"secret\n".to_vec(), 0o600, 0o600),
+            ("doc.txt", b"notes\n".to_vec(), 0o777, 0o666),
+            ("pi-tool", elf(40), 0o755, 0o644),
+            ("tool", elf(62), 0o755, if here { 0o755 } else { 0o644 }),
+        ] {
+            assert_eq!(mode_of(&save(&dir, name, &body, Some(tree))), want, "{name}");
+        }
+        assert_eq!(mode_of(&save(&dir, "none.txt", b"x", None)), 0o644, "no mode: the part file's");
+        // Saved over: the old file's mode, whatever the tree's says.
+        for (old, tree) in [(0o700, Some(0o644)), (0o600, Some(0o644)), (0o755, None)] {
+            let dest = dir.join("over.sh");
+            fs::write(&dest, b"old").unwrap();
+            fs::set_permissions(&dest, fs::Permissions::from_mode(old)).unwrap();
+            assert_eq!(mode_of(&save(&dir, "over.sh", b"#!/bin/sh\n", tree)), old, "{old:o} saved over");
+            fs::remove_file(&dest).unwrap();
+        }
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
 
@@ -2517,7 +2597,8 @@ const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// fails like any other.
 ///
 /// Written beside the target and renamed onto it, so the file at `dest` is
-/// either the one that was there before or the whole of the new one. A copy that
+/// either the one that was there before or the whole of the new one — with
+/// the mode `part_mode` gives it from the tree's `mode`, or the old file's. A copy that
 /// wrote straight to `dest` destroyed an existing file at `File::create` — before
 /// a single byte of the replacement had arrived — and a network that dropped
 /// half way then left a truncated file wearing the name of a good one.
@@ -2530,6 +2611,7 @@ fn copy_bounded(
     vfs: &Arc<dyn treeserve::Vfs>,
     src: &treeserve::VfsPath,
     dest: &Path,
+    mode: Option<u32>,
 ) -> io::Result<u64> {
     let len = vfs.metadata(src).ok().map(|m| m.len);
     if let Some(len) = len
@@ -2576,6 +2658,7 @@ fn copy_bounded(
         // Flushed before the rename: the name is the promise that the bytes are
         // there, and on a crash between the two it should not be a lie.
         to.sync_all()?;
+        part_mode(&part, dest, mode);
         fs::rename(&part, dest)?;
         Ok(copied)
     };
@@ -2602,7 +2685,8 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
     let src = target.path.clone();
     let app = app.clone();
     thread::spawn(move || {
-        let copied = copy_bounded(&app, &vfs, &src, &dest);
+        // No mode: Files is the app's own, and nothing runs from it.
+        let copied = copy_bounded(&app, &vfs, &src, &dest, None);
         match copied {
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Ok(_) => notify(
@@ -2643,7 +2727,7 @@ fn save_through_sheet(app: &AppHandle, target: &treeserve::Resolved, root: &tree
         let staged = (|| -> io::Result<PathBuf> {
             fs::create_dir_all(&dir)?;
             let tmp = free_name(&dir, &name);
-            copy_bounded(&app, &vfs, &src, &tmp)?;
+            copy_bounded(&app, &vfs, &src, &tmp, None)?;
             Ok(tmp)
         })();
         let SaveTarget { mut write, discard } = dest;
