@@ -61,6 +61,17 @@ name = "treeserve"
 path = "src/main.rs"
 required-features = ["http"]
 
+# Line tables for this workspace and none for its dependencies: a backtrace
+# keeps file and line where they are read, and a frame in a dependency still
+# names its function. Debug info for every dependency was half of each binary
+# in `target/`, and nobody here steps through a debugger. A workspace that
+# depends on this one by path sets its own profile; this one is not read there.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = true
 strip = true
