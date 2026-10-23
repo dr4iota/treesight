@@ -2010,6 +2010,19 @@ fn build_window(
             // it, because the question is whether script has somewhere to run
             // and every page answers it. See `Serving::loaded`.
             serving.loaded.store(true, Ordering::Relaxed);
+            // **The start page's address closes what was open, here** — when the
+            // window arrives, by a link, by Back or by the shell's own load — and
+            // not where the router serves it (`treeserve::HOME_PATH`): a frame
+            // asks for the address as readily, and only the window's own load
+            // is seen in this hook. Ours alone, as the router's page is. On
+            // `Started` only: by `Finished` the reader may have opened a folder
+            // from the page, and closing then would shut that one.
+            if payload.event() == tauri::webview::PageLoadEvent::Started
+                && payload.url().path() == treeserve::HOME_PATH
+                && origin_allowed(&shell, payload.url())
+            {
+                serving.state().cfg.close_root();
+            }
             if payload.event() != tauri::webview::PageLoadEvent::Finished {
                 return;
             }

@@ -804,12 +804,18 @@ impl Config {
     pub fn title(&self) -> String {
         match self.root() {
             Some(root) => self.title_for(&root),
-            None => self
-                .title
-                .clone()
-                .or_else(|| self.app_name.clone())
-                .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string()),
+            None => self.app_title(),
         }
+    }
+
+    /// The title with nothing open. The start page wears it whatever the lock
+    /// says: the folder it closes is closed by the shell just after the page
+    /// is drawn (`HOME_PATH`).
+    pub fn app_title(&self) -> String {
+        self.title
+            .clone()
+            .or_else(|| self.app_name.clone())
+            .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string())
     }
 
     /// The site title for a root the caller already holds — so one request
@@ -1196,13 +1202,16 @@ pub fn handle(state: &State, req: &Req) -> Reply {
         // the page that says nothing is, and the two must not disagree. That is
         // the same thing `/.ts/close` does, and the reason both exist is that one
         // is an address and the other a command — the command replaces the page
-        // and leaves the history alone.
+        // and leaves the history alone. **The shell closes it, when its window
+        // arrives** (its page-load hook), and not this route: a frame asks for
+        // this address as readily as the window, and a previewed document's
+        // link to it closed the open folder with a tap and no token (Android,
+        // 23 October 2026). Only the window's own load is seen there.
         //
         // Shell only, like the wait page. A served tree has no start page to go
         // to, and a route that closed the root would hand any visitor the way to
         // shut the server's own folder.
         HOME_PATH if state.cfg.app_ui => {
-            state.cfg.close_root();
             return html_reply(200, page::start_page(state, prefs, &url_now));
         }
         "/.ts/wait" if state.cfg.app_ui => {
@@ -2069,15 +2078,16 @@ mod tests {
     }
 
     /// The start page's own address: it says the start page whatever is open, and
-    /// arriving there closes what was.
+    /// arriving there closes what was — by the shell, on its window's load.
     ///
     /// That is what makes a folder a step forward rather than a change of scene —
     /// the shell pushes the tree onto this page, and Back out of the tree lands
     /// here rather than on a second copy of the tree's own address. Closing on
     /// arrival is not a side effect but the point: the reader is looking at the
     /// page that says nothing is open, and the app must not disagree with it.
+    /// Serving the page does not close it: a frame can ask for the address.
     #[test]
-    fn the_start_pages_own_address_says_so_and_closes_what_was_open() {
+    fn the_start_pages_own_address_says_so_and_leaves_the_closing_to_the_window() {
         let dir = std::env::temp_dir().join(format!("treeserve-home-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut cfg = super::Config::new(dir.clone());
@@ -2101,12 +2111,17 @@ mod tests {
             _ => panic!("a page is text"),
         }
 
-        // The other address says the start page anyway, and the folder is shut.
+        // The other address says the start page anyway. The folder stays open
+        // here: the shell shuts it when its window arrives, which a frame
+        // asking for this address cannot do.
         match get(super::HOME_PATH).body {
-            super::Body::Text(t) => assert!(t.contains("class=\"app nothing\""), "{t}"),
+            super::Body::Text(t) => {
+                assert!(t.contains("class=\"app nothing\""), "{t}");
+                assert!(!t.contains("treeserve-home"), "the start page named the folder: {t}");
+            }
             _ => panic!("a page is text"),
         }
-        assert!(state.cfg.root().is_none(), "arriving home closes the folder");
+        assert!(state.cfg.root().is_some(), "serving home closed the folder");
 
         // And a served tree has neither: no start page to offer, and no route
         // that would let a visitor shut the folder the server was started on.

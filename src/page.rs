@@ -1080,7 +1080,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
 </html>
 "#,
         data_theme = data_theme,
-        title = html_escape(&state.cfg.title()),
+        title = html_escape(&state.cfg.app_title()),
         token_meta = token_meta(state),
         slot = slot,
         controls = controls,
@@ -2723,7 +2723,7 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
             // where a button should be.
             true => "<p class=\"hint\">Open one of the places below.</p>".to_string(),
         },
-        name = html_escape(&state.cfg.title()),
+        name = html_escape(&state.cfg.app_title()),
     );
     rootless_page(state, prefs, url_now, &format!("{intro}{lists}{note}"))
 }

@@ -419,8 +419,14 @@ starts; `Config::new(dir)` is the CLI's, and re-rooting fills the slot in.
 While it is `None`, `handle` answers `/` with `page::start_page` and redirects
 everything else there — a URL from before the folder was closed is history, not
 an error. `HOME_PATH` (`/.ts/home`) answers with that page *whatever* is open,
-and closes what is; see **Back** below for why the start page needs a second
-address of its own. The page names itself once — an `h1` in the content, not in the header bar as
+and the shell closes what is when its window arrives there (the page-load
+hook); see **Back** below for why the start page needs a second address of
+its own. Serving the page closes nothing: a frame can ask for the address as
+readily as the window — a link in a previewed HTML file, whose navigation
+Android's WebView and WebView2 send the protocol and never `on_navigation` —
+and only the window's own load reaches the hook. The page is named with
+nothing open (`Config::app_title`), since it is drawn a moment before the
+close. The page names itself once — an `h1` in the content, not in the header bar as
 well — and takes its words from the embedder: `Config::app_name` and
 `app_version` come from Tauri's product name and version (so a shell embedding
 this crate stops calling itself treesight in its own window title and status
@@ -532,7 +538,8 @@ of the address you are already on, and Back into it re-renders whatever root is
 current now. That is why `replace_page` exists and why everything uses it.
 
 The start page is the exception, and `HOME_PATH` is what makes it one: a second
-address, rendering the start page whatever is open and closing what is. So
+address, rendering the start page whatever is open, and closing what is when
+the window arrives. So
 opening the **first** folder of a run can be a real step — `show_tree` pushes
 when the window is showing that page and replaces otherwise, and `show_waiting`
 takes the step ahead of it so that a slow dial still costs one entry. Back out of
