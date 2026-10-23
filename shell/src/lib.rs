@@ -647,12 +647,13 @@ pub struct ShellExt {
     /// uses it; where it is not, the copy goes into Files.
     #[allow(clippy::type_complexity)]
     pub save_file: Option<Box<dyn Fn(&AppHandle, &str) -> io::Result<Option<SaveTarget>> + Send + Sync>>,
-    /// The note drawn under the start page's lists, with a link to finish it
-    /// if it has one. Asked once, when the server starts — after every plugin
-    /// has set up, so it can read their state; for anything later, call
-    /// `Config::set_note` through [`Serving::state`]. `None` draws nothing.
+    /// The notes drawn under the start page's lists, each with a link to
+    /// finish it if it has one. Asked once, when the server starts — after
+    /// every plugin has set up, so it can read their state; for anything
+    /// later, call `Config::set_notes` through [`Serving::state`]. `None`, or
+    /// no notes, draws nothing.
     #[allow(clippy::type_complexity)]
-    pub note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
+    pub notes: Option<Box<dyn Fn(&AppHandle) -> Vec<treeserve::StartNote> + Send + Sync>>,
     /// A word for the status line, between the name and the version. Asked
     /// when `note` is, and changed later with `Config::set_edition`.
     #[allow(clippy::type_complexity)]
@@ -807,7 +808,7 @@ struct Ext {
     home_slot: Option<treeserve::HeaderFlag>,
     uploads: bool,
     #[allow(clippy::type_complexity)]
-    note: Option<Box<dyn Fn(&AppHandle) -> Option<treeserve::StartNote> + Send + Sync>>,
+    notes: Option<Box<dyn Fn(&AppHandle) -> Vec<treeserve::StartNote> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
     edition: Option<Box<dyn Fn(&AppHandle) -> Option<String> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
@@ -911,7 +912,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         title_link: ext.title_link,
         home_slot: ext.home_slot,
         uploads,
-        note: ext.note,
+        notes: ext.notes,
         edition: ext.edition,
         page_title: ext.page_title,
         allowed_origins: ext.allowed_origins,
@@ -1797,7 +1798,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.intro = ext.intro.clone();
     cfg.title_link = ext.title_link.clone();
     cfg.home_slot = ext.home_slot.clone();
-    cfg.set_note(ext.note.as_ref().and_then(|f| f(app)));
+    cfg.set_notes(ext.notes.as_ref().map(|f| f(app)).unwrap_or_default());
     cfg.set_edition(ext.edition.as_ref().and_then(|f| f(app)));
     cfg.places = places(app)
         .into_iter()

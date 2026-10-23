@@ -2656,21 +2656,31 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
     // Under the lists, not beside the title. The ways in are what this page is
     // for; a note here is what is left to say once those are on screen.
     // The link finishes the sentence rather than standing under it: a button
-    // of its own would be one more way in, and the ways in are above.
-    let note = match state.cfg.note() {
-        Some(n) if !n.text.is_empty() => format!(
-            "<p class=\"startnote\">{}{}</p>",
-            html_escape(&n.text),
-            match &n.link {
-                Some((label, href)) => format!(
-                    " <a href=\"{}\">{}</a>",
-                    html_escape(&act(state, href)),
-                    html_escape(label)
-                ),
-                None => String::new(),
-            }
-        ),
-        _ => String::new(),
+    // of its own would be one more way in, and the ways in are above. More
+    // than one note is a paragraph each, under one rule.
+    let notes: String = state
+        .cfg
+        .notes()
+        .iter()
+        .filter(|n| !n.text.is_empty())
+        .map(|n| {
+            format!(
+                "<p>{}{}</p>",
+                html_escape(&n.text),
+                match &n.link {
+                    Some((label, href)) => format!(
+                        " <a href=\"{}\">{}</a>",
+                        html_escape(&act(state, href)),
+                        html_escape(label)
+                    ),
+                    None => String::new(),
+                }
+            )
+        })
+        .collect();
+    let note = match notes.is_empty() {
+        true => String::new(),
+        false => format!("<div class=\"startnote\">{notes}</div>"),
     };
 
     let said = state.cfg.intro.as_deref().unwrap_or(
@@ -3237,10 +3247,14 @@ mod tests {
         state.cfg.app_version = Some("9.9.9".to_string());
         state.cfg.app_commit = Some("a1b2c3d4+2".to_string());
         state.cfg.intro = Some("A sentence of <its> own.".to_string());
-        state.cfg.set_note(Some(StartNote {
-            text: "A note of <its> own.".to_string(),
-            link: Some(("Do <it>".to_string(), "/x?a=1&b=2".to_string())),
-        }));
+        state.cfg.set_notes(vec![
+            StartNote {
+                text: "A note of <its> own.".to_string(),
+                link: Some(("Do <it>".to_string(), "/x?a=1&b=2".to_string())),
+            },
+            StartNote { text: String::new(), link: Some(("Nothing".to_string(), "/y".to_string())) },
+            StartNote { text: "And another.".to_string(), link: None },
+        ]);
         state.cfg.set_edition(Some("Plus".to_string()));
         let html = start_page(&state, prefs(), "/");
         assert!(html.contains("<h1>downstream</h1>"), "{html}");
@@ -3266,9 +3280,12 @@ mod tests {
         let lists_at = html.find("class=\"start\"").expect("lists");
         let note_at = html.find("class=\"startnote\"").expect("note");
         assert!(note_at > lists_at, "the note sits under the lists: {html}");
+        // In order, a paragraph each, and one with no text is not drawn.
+        assert!(html.contains("</a></p><p>And another.</p></div>"), "{html}");
+        assert!(!html.contains("Nothing"), "{html}");
         // Taken back, and nothing is left behind — not an empty paragraph with a
         // rule over it.
-        state.cfg.set_note(None);
+        state.cfg.set_notes(Vec::new());
         state.cfg.set_edition(None);
         let html = start_page(&state, prefs(), "/");
         assert!(!html.contains("startnote"), "{html}");

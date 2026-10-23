@@ -474,12 +474,12 @@ pub struct Config {
     /// folder for anyone who clicked it. Not a key against an attacker who can
     /// read the page, only proof that a page this server drew asked.
     pub action_token: String,
-    /// A short note under the start page's lists. Behind a lock, because what
-    /// an embedder has to say there can change while it runs; see
-    /// [`Config::set_note`].
-    note: RwLock<Option<Arc<StartNote>>>,
+    /// Short notes under the start page's lists, one paragraph each. Behind a
+    /// lock, because what an embedder has to say there can change while it
+    /// runs; see [`Config::set_notes`].
+    notes: RwLock<Arc<Vec<StartNote>>>,
     /// A word the status line puts between the name and the version — an
-    /// edition, a channel. Behind a lock for the reason `note` is.
+    /// edition, a channel. Behind a lock for the reason `notes` are.
     edition: RwLock<Option<String>>,
     /// Fixed shortcuts for the Places list — (label, RootId) pairs the
     /// embedder supplies, since it is the side that knows the platform's
@@ -577,7 +577,7 @@ impl Config {
             home_slot: None,
             uploads: false,
             action_token: fresh_token(),
-            note: RwLock::new(None),
+            notes: RwLock::default(),
             edition: RwLock::new(None),
             places: Vec::new(),
             recent: RwLock::new(Arc::new(Vec::new())),
@@ -695,14 +695,15 @@ impl Config {
         *self.intro_acts.write().expect("intro acts lock") = Arc::new(acts);
     }
 
-    pub fn note(&self) -> Option<Arc<StartNote>> {
-        self.note.read().expect("note lock").clone()
+    pub fn notes(&self) -> Arc<Vec<StartNote>> {
+        self.notes.read().expect("notes lock").clone()
     }
 
-    /// Replaces the start page's note. `None`, or empty text, draws nothing —
-    /// not even the rule above it. Every page rendered after this shows it.
-    pub fn set_note(&self, note: Option<StartNote>) {
-        *self.note.write().expect("note lock") = note.map(Arc::new);
+    /// Replaces the start page's notes, drawn in this order. None, or only
+    /// empty text, draws nothing — not even the rule above them. Every page
+    /// rendered after this shows them.
+    pub fn set_notes(&self, notes: Vec<StartNote>) {
+        *self.notes.write().expect("notes lock") = Arc::new(notes);
     }
 
     /// Sets the word [`Config::app_label`] puts after the name. `None` or empty
