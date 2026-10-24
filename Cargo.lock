@@ -4327,7 +4327,7 @@ dependencies = [
 
 [[package]]
 name = "treeserve"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "comrak",
@@ -4343,7 +4343,7 @@ dependencies = [
 
 [[package]]
 name = "treesight"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tauri",
  "tauri-build",
@@ -4353,7 +4353,7 @@ dependencies = [
 
 [[package]]
 name = "treesight-shell"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tauri",
