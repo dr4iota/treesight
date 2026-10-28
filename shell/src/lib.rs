@@ -515,6 +515,13 @@ addEventListener('keydown', function (e) {
   else if (e.ctrlKey && e.key === 'Home') { location.assign('__TS_HOME__'); }
   else if (e.ctrlKey && (e.key === 'o' || e.key === 'O')) { location.assign(act('/.ts/open')); }
   else if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { location.assign(act('/.ts/print')); }
+  // New window, where the page offers one: its own link, so a page that does
+  // not draw it — a file window's, the start page — does nothing.
+  else if (e.ctrlKey && !e.shiftKey && (e.key === 'n' || e.key === 'N')) {
+    var w = document.querySelector('header a[href*="/.ts/window?"]');
+    if (!w) return;
+    location.assign(w.href);
+  }
   else { return; }
   e.preventDefault();
 });
@@ -816,7 +823,11 @@ pub struct ShellExt {
     /// Tried on every navigation before the built-in `/.ts/…` handling.
     /// Returning true claims the URL: the navigation is cancelled and the
     /// action has done whatever it does, exactly like the built-ins.
-    pub actions: Vec<Box<dyn Fn(&AppHandle, &tauri::Url) -> bool + Send + Sync>>,
+    ///
+    /// Told the label of the window the link was followed in: the main one
+    /// ([`WINDOW`]), or one with a root of its own ([`open_window`]), whose
+    /// root is [`window_root`]'s and whose page is the one to act on.
+    pub actions: Vec<Box<dyn Fn(&AppHandle, &str, &tauri::Url) -> bool + Send + Sync>>,
     /// Extra Places entries, appended after the platform's own —
     /// (label, RootId) pairs, like `Config::places`.
     pub extra_places: Vec<Box<dyn Fn(&AppHandle) -> Vec<(String, String)> + Send + Sync>>,
@@ -1027,7 +1038,7 @@ pub trait RootOpener: Send + Sync {
 /// The extensions after defaults are resolved, in Tauri's managed state so
 /// the navigation handler and every `start` can reach them.
 struct Ext {
-    actions: Vec<Box<dyn Fn(&AppHandle, &tauri::Url) -> bool + Send + Sync>>,
+    actions: Vec<Box<dyn Fn(&AppHandle, &str, &tauri::Url) -> bool + Send + Sync>>,
     extra_places: Vec<Box<dyn Fn(&AppHandle) -> Vec<(String, String)> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
     extra_sections:
@@ -2033,6 +2044,8 @@ fn start(app: &AppHandle) -> Result<(), String> {
     // dialog on a desktop, or a downstream shell that claims `/.ts/open` and has
     // something to ask with where we have not.
     cfg.picker = cfg!(desktop) || ext.picker;
+    // A folder or a file in a window of its own: a desktop's (`open_window`).
+    cfg.windows = cfg!(desktop);
     // Upload where there is a way to pick files: a desktop's own picker, or
     // an embedder's (`ShellExt::pick_files`) where the platform's picker hands
     // back addresses this crate cannot read.
@@ -2093,7 +2106,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
         at_home: AtomicBool::new(true),
     });
 
-    build_window(app, WINDOW, &home, title, false)?;
+    build_window(app, WINDOW, &home, title, false, None)?;
     check_roots(app);
     Ok(())
 }
@@ -2124,7 +2137,7 @@ fn reopen(app: &AppHandle) -> bool {
         return false;
     };
     let title = window_title(&serving.state().cfg);
-    let Ok(win) = build_window(app, WINDOW, &serving.home, title, false) else {
+    let Ok(win) = build_window(app, WINDOW, &serving.home, title, false, None) else {
         return false;
     };
     // A new webview, on the start page like a cold start and with nothing
@@ -2144,17 +2157,19 @@ fn reopen(app: &AppHandle) -> bool {
 /// `at_home`), and a drop re-roots the tree. None of that belongs to a page
 /// window. What it shares is the init script and the allowlist: the embedder's
 /// own pages load here; the tree, and any `/.ts/` link — the shell's chrome,
-/// an embedder's action — are the main window's business, so they are handed
-/// to the main window, whose own handler answers them, and it is brought to
-/// the front; anything else goes to the browser. Built hidden, at the main
-/// window's size, with the title it is given; the embedder places and shows it.
-/// A desktop's: a phone has one window.
+/// an embedder's action — are a tree window's business, so they are handed
+/// to `home` — the window the page came from, a tree window with a root of its
+/// own or the main one — whose own handler answers them, and it is brought to
+/// the front; to the main window once `home` has closed. Anything else goes to
+/// the browser. Built hidden, at the main window's size, with the title it is
+/// given; the embedder places and shows it. A desktop's: a phone has one window.
 #[cfg(desktop)]
 pub fn page_window<R: tauri::Runtime>(
     app: &AppHandle<R>,
     label: &str,
     url: &str,
     title: &str,
+    home: &str,
 ) -> Result<tauri::WebviewWindow<R>, String> {
     let ext = Arc::clone(&app.state::<SharedExt>().0);
     let size = app
@@ -2167,14 +2182,15 @@ pub fn page_window<R: tauri::Runtime>(
     // handler re-enters WebView2 from its own callback, and on Windows the app
     // stops responding. From another thread each call is posted to the event
     // loop instead. Generic here, where that helper is not.
-    fn to_main<R: tauri::Runtime>(app: &AppHandle<R>, url: &tauri::Url) {
+    fn to_home<R: tauri::Runtime>(app: &AppHandle<R>, home: &str, url: &tauri::Url) {
         let app = app.clone();
+        let home = home.to_string();
         let url = url.clone();
         thread::spawn(move || {
-            if let Some(main) = app.get_webview_window(WINDOW) {
-                let _ = main.navigate(url);
-                let _ = main.unminimize();
-                let _ = main.set_focus();
+            if let Some(win) = app.get_webview_window(&home).or_else(|| app.get_webview_window(WINDOW)) {
+                let _ = win.navigate(url);
+                let _ = win.unminimize();
+                let _ = win.set_focus();
             }
         });
     }
@@ -2182,13 +2198,14 @@ pub fn page_window<R: tauri::Runtime>(
         let ext = Arc::clone(&ext);
         let shell = shell_origins();
         let app = app.clone();
+        let home = home.to_string();
         move |url: &tauri::Url| -> bool {
             let ours = origin_allowed(&ext.allowed_origins, url);
             if ours && !url.path().starts_with("/.ts/") {
                 return true;
             }
             if ours || origin_allowed(&shell, url) {
-                to_main(&app, url);
+                to_home(&app, &home, url);
             } else {
                 open::open_externally(&app, url);
             }
@@ -2217,24 +2234,32 @@ pub fn page_window<R: tauri::Runtime>(
     .map_err(|e| format!("Cannot create the window: {e}"))
 }
 
-/// The one window, on the start page and hidden, with every handler it carries.
-/// The one window, on the start page and hidden, with every handler it carries.
+/// A tree window, hidden, with every handler it carries: the main one
+/// (`WINDOW`, on the start page), or one with a root of its own (`own`,
+/// `Config::open_window`), which keeps that root for life — so none of the main
+/// window's start page, wait page, re-root on a drop or Recent applies to it,
+/// and its clicks act in it.
 ///
-/// Apart from `start` because a phone can need it twice in one process: see
-/// [`reopen`].
-/// A tree window: the main one (`WINDOW`, opened on the start page), or one
-/// with a root of its own (`own`, `Config::open_window`), which keeps that
-/// root for life — so none of the main window's start page, wait page,
-/// re-root on a drop or Recent applies to it, and its clicks act in it.
+/// Apart from `start` because a phone can need the main one twice in one
+/// process: see [`reopen`].
 fn build_window(
     app: &AppHandle,
     label: &str,
     home: &str,
     title: String,
     own: bool,
+    place: Option<(tauri::LogicalSize<f64>, tauri::LogicalPosition<f64>)>,
 ) -> Result<tauri::WebviewWindow, String> {
     let ext = Arc::clone(&app.state::<SharedExt>().0);
-    let win = WebviewWindowBuilder::new(
+    // The main window's first size, or the one a window of its own is given,
+    // to the builder as a terminal's window does. Under WSLg's Wayland a copy
+    // comes out larger than the window it copied (the size read back counts
+    // the frame); under X11 and on Windows it is exact.
+    let ((w, h), at) = match place {
+        Some((size, at)) => ((size.width, size.height), Some((at.x, at.y))),
+        None => ((1200.0, 850.0), None),
+    };
+    let builder = WebviewWindowBuilder::new(
         app,
         label,
         // The start page, not the root: nothing is open yet whatever this run was
@@ -2246,7 +2271,7 @@ fn build_window(
         WebviewUrl::CustomProtocol(home.parse().map_err(|e| format!("bad url: {e}"))?),
     )
     .title(title)
-    .inner_size(1200.0, 850.0)
+    .inner_size(w, h)
     .min_inner_size(480.0, 360.0)
     // Shown by whoever knows there is something worth showing — `open_root`,
     // once it has a folder. A window built before the picker has been answered
@@ -2276,7 +2301,8 @@ fn build_window(
                 if payload.event() == tauri::webview::PageLoadEvent::Finished
                     && origin_allowed(&shell, payload.url())
                 {
-                    let _ = win.set_title(&window_title_in(&serving.state().cfg, win.label()));
+                    let title = window_title_at(&serving.state().cfg, win.label(), payload.url().path());
+                    let _ = win.set_title(&title);
                 }
                 return;
             }
@@ -2346,11 +2372,28 @@ fn build_window(
                 fail_in(&app, &label, "That link did not come from this window.", false);
                 return false;
             }
+            // A window of its own has no start page: Ctrl+Home, the one way
+            // there it is not claimed below, does nothing.
+            if own && url.path() == treeserve::HOME_PATH {
+                return false;
+            }
+            // A document window's link to a folder goes nowhere: by its shape,
+            // since this callback may not ask a remote backend what it is. One
+            // written as a file is sent back to the document by the router.
+            if own
+                && url.path().ends_with('/')
+                && origin_allowed(&shell, url)
+                && app
+                    .try_state::<Serving>()
+                    .and_then(|s| s.state().cfg.window(&label))
+                    .is_some_and(|w| w.document.is_some())
+            {
+                return false;
+            }
             // Downstream actions first: a URL an extension claims is handled
-            // entirely by it, the way `/.ts/open` is handled below. Not yet in
-            // a window of its own: an action is told only the app, and would
-            // act on the main window's root and page.
-            if !own && ext.actions.iter().any(|a| a(&app, url)) {
+            // entirely by it, the way `/.ts/open` is handled below — told which
+            // window, so it acts on that one's root and page.
+            if ext.actions.iter().any(|a| a(&app, &label, url)) {
                 return false;
             }
             // By scheme where the origin is opaque, by whole origin where it is
@@ -2453,9 +2496,12 @@ fn build_window(
             }
             true
         }
-    })
-    .build()
-    .map_err(|e| format!("Cannot create the window: {e}"))?;
+    });
+    let builder = match at {
+        Some((x, y)) => builder.position(x, y),
+        None => builder,
+    };
+    let win = builder.build().map_err(|e| format!("Cannot create the window: {e}"))?;
 
     // Dropping a folder on the window re-roots; dropping a file opens its page.
     // Not on a window of its own, which never leaves its folder: there it is
@@ -2470,6 +2516,16 @@ fn build_window(
                 }
             }
             tauri::WindowEvent::Destroyed if own => window_gone(&app, &label),
+            // The main window gone takes the windows of their own with it:
+            // each is a folder taken out of it, and left on its own its Main
+            // window would lead nowhere.
+            tauri::WindowEvent::Destroyed => {
+                for (other, win) in app.webview_windows() {
+                    if has_own_root(&app, &other) {
+                        let _ = win.destroy();
+                    }
+                }
+            }
             _ => {}
         }
     });
@@ -2492,40 +2548,133 @@ pub fn open_window(
     label: &str,
     root: treeserve::Root,
     name: Option<String>,
+    document: bool,
     path: &str,
     size: tauri::LogicalSize<f64>,
     at: tauri::LogicalPosition<f64>,
 ) -> Result<tauri::WebviewWindow, String> {
     let serving = app.try_state::<Serving>().ok_or("not started")?;
+    let taken = || format!("A window called {label} is already open.");
     if app.get_webview_window(label).is_some() {
-        return Err(format!("A window called {label} is already open."));
+        return Err(taken());
     }
+    if !serving.state().cfg.open_window(label, root, name, document.then(|| path.to_string())) {
+        return Err(taken());
+    }
+    build_claimed(app, label, path, size, at)
+}
+
+/// Builds and shows the window `label`, whose root is already recorded — by
+/// [`open_window`] or [`Config::claim_window`], so that two asked for at once
+/// never share a label. Undone only as far as this call went: a build that
+/// fails made no window, and leaves whatever has that label alone.
+#[cfg(desktop)]
+fn build_claimed(
+    app: &AppHandle,
+    label: &str,
+    path: &str,
+    size: tauri::LogicalSize<f64>,
+    at: tauri::LogicalPosition<f64>,
+) -> Result<tauri::WebviewWindow, String> {
+    let serving = app.try_state::<Serving>().ok_or("not started")?;
     let cfg = &serving.state().cfg;
-    cfg.open_window(label, root, name);
     // A label is used again — the next run's first, on another folder — and
     // the open folders it kept were paths in that one.
     forget_open_folders(app, label);
     let url = format!("{}{}", serving.origin, path);
-    let built = build_window(app, label, &url, window_title_in(cfg, label), true).and_then(|win| {
-        let _ = win.set_size(size);
-        let _ = win.set_position(at);
-        win.show().map_err(|e| format!("Cannot show the window: {e}"))?;
-        let _ = win.set_focus();
-        Ok(win)
-    });
-    if built.is_err() {
-        window_gone(app, label);
-        if let Some(win) = app.get_webview_window(label) {
-            let _ = win.destroy();
+    let title = window_title_at(cfg, label, path);
+    let win = match build_window(app, label, &url, title, true, Some((size, at))) {
+        Ok(win) => win,
+        Err(e) => {
+            cfg.close_window(label);
+            return Err(e);
         }
+    };
+    if let Err(e) = win.show() {
+        let _ = win.destroy();
+        window_gone(app, label);
+        return Err(format!("Cannot show the window: {e}"));
     }
-    built
+    let _ = win.set_focus();
+    Ok(win)
+}
+
+/// The root of the window `label`: its own, or the main window's. For an
+/// embedder's action, which is told the window it was followed in.
+pub fn window_root(app: &AppHandle, label: &str) -> Option<Arc<treeserve::Root>> {
+    root_in(app, label)
 }
 
 /// The window an upload or download on its way belongs to — which closing
 /// that window, or quitting, would stop — if one is on its way.
 pub fn transfer_owner() -> Option<String> {
     transfer::running_owner()
+}
+
+/// `/.ts/window?path=`: **New window** — the folder or the file the main
+/// window shows, in a window of its own. **It does not open anything**: the
+/// folder is already open, behind the backend and the session the main window
+/// has, so the new window serves that backend from a folder down
+/// (`treeserve::Within`), offline copy and all, and nothing is dialled. A file
+/// opens a document window on its folder, at the file. Placed down and right of
+/// the main window, a step further for each window of its own already open.
+#[cfg(desktop)]
+fn new_window(app: &AppHandle, url: &tauri::Url) {
+    let Some(path) = url.query_pairs().find(|(k, _)| k == "path").map(|(_, v)| v.into_owned()) else {
+        return fail(app, "No folder in that link.", false);
+    };
+    // Off the callback: a remote backend answers over the network, and the
+    // window is built on a thread that is not the main one.
+    off_the_callback(app, move |app| {
+        let Some(root) = root_in(app, WINDOW) else {
+            return;
+        };
+        let Ok(target) = treeserve::resolve_in_root(root.vfs.as_ref(), &path) else {
+            return fail(app, &format!("{path} is not in this folder."), false);
+        };
+        let is_dir = match root.vfs.metadata(&target.path) {
+            Ok(m) => m.is_dir,
+            Err(e) => return fail(app, &format!("{path}: {e}"), false),
+        };
+        let (base, at, document) = match (is_dir, target.path.parent(), target.rel.last()) {
+            (true, _, _) => (target.path.clone(), "/".to_string(), false),
+            (false, Some(dir), Some(name)) => (dir, treeserve::util::href_path(std::slice::from_ref(name)), true),
+            _ => return,
+        };
+        let sub = treeserve::Root {
+            id: root.vfs.root_id_at(&base),
+            vfs: Arc::new(treeserve::Within::new(Arc::clone(&root.vfs), base)),
+        };
+        let Some(main) = app.get_webview_window(WINDOW) else {
+            return;
+        };
+        let Some(serving) = app.try_state::<Serving>() else {
+            return;
+        };
+        // The label chosen and taken in one step: a double click, or Ctrl+N
+        // twice, asks twice before either window is built.
+        let (label, open) = serving.state().cfg.claim_window(
+            "files-",
+            |l| app.get_webview_window(l).is_some(),
+            sub,
+            None,
+            document.then(|| at.clone()),
+        );
+        let scale = main.scale_factor().unwrap_or(1.0);
+        let size = main
+            .inner_size()
+            .map(|s| s.to_logical::<f64>(scale))
+            .unwrap_or(tauri::LogicalSize::new(1200.0, 850.0));
+        let step = 32.0 * (open + 1) as f64;
+        let at_pos = main
+            .outer_position()
+            .map(|p| p.to_logical::<f64>(scale))
+            .map(|p| tauri::LogicalPosition::new(p.x + step, p.y + step))
+            .unwrap_or(tauri::LogicalPosition::new(step, step));
+        if let Err(e) = build_claimed(app, &label, &at, size, at_pos) {
+            fail(app, &e, false);
+        }
+    });
 }
 
 /// A window of its own has gone: its root, its open folders and any transfer
@@ -3230,12 +3379,34 @@ fn shell_action(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
     // and does nothing. Its page does not draw them; this is for the link
     // that does anyway — the token proves the page drew it, not which page.
     if has_own_root(app, label)
-        && matches!(url.path(), "/.ts/open" | "/.ts/close" | "/.ts/root" | "/.ts/place" | "/.ts/forget")
+        && matches!(
+            url.path(),
+            "/.ts/open" | "/.ts/close" | "/.ts/root" | "/.ts/place" | "/.ts/forget" | "/.ts/window"
+        )
     {
         return true;
     }
     match url.path() {
+        // A window of its own's way to the rest: the main window, in front,
+        // and nothing it shows changed. Off this callback and back on the main
+        // thread: restoring a minimized window from inside a webview's own
+        // callback sent WebView2 messages into itself, and the app hung.
+        // A desktop's: a phone has the one window.
+        #[cfg(desktop)]
+        "/.ts/main" => off_the_callback(app, |app| {
+            let back = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(win) = back.get_webview_window(WINDOW) {
+                    let _ = win.unminimize();
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            });
+        }),
         "/.ts/open" => ask_for_folder(app.clone(), false),
+        // New window: the folder or file on screen, in a window of its own.
+        #[cfg(desktop)]
+        "/.ts/window" => new_window(app, url),
         // The other end of having a folder open. What was open is in Recent, so
         // there is nothing to confirm; and a session an embedder opened for it is
         // not this server's to close — the row that opened it will open it again.
@@ -3773,6 +3944,23 @@ fn places(app: &AppHandle) -> Vec<(String, PathBuf)> {
 /// whoever re-rooted said, and otherwise the folder it ends in.
 fn window_title(cfg: &Config) -> String {
     window_title_in(cfg, WINDOW)
+}
+
+/// [`window_title_in`], for the page at `path` in it: a document window is
+/// named after the file it shows — which may be the one beside it a link led
+/// to — and not after the folder, which every window on that folder shares.
+fn window_title_at(cfg: &Config, label: &str, path: &str) -> String {
+    let file = cfg
+        .window(label)
+        .filter(|w| w.document.is_some())
+        .and_then(|_| path.rsplit('/').find(|s| !s.is_empty()).map(percent_decode));
+    match file {
+        Some(file) => {
+            let app = cfg.app_name.clone().unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
+            format!("{file} — {app}")
+        }
+        None => window_title_in(cfg, label),
+    }
 }
 
 /// [`window_title`], for the window `label`: named after its own root where it

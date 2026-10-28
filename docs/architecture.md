@@ -566,8 +566,28 @@ per window. The one transfer records its window: its progress goes there, and
 closing that window cancels it (`transfer::cancel_for`); `transfer_owner` says
 which window would lose one. On `Destroyed` the window's root, its
 `ts_open_<label>` cookie and its committed flag go. An embedder's actions are
-not yet run there: they are told only the app, and would act on the main
-window.
+told the window too (`ShellExt::actions` takes its label; `window_root` gives
+its root).
+
+The page draws for its window (`Prefs::window`, a `page::WindowKind`): a folder
+window has the tree alone in its pane, Star on its heading, no picker in the
+status line, and **Main window** (`/.ts/main`) in Up's slot at its top; a
+document window has no pane, no Up and no embedder flags, and its crumbs are
+the file's name. A document window's link to a folder is refused in
+`on_navigation` when it ends in `/`, which needs no stat on the callback, and
+the router sends any other folder back to the window's file — not a 204, which
+WebKitGTK draws as an empty page.
+
+**New window** (`/.ts/window?path=`, main window only) opens nothing: it wraps
+the main root's backend in `treeserve::Within`, a folder of it as a root of its
+own whose `resolve` refuses what leads above it, so the session, the cache and
+any offline copy are the ones already in hand. Labels are `files-<n>`, the
+smallest free, chosen and recorded under one lock (`Config::claim_window`) so a
+double click gets two windows rather than one label twice; `open_window`
+refuses a label in use, and a failed build undoes only what it did. A document
+window is titled after the file on screen, which a link can change; each opens at the main window's size, 32 points further down and
+right per window already open (under WSLg's Wayland the size read back
+counts the frame, so the copy is larger; X11 is exact). The main window's `Destroyed` destroys them.
 
 ### Back
 
@@ -838,7 +858,8 @@ Public helpers the embedder is meant to call:
   the shell claims in `actions`. Set as the root changes: a control that acts on
   the root has nothing to act on when the root is a kind it does not know.
   Each is a pill of its own, never joined to the page's: the page's own come
-  after, As root alone, then two joined groups (`page::group`) — the verbs
+  after, As root alone (or New window · As root joined, where
+  `Config::windows`), then two joined groups (`page::group`) — the verbs
   (Print · Download · the backend's `on_file_page` actions, or Upload · New
   folder) and the views (Preview · Source · Raw, the one on screen lit and no
   link). Line numbers is a switch on the listing's meta line, not a flag.
@@ -848,12 +869,12 @@ Public helpers the embedder is meant to call:
   pages are inside the binary already), `LocalFs` yes except on Android, where
   the only local roots are the app's own directories. False draws no control, no
   sentence in a panel, and turns a typed `?dl=1` back into the ordinary view.
-- `page_window(app, label, url, title)` — desktop only: a second window for a
+- `page_window(app, label, url, title, home)` — desktop only: a second window for a
   page of the embedder's own (a terminal), built hidden at the main window's
   size with the same init script. It carries none of the main window's state —
   no re-root, no drops, no start-page bookkeeping — and its navigation is its
-  own: the allowed origins' pages load in it, `/.ts/` and tree links go to the
-  main window (navigated, restored and focused there from a spawned thread,
+  own: the allowed origins' pages load in it, `/.ts/` and tree links go to
+  `home`, the tree window it came from, or the main one once that has gone (navigated, restored and focused there from a spawned thread,
   never from inside the navigation callback, where restoring a window would
   re-enter WebView2 from its own callback — the freeze `window_main` hit on
   Windows; and handed over at all because the actions are typed to the main

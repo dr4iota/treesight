@@ -622,6 +622,117 @@ pub trait Vfs: Send + Sync {
     }
 }
 
+/// A folder of another backend, served as a root of its own: every path is
+/// that folder's, and nothing above it is reached — a link that resolves out
+/// of it is `Outside`, as one out of any root is.
+///
+/// For a window of its own (`Config::open_window`): the folder is already
+/// open, behind its backend and its session, so the window serves that
+/// backend from a folder down rather than opening the folder a second time.
+/// Every question is the backend's own, asked at the same place.
+pub struct Within {
+    inner: std::sync::Arc<dyn Vfs>,
+    base: VfsPath,
+}
+
+impl Within {
+    pub fn new(inner: std::sync::Arc<dyn Vfs>, base: VfsPath) -> Within {
+        Within { inner, base }
+    }
+
+    fn full(&self, path: &VfsPath) -> VfsPath {
+        let mut segs = self.base.segments().to_vec();
+        segs.extend(path.segments().iter().cloned());
+        VfsPath::new(segs)
+    }
+
+    /// A path of the backend's, as this folder's, where it is inside it.
+    fn back(&self, full: &VfsPath) -> Option<VfsPath> {
+        full.segments()
+            .strip_prefix(self.base.segments())
+            .map(|rest| VfsPath::new(rest.to_vec()))
+    }
+}
+
+impl Vfs for Within {
+    fn resolve(&self, path: &VfsPath) -> Result<VfsPath, ResolveError> {
+        let full = self.inner.resolve(&self.full(path))?;
+        self.back(&full).ok_or(ResolveError::Outside)
+    }
+    fn metadata(&self, path: &VfsPath) -> io::Result<Meta> {
+        self.inner.metadata(&self.full(path))
+    }
+    fn read_dir(&self, path: &VfsPath) -> io::Result<Vec<Entry>> {
+        self.inner.read_dir(&self.full(path))
+    }
+    fn read(&self, path: &VfsPath) -> io::Result<Vec<u8>> {
+        self.inner.read(&self.full(path))
+    }
+    fn open(&self, path: &VfsPath) -> io::Result<Box<dyn ReadSeek>> {
+        self.inner.open(&self.full(path))
+    }
+    fn downloadable(&self) -> bool {
+        self.inner.downloadable()
+    }
+    fn writable(&self) -> bool {
+        self.inner.writable()
+    }
+    fn is_link(&self, path: &VfsPath) -> bool {
+        self.inner.is_link(&self.full(path))
+    }
+    fn create_dir(&self, dir: &VfsPath, name: &str) -> io::Result<()> {
+        self.inner.create_dir(&self.full(dir), name)
+    }
+    fn create_file(&self, dir: &VfsPath, name: &str, replace: bool) -> io::Result<Box<dyn WriteFile>> {
+        self.inner.create_file(&self.full(dir), name, replace)
+    }
+    fn create_file_with(
+        &self,
+        dir: &VfsPath,
+        name: &str,
+        replace: bool,
+        mode: Option<u32>,
+    ) -> io::Result<Box<dyn WriteFile>> {
+        self.inner.create_file_with(&self.full(dir), name, replace, mode)
+    }
+    fn on_this_device(&self) -> bool {
+        self.inner.on_this_device()
+    }
+    fn open_limit(&self) -> Option<u64> {
+        self.inner.open_limit()
+    }
+    fn row_info(&self, path: &VfsPath) -> Option<RowInfo> {
+        self.inner.row_info(&self.full(path))
+    }
+    fn row_infos(&self, dir: &VfsPath, entries: &[Entry]) -> Vec<Option<RowInfo>> {
+        self.inner.row_infos(&self.full(dir), entries)
+    }
+    fn notice(&self, path: &VfsPath) -> Option<Notice> {
+        self.inner.notice(&self.full(path))
+    }
+    fn prepare(&self, path: &VfsPath, id: &str, progress: &mut dyn FnMut(&str)) -> io::Result<Prepared> {
+        self.inner.prepare(&self.full(path), id, progress)
+    }
+    fn act(&self, path: &VfsPath, id: &str, progress: &mut dyn FnMut(u64, Option<u64>)) -> io::Result<Option<String>> {
+        self.inner.act(&self.full(path), id, progress)
+    }
+    fn remove(&self, path: &VfsPath) -> io::Result<()> {
+        self.inner.remove(&self.full(path))
+    }
+    fn deletable(&self) -> bool {
+        self.inner.deletable()
+    }
+    fn local_path(&self, path: &VfsPath) -> Option<PathBuf> {
+        self.inner.local_path(&self.full(path))
+    }
+    fn remove_note(&self, path: &VfsPath) -> Option<String> {
+        self.inner.remove_note(&self.full(path))
+    }
+    fn root_id_at(&self, path: &VfsPath) -> String {
+        self.inner.root_id_at(&self.full(path))
+    }
+}
+
 /// The local filesystem, rooted at a canonicalized directory.
 ///
 /// The stored root keeps the verbatim form `canonicalize` gave it (on Windows
@@ -1003,6 +1114,29 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A folder of a backend as a root of its own: its paths are the folder's,
+    /// its id the folder's, and a link out of it leads nowhere — even to a
+    /// place the backend itself would serve.
+    #[test]
+    fn within_serves_one_folder_down_and_no_further() {
+        let dir = tmp_dir("within").canonicalize().unwrap();
+        fs::create_dir_all(dir.join("sub/deeper")).unwrap();
+        fs::write(dir.join("sub/a.txt"), b"hi").unwrap();
+        fs::write(dir.join("above.txt"), b"up").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("above.txt"), dir.join("sub/out")).unwrap();
+        let inner: std::sync::Arc<dyn Vfs> = std::sync::Arc::new(LocalFs::new(dir.clone()));
+        let w = Within::new(inner, VfsPath::new(vec!["sub".into()]));
+        let p = |s: &str| VfsPath::new(s.split('/').filter(|x| !x.is_empty()).map(String::from).collect());
+        assert_eq!(w.read(&p("a.txt")).unwrap(), b"hi");
+        assert!(w.metadata(&p("deeper")).unwrap().is_dir);
+        assert_eq!(w.resolve(&p("deeper")).unwrap(), p("deeper"));
+        assert_eq!(w.root_id(), dir.join("sub").display().to_string());
+        #[cfg(unix)]
+        assert!(matches!(w.resolve(&p("out")), Err(ResolveError::Outside)), "a link led above the folder");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

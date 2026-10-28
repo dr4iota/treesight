@@ -12,8 +12,9 @@ with a dot are not listed.
 To start the tree at a folder further down, open it and press **As root** in
 the header.
 
-The **Files** heading carries **Star**, to keep the open folder in Starred, and
-**Close**, to return to the start page. **Open a folder…** is in the status line,
+The tree's heading is the open folder's name, and goes back to its top. It
+carries **Star**, to keep the open folder in Starred, and **Close**, to return
+to the start page. **Open a folder…** is in the status line,
 which stays on screen.
 
 ## The sidebar

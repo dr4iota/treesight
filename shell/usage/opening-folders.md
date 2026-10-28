@@ -51,12 +51,26 @@ once a folder is open. What you choose is opened and remembered in Recent.
 
 The header shows the path, and each part of it opens that folder. In a folder
 below the top, **As root** starts the tree at that folder, so you can open it
-without the dialog.
+without the dialog. At the top it is greyed: that folder is the tree's already.
 
-**Close** (the arrow leaving a frame, on the **Files** heading) returns to the start page. At the
+**Close** (the arrow leaving a frame, on the tree's heading, which is the
+folder's name) returns to the start page. At the
 top of the open folder the header button is **Start** and does the same thing.
 Nothing asks you to confirm; the folder is in Recent. **Up** is the parent
 folder.
+
+## A window of its own
+
+On a desktop, **New window** (beside As root, or Ctrl+N) opens the folder on
+screen in a window of its own, a step down and right of the main one. On a
+file's page it opens a window with that file alone: no sidebar, and a link in
+it to a file beside it opens there, while a link to a folder goes nowhere.
+
+Such a window keeps its folder for as long as it is open. It has no start
+page, Places, Starred list or Recent, and nothing in it opens another folder.
+At its top, **Main window** in Up's place brings the main window to the front.
+It reads the folder the main window already has open, so nothing is opened
+twice and nothing goes into Recent. Closing the main window closes it too.
 
 Back, `Alt+Left` or the phone's gesture, walks through the folders you opened
 and then leaves you on the start page. On a phone, one more press leaves the

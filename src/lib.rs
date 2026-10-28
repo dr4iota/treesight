@@ -85,7 +85,7 @@ use page::{Prefs, ThemeMode};
 use util::*;
 pub use vfs::{
     new_name, Confirm, Entry, LocalFs, Meta, Notice, PinLook, Place, Prepared, ReadSeek, ResolveError, RowAction,
-    RowInfo, RowLine, Vfs, VfsPath, Words, WriteFile,
+    RowInfo, RowLine, Vfs, VfsPath, Within, Words, WriteFile,
 };
 
 /// glibc keeps giving the single-precision math functions new symbol versions
@@ -436,6 +436,10 @@ pub struct Config {
     /// start page offers what it can already reach instead of a button that does
     /// nothing when pressed.
     pub picker: bool,
+    /// Whether a folder or a file can be opened in a window of its own — a
+    /// desktop's shell. Draws **New window**, and greys As root at the root so
+    /// the pair is whole. Off on a phone and over a network.
+    pub windows: bool,
     /// What the product is called, for the one page that has no folder to be
     /// named after. The embedder's name, not this crate's: a shell serving these
     /// pages is what the reader thinks they are using.
@@ -521,7 +525,7 @@ pub struct Config {
     /// for as long as it is open. A request from one of them is answered from
     /// its root ([`handle_in`]); everything else here — the lists, the pins,
     /// the preferences, the status — is shared with the main window.
-    windows: RwLock<HashMap<String, WindowRoot>>,
+    window_roots: RwLock<HashMap<String, WindowRoot>>,
 }
 
 /// A window's own root, and what to call it — the pair [`Config::set_root_vfs`]
@@ -530,6 +534,9 @@ pub struct Config {
 pub struct WindowRoot {
     pub root: Arc<Root>,
     pub name: Option<String>,
+    /// The window shows one file of the root, and nothing else of it: that
+    /// file's address in the root (`/note.md`).
+    pub document: Option<String>,
 }
 
 /// 128 bits of [`Config::action_token`]: two of the standard library's own
@@ -582,6 +589,7 @@ impl Config {
             syn_dark: EmbeddedThemeName::OneHalfDark,
             app_ui: false,
             picker: false,
+            windows: false,
             app_name: None,
             app_version: None,
             app_commit: None,
@@ -601,7 +609,7 @@ impl Config {
             intro_acts: RwLock::new(Arc::new(Vec::new())),
             flags: RwLock::new(Arc::new(Vec::new())),
             status: RwLock::new(HashMap::new()),
-            windows: RwLock::new(HashMap::new()),
+            window_roots: RwLock::new(HashMap::new()),
         }
     }
 
@@ -638,18 +646,56 @@ impl Config {
 
     /// Gives the window `label` a root of its own, which it keeps until
     /// [`Config::close_window`]. The main window's root is not touched.
-    pub fn open_window(&self, label: &str, root: Root, name: Option<String>) {
-        let win = WindowRoot { root: Arc::new(root), name };
-        self.windows.write().expect("windows lock").insert(label.to_string(), win);
+    /// `document`: the window is for that one file in the root (its address,
+    /// `/note.md`), and draws no way to the folder round it.
+    ///
+    /// False, and nothing changed, where `label` already has one: a second
+    /// window under a label in use would take the first one's root from it.
+    pub fn open_window(&self, label: &str, root: Root, name: Option<String>, document: Option<String>) -> bool {
+        let mut roots = self.window_roots.write().expect("windows lock");
+        if roots.contains_key(label) {
+            return false;
+        }
+        roots.insert(label.to_string(), WindowRoot { root: Arc::new(root), name, document });
+        true
+    }
+
+    /// [`Config::open_window`] under the first free label `<stem><n>`, n from
+    /// 1, chosen and taken under one lock — two asked at once get two labels —
+    /// skipping any `taken` says is in use by something else. Returns the
+    /// label, and how many windows of their own were open before it.
+    ///
+    /// `taken` runs with the windows lock held, so it must take no lock this
+    /// one may wait on, and must not render a page or reach back into this
+    /// `Config`'s windows. The shell's callback only looks up Tauri's window
+    /// map, whose lock is released when that lookup returns, still inside
+    /// `taken`; Tauri also releases it before running a `Destroyed` handler,
+    /// so a close that then takes the windows lock never meets this lookup.
+    pub fn claim_window(
+        &self,
+        stem: &str,
+        taken: impl Fn(&str) -> bool,
+        root: Root,
+        name: Option<String>,
+        document: Option<String>,
+    ) -> (String, usize) {
+        let mut roots = self.window_roots.write().expect("windows lock");
+        let before = roots.len();
+        let label = (1..)
+            .map(|n| format!("{stem}{n}"))
+            .find(|l| !roots.contains_key(l) && !taken(l))
+            .expect("an unbounded range has a free label");
+        roots.insert(label.clone(), WindowRoot { root: Arc::new(root), name, document });
+        (label, before)
     }
 
     pub fn close_window(&self, label: &str) {
-        self.windows.write().expect("windows lock").remove(label);
+        self.window_roots.write().expect("windows lock").remove(label);
     }
 
     /// The root of the window `label`, if it has one of its own.
     pub fn window(&self, label: &str) -> Option<WindowRoot> {
-        self.windows.read().expect("windows lock").get(label).cloned()
+        self.window_roots.read().expect("windows lock").get(label).cloned()
     }
 
     /// What to call `root` in a title: the main window's name for the main
@@ -659,7 +705,7 @@ impl Config {
         if self.root().is_some_and(|r| std::ptr::eq(Arc::as_ptr(&r), root)) {
             return self.root_name();
         }
-        let windows = self.windows.read().expect("windows lock");
+        let windows = self.window_roots.read().expect("windows lock");
         windows
             .values()
             .find(|w| std::ptr::eq(Arc::as_ptr(&w.root), root))
@@ -1168,6 +1214,7 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
         sidebar: state.cfg.sidebar,
         zoom: 100,
         open,
+        window: page::WindowKind::Main,
     };
     for value in req.named("Cookie") {
         for (k, v) in parse_cookies(value) {
@@ -1235,7 +1282,12 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
     };
     // Owned here so `Prefs` can borrow it and stay `Copy` for every renderer.
     let open = open_from(req, &open_name);
-    let prefs = prefs_from(state, req, &open);
+    let mut prefs = prefs_from(state, req, &open);
+    prefs.window = match &own {
+        None => page::WindowKind::Main,
+        Some((_, w)) if w.document.is_some() => page::WindowKind::Document,
+        Some(_) => page::WindowKind::Folder,
+    };
     // One snapshot of the served root for the whole request, so a re-root
     // mid-request cannot hand half a page one tree and half another.
     let root = match &own {
@@ -1341,6 +1393,16 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
             );
         }
     };
+    // A document window shows its file and goes no further: a link in it to a
+    // folder lands back on that file. The shell stops a link written as a
+    // folder (`sub/`) before it starts; this is the one written as a file. Not
+    // a 204, which WebKitGTK draws as an empty page rather than staying put.
+    if is_dir
+        && let Some((_, w)) = &own
+        && let Some(file) = &w.document
+    {
+        return Reply::empty(302).with("Location", file);
+    }
     if is_dir {
         // Directory URLs need a trailing slash so relative links resolve.
         if !path_raw.ends_with('/') {
@@ -2245,7 +2307,7 @@ mod tests {
         let mut cfg = super::Config::new(main.clone());
         cfg.app_ui = true;
         let state = super::state_for(cfg);
-        state.cfg.open_window("files-1", super::Root::local(other.clone()), Some("Other".into()));
+        state.cfg.open_window("files-1", super::Root::local(other.clone()), Some("Other".into()), None);
         let get = |url: &str, window: Option<&str>, cookie: &str| {
             let mut headers = vec![("Accept".to_string(), "text/html".to_string())];
             if !cookie.is_empty() {
@@ -2282,9 +2344,87 @@ mod tests {
             assert!(reply.headers.iter().any(|(k, v)| k == "Location" && v == "/"), "{path}");
         }
 
+        // A label in use is refused, and the first window keeps its root; one
+        // asked for by stem is the next free one.
+        assert!(!state.cfg.open_window("files-1", super::Root::local(main.clone()), None, None));
+        assert!(text(get("/", Some("files-1"), "")).contains("only-in-other"));
+        let (next, before) = state.cfg.claim_window("files-", |_| false, super::Root::local(main.clone()), None, None);
+        assert_eq!((next.as_str(), before), ("files-2", 1));
+        state.cfg.close_window("files-2");
+
         // Closed, the label is the main window's again.
         state.cfg.close_window("files-1");
         assert!(text(get("/", Some("files-1"), "")).contains("only-in-main"));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// What each kind of window draws: the main window's New window and As
+    /// root as one pair, As root greyed at the root; a folder window's tree
+    /// alone and Main window in Up's place at its top; a document window's
+    /// file alone, its folder not served.
+    #[test]
+    fn each_window_draws_what_it_can_do() {
+        let base = std::env::temp_dir().join(format!("treeserve-kinds-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("sub")).unwrap();
+        std::fs::write(base.join("note.md"), "# Note\n").unwrap();
+        let mut cfg = super::Config::new(base.clone());
+        cfg.app_ui = true;
+        cfg.windows = true;
+        cfg.set_flags(vec![super::HeaderFlag {
+            href: "/.ts/term".into(),
+            icon: String::new(),
+            label: "Terminal".into(),
+            title: String::new(),
+            roots: None,
+        }]);
+        let state = super::state_for(cfg);
+        state.cfg.open_window("files-1", super::Root::local(base.clone()), None, None);
+        state.cfg.open_window("files-2", super::Root::local(base.clone()), None, Some("/note.md".into()));
+        let get = |url: &str, window: Option<&str>| {
+            let req = super::Req {
+                url: url.to_string(),
+                headers: vec![("Accept".to_string(), "text/html".to_string())],
+                is_get: true,
+            };
+            super::handle_in(&state, &req, window)
+        };
+        let text = |r: super::Reply| match r.body {
+            super::Body::Text(t) => t,
+            _ => panic!("a page is text"),
+        };
+
+        // The main window: the pair, As root greyed at the root; New window on a file.
+        let top = text(get("/", None));
+        assert!(top.contains("/.ts/window?path=%2F"), "{top}");
+        assert!(top.contains("<span class=\"lbl\">As root</span>") && top.contains("This folder is already the root"), "{top}");
+        assert!(top.contains("class=\"chooser\""), "{top}");
+        let sub = text(get("/sub/", None));
+        assert!(sub.contains("/.ts/root?path="), "{sub}");
+        let note = text(get("/note.md", None));
+        assert!(note.contains("/.ts/window?path=%2Fnote.md"), "{note}");
+
+        // A folder window: no pair, no lists, no Close; Main window at its top,
+        // Up below it; the embedder's buttons stay.
+        let top = text(get("/", Some("files-1")));
+        assert!(!top.contains("/.ts/window") && !top.contains("As root"), "{top}");
+        assert!(!top.contains("class=\"chooser\"") && !top.contains("/.ts/close"), "{top}");
+        assert!(top.contains("/.ts/main") && top.contains("Main window"), "{top}");
+        assert!(top.contains("/.ts/pin"), "Star stays: {top}");
+        assert!(top.contains("/.ts/term"), "{top}");
+        let sub = text(get("/sub/", Some("files-1")));
+        assert!(sub.contains("Up to ") && !sub.contains("/.ts/main"), "{sub}");
+
+        // A document window: the file alone — no pane, no Up, no embedder
+        // buttons, its name the whole path — and its folder not served.
+        let doc = text(get("/note.md", Some("files-2")));
+        assert!(!doc.contains("<nav class=\"tree\">") && !doc.contains("Sidebar"), "{doc}");
+        assert!(doc.contains("/.ts/main") && !doc.contains("Up to "), "{doc}");
+        assert!(!doc.contains("/.ts/term") && !doc.contains("/.ts/window"), "{doc}");
+        assert!(doc.contains("<div class=\"crumbs\">note.md</div>"), "{doc}");
+        let back = get("/sub/", Some("files-2"));
+        assert_eq!(back.status, 302);
+        assert!(back.headers.iter().any(|(k, v)| k == "Location" && v == "/note.md"), "{:?}", back.headers);
+
         std::fs::remove_dir_all(&base).unwrap();
     }
 

@@ -85,6 +85,23 @@ pub struct Prefs<'a> {
     /// a walk through a tree quietly filling the cookie with everywhere you had
     /// been — and would let a collapse hide the row you are standing in.
     pub open: &'a [String],
+    /// Which window the page is for. A window of its own keeps its root for
+    /// life, so it draws none of the main window's ways to another one.
+    pub window: WindowKind,
+}
+
+/// The window a page is drawn for: the main one, or one with a root of its own
+/// (`Config::open_window`) — a folder, or one file alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowKind {
+    #[default]
+    Main,
+    /// A folder and what is under it: the tree in the pane and nothing else
+    /// there, and the main window in Up's place at its top.
+    Folder,
+    /// One file, shown as the main window shows it: no pane, no Up, and no
+    /// embedder buttons; its folder's other files are reached only by a link.
+    Document,
 }
 
 /// The entries a page draws, hidden files and ordering applied.
@@ -295,6 +312,15 @@ const ICON_STARRED: &str =
     "<path fill=\"currentColor\" d=\"M8 2.3l1.75 3.55 3.9.55-2.83 2.75.67 3.88L8 11.2l-3.49 1.83.67-3.88L2.35 6.4l3.9-.55z\"/>";
 
 /// "Serve this folder as the root": an arrow going in through the side of a frame.
+/// Two windows, the front one filled: the main window, seen from another. The
+/// same mark the embedder's terminal window draws for it.
+const ICON_MAIN_WINDOW: &str = "<rect x=\"5.5\" y=\"2.5\" width=\"8\" height=\"6.5\" rx=\"1\"/>\
+     <path d=\"M5.5 4.6h8\"/>\
+     <rect x=\"2.5\" y=\"6.5\" width=\"8\" height=\"6.5\" rx=\"1\" fill=\"currentColor\" fill-opacity=\".25\"/>\
+     <path d=\"M2.5 8.6h8\"/>";
+/// A window with a plus at its corner: this, in a window of its own.
+const ICON_NEW_WINDOW: &str = "<path d=\"M9 12.6H3.2a.8.8 0 01-.8-.8V4.2c0-.4.4-.8.8-.8h9.6c.4 0 .8.4.8.8V8\"/>\
+     <path d=\"M2.4 5.8h11.2\"/><path d=\"M12 9.6v4M10 11.6h4\"/>";
 const ICON_AS_ROOT: &str = "<path d=\"M9.8 3.4h2.8v9.2H9.8\"/><path d=\"M3.4 8h5.8\"/>\
      <path d=\"M6.8 5.6L9.2 8l-2.4 2.4\"/>";
 
@@ -783,6 +809,8 @@ fn head_and_header(
     show_pane_flag: bool,
     extra_body_class: &str,
 ) -> String {
+    // A document window has no pane, so nothing to switch or slide in.
+    let show_pane_flag = show_pane_flag && prefs.window != WindowKind::Document;
     let site_title = state.cfg.title_for(root);
     // The document is titled by *name* where there is one — a bookmark's label,
     // say — and by the folder otherwise. The header says the rest: the folder in
@@ -828,9 +856,15 @@ fn head_and_header(
         None => String::new(),
     };
     let mut crumbs = String::new();
-    crumbs.push_str(&format!("<a href=\"/\">{}</a>", html_escape(&site_title)));
+    // A document window shows its file and nothing round it: the name alone,
+    // since every crumb before it is a folder that window does not go to.
+    let lone = prefs.window == WindowKind::Document;
+    match lone {
+        true => crumbs.push_str(&html_escape(rel.last().map(String::as_str).unwrap_or(&site_title))),
+        false => crumbs.push_str(&format!("<a href=\"/\">{}</a>", html_escape(&site_title))),
+    }
     let mut acc: Vec<String> = Vec::new();
-    for (i, seg) in rel.iter().enumerate() {
+    for (i, seg) in rel.iter().enumerate().filter(|_| !lone) {
         acc.push(seg.clone());
         crumbs.push_str("<span class=\"sep\">/</span>");
         if i + 1 == rel.len() {
@@ -881,6 +915,9 @@ fn head_and_header(
         .flags()
         .iter()
         .filter(|f| f.roots.as_ref().is_none_or(|p| root.id.starts_with(p)))
+        // A document window is the file alone: what an embedder offers acts on
+        // the folder, which that window does not show.
+        .filter(|_| prefs.window != WindowKind::Document)
     {
         controls.push_str(&flag(
             "",
@@ -937,7 +974,22 @@ fn head_and_header(
     // Going *back* is still there and is the platform's: Alt+Left in the shell's
     // own script, and on Android the system gesture, which the webview already
     // answers with its own history.
+    // A window of its own has nothing above its root, and the main window is
+    // where the rest is: Up's slot becomes the way there, as in a terminal's
+    // window. A document window has no Up at all — its folder is not on offer.
+    let main_window = format!(
+        "\n  {}",
+        flag(
+            "up main",
+            &act(state, "/.ts/main"),
+            &svg_icon(ICON_MAIN_WINDOW),
+            "Main window",
+            "Bring the main window to the front",
+        )
+    );
     let up = match rel.split_last() {
+        _ if prefs.window == WindowKind::Document => main_window,
+        None if prefs.window == WindowKind::Folder => main_window,
         Some((_, parent)) => {
             let href = format!("{}/", href_path(parent).trim_end_matches('/'));
             let title = match parent.last() {
@@ -1014,7 +1066,7 @@ fn head_and_header(
     // `nopane` rather than leaving the markup out: see the pane above. `fitted`
     // because this header's widths are its own (`header_fit`), and the
     // stylesheet's fixed bands are for the pages that have none.
-    let off = match prefs.sidebar {
+    let off = match prefs.sidebar && prefs.window != WindowKind::Document {
         true => "",
         false => " nopane",
     };
@@ -1139,7 +1191,10 @@ pub fn layout(
     // Rendered whether or not the switch is on, and hidden by a class when it is
     // off. The drawer needs something to slide in, and only the stylesheet knows
     // whether this window is wide enough for the switch to have meant anything.
-    let sidebar = pane_html(state, root, rel, prefs, url_now);
+    let sidebar = match prefs.window {
+        WindowKind::Document => String::new(),
+        _ => pane_html(state, root, rel, prefs, url_now),
+    };
 
     // What closes the drawer: the listing, made into the label of the same
     // checkbox for as long as the drawer is over it. Only where the pane is,
@@ -1172,7 +1227,7 @@ pub fn layout(
         sidebar = sidebar,
         notice = notice_html(state, root, rel),
         content = content,
-        footer = status_line(state, root),
+        footer = status_line(state, root, prefs),
     )
 }
 
@@ -1231,8 +1286,9 @@ fn notice_html(state: &State, root: &Root, rel: &[String]) -> String {
 /// Nothing here is a read: it is the root's id, the app's name and a flag from
 /// the config. That is what lets the wait page keep the line while touching no
 /// backend at all — see `waiting_layout`.
-fn status_line(state: &State, root: &Root) -> String {
-    let pick = if state.cfg.app_ui && state.cfg.picker {
+fn status_line(state: &State, root: &Root, prefs: Prefs<'_>) -> String {
+    // Not in a window of its own, which never opens another folder.
+    let pick = if state.cfg.app_ui && state.cfg.picker && prefs.window == WindowKind::Main {
         flag(
             "pick",
             &act(state, "/.ts/open"),
@@ -1329,7 +1385,9 @@ fn pane_html(
     // on screen, and closing this folder puts the start page in front of you with
     // every way in on it. Two of the same button on one screen, and this was the
     // one that could be spared.
-    if state.cfg.app_ui {
+    // Not in a window of its own, which keeps its folder for life: closing
+    // that window is its own ✕.
+    if state.cfg.app_ui && prefs.window == WindowKind::Main {
         acts.push((
             "/.ts/close".to_string(),
             ICON_CLOSE_ROOT.to_string(),
@@ -1368,7 +1426,8 @@ fn pane_html(
         &mut out,
     );
     out.push_str("</section>");
-    if state.cfg.app_ui {
+    // The lists are ways to another root, and a window of its own has its one.
+    if state.cfg.app_ui && prefs.window == WindowKind::Main {
         out.push_str("<div class=\"chooser\">");
         // Two paths on purpose: opening a Place is not something Recent should
         // collect, or the fixed list would keep copying itself into the other
@@ -1839,6 +1898,33 @@ fn as_root_flag(state: &State, root: &Root, rel: &[String], path: &VfsPath) -> S
     )
 }
 
+/// **New window**: this folder, or this file, in a window of its own that keeps
+/// it for life (`/.ts/window`, which the shell answers). Desktop only
+/// (`Config::windows`), and only from the main window.
+fn new_window_flag(state: &State, rel: &[String], dir: bool) -> String {
+    let href = match dir {
+        true => format!("{}/", href_path(rel).trim_end_matches('/')),
+        false => href_path(rel),
+    };
+    let name = rel.last().cloned().unwrap_or_else(|| state.cfg.app_title());
+    flag(
+        "",
+        &act(state, &format!("/.ts/window?path={}", percent_encode(&href))),
+        &svg_icon(ICON_NEW_WINDOW),
+        "New window",
+        &format!("Open {name} in a new window"),
+    )
+}
+
+/// A file page's controls, with New window ahead of them where the main
+/// window can open one.
+pub(crate) fn with_new_window(state: &State, prefs: Prefs<'_>, rel: &[String], controls: &str) -> String {
+    match prefs.window == WindowKind::Main && state.cfg.windows && state.cfg.app_ui && !rel.is_empty() {
+        true => format!("{}{controls}", new_window_flag(state, rel, false)),
+        false => controls.to_string(),
+    }
+}
+
 /// Why the arrow of a directory you are inside does nothing.
 const ON_PATH: &str = "Open while you are inside it";
 
@@ -2034,12 +2120,22 @@ pub fn listing_page(
         content.push_str(&search_results(state, vfs, rel, canon, q, recursive));
     }
 
-    // As root on its own, the folder's verbs joined after it.
-    let controls = format!(
-        "{}{}",
-        as_root_flag(state, root, rel, canon),
-        group(&write_flags(state, root, rel))
-    );
+    // As root on its own, the folder's verbs joined after it — or, where a
+    // folder can have a window of its own, New window and As root as one pair.
+    // None of it in a window of its own.
+    let roots = match (prefs.window, state.cfg.windows && state.cfg.app_ui) {
+        (WindowKind::Main, true) => group(&format!(
+            "{}{}",
+            new_window_flag(state, rel, true),
+            match as_root_flag(state, root, rel, canon) {
+                f if f.is_empty() => dimmed_flag(&svg_icon(ICON_AS_ROOT), "As root", "This folder is already the root"),
+                f => f,
+            }
+        )),
+        (WindowKind::Main, false) => as_root_flag(state, root, rel, canon),
+        _ => String::new(),
+    };
+    let controls = format!("{}{}", roots, group(&write_flags(state, root, rel)));
     layout(state, root, prefs, rel, url_now, &controls, &content)
 }
 
@@ -2573,7 +2669,7 @@ fn waiting_layout(
 "#,
         chrome = head_and_header(state, root, prefs, &[], url_now, "", false, "waiting"),
         content = content,
-        footer = status_line(state, root),
+        footer = status_line(state, root, prefs),
     )
 }
 
@@ -2820,6 +2916,7 @@ mod tests {
             sidebar: false,
             zoom: 100,
             open: &[],
+            window: WindowKind::Main,
         }
     }
 
