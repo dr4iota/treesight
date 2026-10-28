@@ -1336,8 +1336,26 @@ fn pane_html(
             "Close this folder".to_string(),
         ));
     }
+    // The heading is the root's name, and the way back to it. The tree starts at
+    // the root's children, so without this the pane reached every folder but the
+    // one it is the tree of. *Files* said only what kind of list this was, and
+    // the buttons beside it already act on the root. The name is the crumbs'
+    // first, cut short by the bar where it is long; at the root it is not a link,
+    // as the current row is the page itself.
+    let name = state.cfg.title_for(root);
+    let heading = if cur.is_empty() {
+        format!(
+            "<span class=\"rootname\" aria-current=\"page\" title=\"{n}\">{n}</span>",
+            n = html_escape(&name)
+        )
+    } else {
+        format!(
+            "<a class=\"rootname\" href=\"/\" title=\"Go to the top of {n}\">{n}</a>",
+            n = html_escape(&name)
+        )
+    };
     out.push_str(&format!(
-        "<section class=\"files\"><h2>Files{}</h2>",
+        "<section class=\"files\"><h2>{heading}{}</h2>",
         heading_acts(state, &acts)
     ));
     tree_dir(
@@ -3721,6 +3739,38 @@ mod tests {
         assert_eq!(pill_units(&group(&words)), [3]);
         let both = format!("{}{}{}", flag("", "#", "", "Refresh", ""), group(&words), group(&words));
         assert_eq!(pill_units(&both), [1, 3, 3]);
+    }
+
+    /// The tree's heading is the root's name: the way back to it from below,
+    /// and not a link on the root's own page.
+    #[test]
+    fn the_trees_heading_names_the_root() {
+        let dir = tmp_dir("heading");
+        fs::create_dir(dir.join("sub")).unwrap();
+        let state = state_at(dir);
+        let root = state.cfg.root().expect("these tests always serve one");
+        let name = html_escape(&state.cfg.title_for(&root));
+        let page = |rel: &[&str]| {
+            let rel: Vec<String> = rel.iter().map(|s| s.to_string()).collect();
+            let p = Prefs { sidebar: true, ..prefs() };
+            let q = crate::util::parse_query("");
+            listing_page(&state, &root, p, &rel, &VfsPath::new(rel.clone()), &q, "/")
+        };
+        let sub = page(&["sub"]);
+        assert!(
+            sub.contains(&format!(
+                "<section class=\"files\"><h2><a class=\"rootname\" href=\"/\" title=\"Go to the top of {name}\">{name}</a>"
+            )),
+            "{sub}"
+        );
+        assert!(!sub.contains("<h2>Files"), "{sub}");
+        let top = page(&[]);
+        assert!(
+            top.contains(&format!(
+                "<h2><span class=\"rootname\" aria-current=\"page\" title=\"{name}\">{name}</span>"
+            )),
+            "{top}"
+        );
     }
 
     /// A folder's page offers what can be done with the folder: **As root**

@@ -188,7 +188,7 @@ always laid out, parked off the left edge with `visibility: hidden`, and the
 checkbox changes its `transform`. It starts under the header's first row, so
 the drawer button stays on screen, lit, and closes it as a second tap on the
 same label — the drawer carries no close mark of its own, which would be taken
-for one of the Files heading's.
+for one of the tree heading's.
 
 ---
 
@@ -523,8 +523,10 @@ Places come from the platform (home, desktop, documents, downloads, drive
 letters or `/`). Recent is `recent.txt` in the app config dir, newest
 first, max 8, RootId strings. Opening a Place does not write Recent.
 
-The tree sits in a **Files** section, headed like Places and Recent, and that
-heading carries both ends of having a folder open: the picker, and `/.ts/close`
+The tree sits in a `files` section, under a bar like Places and Recent, but
+the bar is the root's name (`title_for`, the crumbs' first): a link to the root
+below it, `aria-current` at it, since the tree starts at the root's children and
+had no other way back. That heading carries both ends of having a folder open: the picker, and `/.ts/close`
 (`Config::close_root`) which puts the window back on the start page. What was
 open is in Recent, so there is nothing to confirm. The picker also appears in the
 status line, but only below 50rem where the pane has left the layout, so no width
@@ -568,7 +570,7 @@ the start page, which is what a phone's system gesture walks. Under a custom
 scheme on WebKitGTK it does not: the entry is pushed and Back does not come back
 out of it, the same family of trouble that makes the History API unusable on
 `tauri://` there. Nothing depends on the step working: Start in the header and the
-× on the Files heading go to the same place by the same route (`/.ts/close`), and
+× on the tree's heading go to the same place by the same route (`/.ts/close`), and
 they are how you leave a folder on a desktop. Do not "fix" this by pushing more entries,
 or by giving the tree a per-folder address — that is the copy-of-one-address
 problem above, and it is worse than a Back that does nothing.

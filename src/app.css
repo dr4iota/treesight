@@ -598,6 +598,28 @@ nav.tree section h2 {
    the two differ is only in how the group reaches the far end. */
 nav.tree section h2 .acts,
 body.nothing .start h2 .acts { display: flex; align-items: center; gap: .35rem; }
+/* The tree's bar is the root's name, not a title: in the tree's own type, case
+   and weight, a folder's colour while it is the way back, the text's once you
+   are there. A long name gives way to an ellipsis; the buttons beside it keep
+   their size. */
+nav.tree section.files h2 { gap: .5rem; }
+nav.tree section.files h2 .acts { flex: 0 0 auto; }
+nav.tree section.files h2 .rootname {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .85rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fg);
+  padding: 0;
+}
+nav.tree section.files h2 a.rootname { color: var(--link); }
+@media (hover: hover) {
+  nav.tree section.files h2 a.rootname:hover { background: none; text-decoration: underline; }
+}
 nav.tree section h2 a.secact {
   padding: 0 .1rem;
   line-height: 1;
