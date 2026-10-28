@@ -573,6 +573,27 @@ they are how you leave a folder on a desktop. Do not "fix" this by pushing more 
 or by giving the tree a per-folder address — that is the copy-of-one-address
 problem above, and it is worse than a Back that does nothing.
 
+**Back past a re-root goes to the start page.** A re-root replaces the entry
+on screen, but the folders walked through before it stay in the history, each a
+path of the old root; Back into one asked the new root for it, and Cache's
+`/thor/…/lessons/` came back a 404 under Usage (Pixel 7, 27 Oct 2026). So a
+page in the app names its root (`<meta name="ts-root">`), the shell's `ROOTED`
+tags its entry with it in the Navigation API's state, and a page reached by
+traversal whose entry another root drew traverses on to the nearest start
+page behind it — or takes that entry's place where there is none. Not back to
+the old root: that would be a reconnect, or a grant asked again, on a Back.
+Reopening the same root makes its entries good again, since the tag is the id.
+Two things it has to get past: a replace may carry the state it replaced, so
+only a traversal is ever judged (`navigation.activation`); and `RESTORE`'s
+reload of a page from the back/forward cache hides that it was one, so the
+entry is marked `tsBack` first. Seen working on Android's WebView and on
+WebKitGTK 2.52 under `treesight://`, Back from a page the cache restored
+included (27 Oct 2026). Without the Navigation API — an older WebKitGTK —
+nothing changes, and Back there still shows the old folder as not found.
+Forward from the start page cannot bring the folder back: arriving there
+closed it, as any Back to the start page always has, and every tree address
+with nothing open is the start page again.
+
 **Every root arrives through `show_tree`**, the ones this crate opens for itself
 included. Usage is already in memory and has no wait page to step off, which is
 how it came to replace instead: over the start page that spent the only entry

@@ -405,6 +405,17 @@ fn token_meta(state: &State) -> String {
     }
 }
 
+/// Which root drew this page, for the shell's `ROOTED`: every root's pages
+/// share one set of addresses, so a history entry left from a root since
+/// replaced would come back drawn by the one open now. The page says whose it
+/// is, and the shell tags its entry with that.
+fn root_meta(state: &State, root: &Root) -> String {
+    match state.cfg.app_ui {
+        true => format!("<meta name=\"ts-root\" content=\"{}\">\n", html_escape(&root.id)),
+        false => String::new(),
+    }
+}
+
 /// A control that spells itself out when there is room and shrinks to a symbol
 /// when there is not. `icon` is raw markup, and always a drawn one: every
 /// character that would do instead brings its own metrics, and a row of pills is
@@ -1028,7 +1039,7 @@ fn head_and_header(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-{token_meta}<title>{title}</title>
+{token_meta}{root_meta}<title>{title}</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%234c8dff' stroke-width='1.4' stroke-linejoin='round'><path d='M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z'/></svg>">
 <link rel="stylesheet" href="/.ts/app.css">
 <link rel="stylesheet" href="/.ts/math.css">
@@ -1043,6 +1054,7 @@ fn head_and_header(
         data_theme = data_theme,
         title = html_escape(&title),
         token_meta = token_meta(state),
+        root_meta = root_meta(state, root),
         syntax_css = syntax_css,
         fit = fit,
         classes = classes,
@@ -2829,6 +2841,25 @@ mod tests {
         let html = page(prefs());
         assert!(html.contains("<html lang=\"en\" data-theme=\"light\">"), "{html}");
         assert!(!html.contains("--ts-zoom"), "{html}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A page in the app says which root drew it, for the shell to tag its
+    /// history entry with; a page served to a browser has no shell to tell.
+    #[test]
+    fn an_app_page_names_its_root() {
+        let dir = tmp_dir("rootmeta");
+        let mut state = state_at(dir.clone());
+        let page = |state: &State| {
+            let root = state.cfg.root().expect("these tests always serve one");
+            let html = listing_page(state, &root, prefs(), &[], &VfsPath::new(Vec::new()), &[], "/");
+            (root.id.clone(), html)
+        };
+        let (_, html) = page(&state);
+        assert!(!html.contains("ts-root"), "{html}");
+        state.cfg.app_ui = true;
+        let (id, html) = page(&state);
+        assert!(html.contains(&format!("<meta name=\"ts-root\" content=\"{}\">", html_escape(&id))), "{html}");
         let _ = fs::remove_dir_all(&dir);
     }
 

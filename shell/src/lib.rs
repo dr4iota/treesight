@@ -151,6 +151,71 @@ pub const VIEWPORT: &str = r#"
 })();
 "#;
 
+/// **Back past a change of root goes to the start page.** Every root's pages
+/// share one set of addresses (`docs/architecture.md`, *Back*), and a re-root
+/// replaces only the entry on screen: the folders walked through before it stay
+/// in the history, and Back into one asked the root open now for a path it
+/// never had — a 404 under Usage for a folder of Cache (Pixel 7, 27 Oct 2026).
+///
+/// So each entry is tagged with the root that drew it (`<meta name="ts-root">`,
+/// in the Navigation API's entry state), and a page reached by Back or Forward
+/// whose entry was drawn by another root traverses to the start page before it
+/// instead — the one place in this window that is not a root's, which closes
+/// what is open as it arrives. With no start page behind, it takes that entry's
+/// place. Any other arrival (a link, a re-root, a reload) is this root's page
+/// and re-tags its entry, since a replace may carry the state it replaced.
+///
+/// Ahead of `RESTORE`: a page that comes back from the back/forward cache is
+/// the old root's own and looks fine, and `RESTORE` reloads it, after which it
+/// would no longer know it was reached by Back. `tsBack` on the entry carries
+/// that across the reload. An engine without the Navigation API keeps the old
+/// behaviour.
+const ROOTED: &str = r#"
+(function () {
+  var nav = window.navigation;
+  if (!nav || !nav.updateCurrentEntry || !nav.entries) return;
+  var rootOf = function () {
+    var m = document.querySelector('meta[name="ts-root"]');
+    return m ? m.content : null;
+  };
+  var stateOf = function (e) {
+    var s;
+    try { s = e && e.getState(); } catch (x) { s = undefined; }
+    return s && typeof s === 'object' ? s : {};
+  };
+  var put = function (fields) {
+    var s = stateOf(nav.currentEntry), k;
+    for (k in fields) s[k] = fields[k];
+    try { nav.updateCurrentEntry({ state: s }); } catch (x) { /* an entry not ours to tag */ }
+  };
+  var home = function () {
+    var all = nav.entries(), at = nav.currentEntry.index, i;
+    for (i = at - 1; i >= 0; i--) {
+      if (new URL(all[i].url).pathname === '__TS_HOME__') { nav.traverseTo(all[i].key); return; }
+    }
+    location.replace('__TS_HOME__');
+  };
+  addEventListener('pageshow', function (e) {
+    if (e.persisted && rootOf() !== null) put({ tsBack: true });
+  });
+  addEventListener('DOMContentLoaded', function () {
+    var root = rootOf();
+    if (root === null || !nav.currentEntry) return;
+    var s = stateOf(nav.currentEntry);
+    var how = nav.activation ? nav.activation.navigationType : '';
+    var back = how === 'traverse' || s.tsBack === true;
+    if (back && typeof s.tsRoot === 'string' && s.tsRoot !== root) { home(); return; }
+    put({ tsRoot: root, tsBack: false });
+  });
+  // A move within the page — the scroll keeper's `#ts` fragment — is a new
+  // entry of the same root.
+  nav.addEventListener('currententrychange', function () {
+    var root = rootOf();
+    if (root !== null && stateOf(nav.currentEntry).tsRoot !== root) put({ tsRoot: root, tsBack: false });
+  });
+})();
+"#;
+
 /// The way a page that was put away comes back current. Injected into every
 /// document alongside `VIEWPORT`, on every platform — an embedder's shortcuts
 /// replace `SHORTCUTS`, never this.
@@ -1022,7 +1087,7 @@ addEventListener('DOMContentLoaded', function () {
 fn window_script(custom: Option<String>, ours: &[String]) -> String {
     let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{ZOOM}\n{}",
+        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{ZOOM}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
@@ -4084,6 +4149,11 @@ mod tests {
         assert!(theirs.contains("data-touch"), "the platform script went with the keys");
         assert!(theirs.contains("#ts"), "the scroll keeper went with the keys");
         assert!(theirs.contains("'/.ts/set?zoom='"), "the zoom went with the keys");
+        // Back past a change of root, and ahead of the reload that would hide
+        // that a page came back from the cache.
+        let rooted = theirs.find("meta[name=\"ts-root\"]").expect("Back past a re-root went with the keys");
+        assert!(rooted < theirs.find("e.persisted && document.body").expect("restore"), "the tag must be on the entry before the reload");
+        assert!(theirs.contains(&format!("pathname === '{}'", treeserve::HOME_PATH)), "the start page was left a placeholder");
         assert!(theirs.contains(&format!("var MIN = {}, MAX = {},", treeserve::page::ZOOM_MIN, treeserve::page::ZOOM_MAX)), "{theirs}");
         assert!(!theirs.contains("__TS_ZOOM_"), "the zoom's range was left a placeholder");
         // The binding, not the key's name: the wait watches Alt+Left too, to

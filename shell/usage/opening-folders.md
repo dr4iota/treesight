@@ -60,4 +60,7 @@ folder.
 
 Back, `Alt+Left` or the phone's gesture, walks through the folders you opened
 and then leaves you on the start page. On a phone, one more press leaves the
-app.
+app. Back does not go into a folder you left by opening another one, from
+anywhere: it goes to the start page instead. On Linux that needs a recent
+system WebKit (2.52 does it); with an older one, Back shows that folder as not
+found, and Start in the header is the way out.
