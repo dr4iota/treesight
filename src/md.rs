@@ -115,7 +115,9 @@ fn latex_to_mathml(latex: &str, display: bool) -> String {
     };
     let mut out = String::new();
     match push_mathml(&mut out, parser, config) {
-        Ok(()) => out,
+        // pulldown-latex 0.8 renders `\ ` and `~` as the text "&nbsp;" and
+        // then escapes its `&`, so the page would show "&nbsp;" literally.
+        Ok(()) => out.replace("&amp;nbsp;", "&#160;"),
         Err(e) => format!(
             "<code class=\"math-error\" title=\"{}\">{}</code>",
             html_escape(&e.to_string()),
@@ -961,6 +963,19 @@ mod tests {
         let block = html("```math\nx^2\n```\n");
         assert!(block.contains("<math"), "{block}");
         assert!(block.contains("math-block"), "{block}");
+    }
+
+    #[test]
+    fn math_control_space_is_a_space() {
+        for src in ["a $x\\ y$ b\n", "a $x~y$ b\n", "```math\nx\\ \\text{and}\\ y\n```\n"] {
+            let out = html(src);
+            assert!(!out.contains("&amp;nbsp;"), "{out}");
+            // Any spelling of a no-break space, so an upstream fix still passes.
+            assert!(
+                ["&#160;", "&nbsp;", "\u{a0}"].iter().any(|s| out.contains(s)),
+                "{out}"
+            );
+        }
     }
 
     #[test]
