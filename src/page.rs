@@ -1241,10 +1241,14 @@ fn notice_html(state: &State, root: &Root, rel: &[String]) -> String {
         .verb
         .filter(|_| state.cfg.app_ui)
         .map(|(words, id)| (words, act_href(state, &href_path(rel), &id)));
-    let link = n
-        .link
-        .map(|(words, href)| (words, act(state, &href)))
-        .or(verb)
+    let link = n.link.map(|(words, href)| (words, act(state, &href))).or(verb);
+    notice_line(if n.warn { "notice warn" } else { "notice" }, n.wait, &n.text, link)
+}
+
+/// One line in the notice's look: its words, and a link at its end that is
+/// already the page's to draw — tokenised where it is an action.
+fn notice_line(class: &str, wait: bool, text: &str, link: Option<(String, String)>) -> String {
+    let link = link
         .map(|(words, href)| {
             format!(
                 " <a class=\"again\" href=\"{}\">{}</a>",
@@ -1254,11 +1258,35 @@ fn notice_html(state: &State, root: &Root, rel: &[String]) -> String {
         })
         .unwrap_or_default();
     format!(
-        "<div class=\"notice{}\" role=\"status\"{}><span>{}</span>{link}</div>\n",
-        if n.warn { " warn" } else { "" },
-        if n.wait { " data-wait" } else { "" },
-        html_escape(&n.text)
+        "<div class=\"{class}\" role=\"status\"{}><span>{}</span>{link}</div>\n",
+        if wait { " data-wait" } else { "" },
+        html_escape(text)
     )
+}
+
+/// The embedder's lines about the file on this page ([`crate::FileLine`]),
+/// for under the backend's notice: one each, in the notice's look with `line`
+/// beside it, so a stylesheet can tell them apart and a reader cannot. Their
+/// links are the page's in the app — tokenised as a notice's are — and not
+/// drawn at all elsewhere, where nothing would claim them; a line left with
+/// nothing to say goes with them. Only a file's page asks (`view.rs`): a
+/// folder is not what these are about.
+pub(crate) fn file_lines_html(state: &State, root: &Root, rel: &[String]) -> String {
+    state
+        .cfg
+        .file_lines(&root.id, rel)
+        .into_iter()
+        .filter_map(|l| {
+            let link = l
+                .link
+                .filter(|_| state.cfg.app_ui)
+                .map(|(words, href)| (words, act(state, &href)));
+            if l.text.trim().is_empty() && link.is_none() {
+                return None;
+            }
+            Some(notice_line(if l.warn { "notice line warn" } else { "notice line" }, false, &l.text, link))
+        })
+        .collect()
 }
 
 /// The line along the bottom: what is being served, and the one way to serve
@@ -4181,6 +4209,140 @@ mod tests {
         assert!(!html.contains("/.ts/act"), "{html}");
         assert!(!html.contains("/.ts/remove"), "{html}");
         assert!(html.contains("/kept.txt?dl=1"), "{html}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The embedder's lines on a file's page: under the backend's notice and
+    /// never in its place, one each in its look, the words escaped and the link
+    /// the page's, with its token. On every view of the file — Preview, Source,
+    /// Raw, HTML's Preview, a binary file's notice — and on no folder; told the
+    /// root and the file's path; none where no hook is set, and no link where
+    /// nothing would claim it.
+    #[test]
+    fn an_embedder_adds_lines_to_a_files_page() {
+        use crate::vfs::Notice;
+        use crate::FileLine;
+        use std::sync::{Arc, Mutex};
+        struct Noted(Arc<dyn Vfs>);
+        impl Vfs for Noted {
+            fn resolve(&self, p: &VfsPath) -> Result<VfsPath, crate::vfs::ResolveError> {
+                self.0.resolve(p)
+            }
+            fn metadata(&self, p: &VfsPath) -> std::io::Result<crate::vfs::Meta> {
+                self.0.metadata(p)
+            }
+            fn read_dir(&self, p: &VfsPath) -> std::io::Result<Vec<crate::vfs::Entry>> {
+                self.0.read_dir(p)
+            }
+            fn read(&self, p: &VfsPath) -> std::io::Result<Vec<u8>> {
+                self.0.read(p)
+            }
+            fn open(&self, p: &VfsPath) -> std::io::Result<Box<dyn crate::vfs::ReadSeek>> {
+                self.0.open(p)
+            }
+            fn root_id_at(&self, p: &VfsPath) -> String {
+                self.0.root_id_at(p)
+            }
+            fn notice(&self, _: &VfsPath) -> Option<Notice> {
+                Some(Notice { warn: true, text: "thor cannot be reached.".into(), link: None, verb: None, wait: false })
+            }
+        }
+
+        let dir = tmp_dir("lines");
+        fs::create_dir_all(dir.join(".ssh")).unwrap();
+        fs::write(dir.join(".ssh").join("config"), "Host thor\n").unwrap();
+        fs::write(dir.join("a.md"), "# a\n").unwrap();
+        fs::write(dir.join("b.html"), "<b>hi</b>").unwrap();
+        fs::write(dir.join("c.bin"), [0u8, 1, 2, 0]).unwrap();
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let plain = state.cfg.root().expect("these tests always serve one");
+        let root = Root { id: "ssh:thor:/home/me".into(), vfs: Arc::new(Noted(Arc::clone(&plain.vfs))) };
+        let file = |state: &State, rel: &[&str], query: &[(String, String)]| {
+            let rel: Vec<String> = rel.iter().map(|s| s.to_string()).collect();
+            crate::view::file_page(state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), query, "/")
+        };
+
+        // No hook: the backend's notice alone.
+        let page = file(&state, &[".ssh", "config"], &[]);
+        assert!(page.contains("class=\"notice warn\""), "{page}");
+        assert!(!page.contains("notice line"), "{page}");
+
+        // What the hook was asked: the root, and the file's path under it.
+        type Asked = Vec<(String, Vec<String>)>;
+        let asked: Arc<Mutex<Asked>> = Arc::default();
+        let seen = Arc::clone(&asked);
+        state.cfg.set_file_lines(Some(Arc::new(move |root: &str, rel: &[String]| {
+            seen.lock().unwrap().push((root.to_string(), rel.to_vec()));
+            vec![
+                FileLine {
+                    warn: false,
+                    text: "An <ssh> config & more.".into(),
+                    link: Some(("Import servers…".into(), "/.ts/import?path=%2F.ssh%2Fconfig".into())),
+                },
+                FileLine { warn: true, text: "Second.".into(), link: None },
+                FileLine::default(),
+            ]
+        })));
+
+        let page = file(&state, &[".ssh", "config"], &[]);
+        assert_eq!(
+            asked.lock().unwrap().as_slice(),
+            [("ssh:thor:/home/me".to_string(), vec![".ssh".to_string(), "config".to_string()])]
+        );
+        let notice = page.find("class=\"notice warn\"").expect(&page);
+        let first = page
+            .find(
+                "<div class=\"notice line\" role=\"status\"><span>An &lt;ssh&gt; config &amp; more.</span> \
+                 <a class=\"again\" href=\"/.ts/import?path=%2F.ssh%2Fconfig&amp;t=tok\">Import servers…</a></div>",
+            )
+            .expect(&page);
+        let second = page
+            .find("<div class=\"notice line warn\" role=\"status\"><span>Second.</span></div>")
+            .expect(&page);
+        let meta = page.find("class=\"filemeta\"").expect(&page);
+        assert!(notice < first && first < second && second < meta, "{page}");
+        // A line with nothing in it is not drawn.
+        assert_eq!(page.matches("notice line").count(), 2, "{page}");
+
+        // Every view of a file: Preview, Source, Raw, HTML's Preview, and the
+        // notice a binary file gets in place of a view.
+        let src = [("src".to_string(), "1".to_string())];
+        let raw = |rel: &[&str]| {
+            let rel: Vec<String> = rel.iter().map(|s| s.to_string()).collect();
+            crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/")
+        };
+        for (what, page) in [
+            ("preview", file(&state, &["a.md"], &[])),
+            ("source", file(&state, &["a.md"], &src)),
+            ("raw", raw(&["a.md"])),
+            ("html preview", file(&state, &["b.html"], &[])),
+            ("binary", file(&state, &["c.bin"], &[])),
+            ("binary raw", raw(&["c.bin"])),
+        ] {
+            assert_eq!(page.matches("notice line").count(), 2, "{what}: {page}");
+        }
+        // Over a frame, in a box of their own and above it.
+        let raw_md = raw(&["a.md"]);
+        let lines = raw_md.find("<div class=\"lines\">").expect(&raw_md);
+        assert!(lines < raw_md.find("<iframe").expect(&raw_md), "{raw_md}");
+
+        // Not on a folder, which is not asked.
+        asked.lock().unwrap().clear();
+        let sub = listing_page(&state, &root, prefs(), &[".ssh".into()], &VfsPath::new(vec![".ssh".into()]), &[], "/.ssh/");
+        assert!(sub.contains("class=\"notice warn\""), "{sub}");
+        assert!(!sub.contains("notice line"), "{sub}");
+        assert!(asked.lock().unwrap().is_empty());
+
+        // Off the app, the words stay and the link goes.
+        state.cfg.app_ui = false;
+        let page = file(&state, &[".ssh", "config"], &[]);
+        assert!(page.contains("<span>An &lt;ssh&gt; config &amp; more.</span></div>"), "{page}");
+        assert!(!page.contains("/.ts/import"), "{page}");
+
+        // Taken away, nothing.
+        state.cfg.set_file_lines(None);
+        assert!(!file(&state, &[".ssh", "config"], &[]).contains("notice line"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

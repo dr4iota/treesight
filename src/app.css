@@ -1748,6 +1748,13 @@ iframe.raw {
   width: calc(100% - var(--safe-left) - var(--safe-right));
   margin: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
 }
+/* The embedder's lines over the frame (`view::with_lines`): the pane's own
+   padding at the sides and the top, which the frame under them goes without,
+   and the notice's own margin for the gap between them and it. */
+body > .lines {
+  flex: 0 0 auto;
+  padding: 1rem max(1.25rem, var(--safe-right)) 0 max(1.25rem, var(--safe-left));
+}
 
 .filemeta {
   color: var(--muted); font-size: .85rem; margin: .35rem 0 1rem;

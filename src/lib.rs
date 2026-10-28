@@ -382,6 +382,47 @@ pub struct StartNote {
     pub link: Option<(String, String)>,
 }
 
+/// A line of the embedder's own on a file's page, under the header and under
+/// the backend's [`vfs::Notice`], drawn in the notice's look: what the file is
+/// to the program around this crate, and the one thing it offers to do with it.
+/// *An ssh config: its hosts can be servers here. Import servers…* is the
+/// shape — the words and the href are the embedder's, and this crate knows
+/// nothing of what either means.
+///
+/// Its own lines rather than the notice's slot. The notice says what the page
+/// *is* (a copy, say) and the backend is the one to say it; these say what the
+/// file is good for elsewhere, and the two must never compete for one place.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileLine {
+    /// In the notice's warning colours.
+    pub warn: bool,
+    /// Plain text; the page escapes it.
+    pub text: String,
+    /// A link at the line's end: **(words, href)**. An href under `/.ts/` gets
+    /// the page's token, as a notice's link does (`page::act`), so the shell
+    /// takes it from this page and from nothing else; the embedder claims it
+    /// in `ShellExt::actions`. Drawn only in the app, where there is a shell
+    /// to claim it — the words stay off a page served over a network too,
+    /// since the link was the point of them.
+    pub link: Option<(String, String)>,
+}
+
+/// What [`Config::set_file_lines`] is handed: given the served root's RootId
+/// and the file's path under it as the page's segments, the lines for that
+/// file's page, in order. Asked once each time a file's page is drawn — every
+/// view of it, Preview, Source and Raw, and the notices a file gets in place of
+/// a view — and never for a folder.
+///
+/// The RootId is the one the page is serving: the main window's root, or a
+/// window's own (`Config::open_window`). The embedder parses it as it parses
+/// any id it handed this crate — `ssh:<server>:/home/me` and `[".ssh",
+/// "config"]` is `/home/me/.ssh/config` on that server.
+///
+/// Run while the page renders, on whatever thread is answering it, so it should
+/// cost what reading a map costs: no network, and nothing read from the file.
+/// It runs with no lock of this crate's held, and may read the `Config` back.
+pub type FileLines = Arc<dyn Fn(&str, &[String]) -> Vec<FileLine> + Send + Sync>;
+
 /// One row of a [`PaneSection`].
 #[derive(Clone)]
 pub struct PaneEntry {
@@ -517,6 +558,10 @@ pub struct Config {
     /// "Manage…", and that changes while the app is running.
     intro_acts: RwLock<Arc<Vec<HeadingAct>>>,
     flags: RwLock<Arc<Vec<HeaderFlag>>>,
+    /// The embedder's lines for a file's page. Behind a lock like `notes`, and
+    /// for the same reason the others are: the shell builds this `Config` fresh
+    /// when it starts, so a hook has to be handed over after that.
+    file_lines: RwLock<Option<FileLines>>,
     /// What the Places and Recent paths turned out to be, for the ones anything
     /// has got round to looking at. Written by the embedder as its answers come
     /// in and read while a page renders, which is the whole point of it being
@@ -609,6 +654,7 @@ impl Config {
             sections: RwLock::new(Arc::new(Vec::new())),
             intro_acts: RwLock::new(Arc::new(Vec::new())),
             flags: RwLock::new(Arc::new(Vec::new())),
+            file_lines: RwLock::new(None),
             status: RwLock::new(HashMap::new()),
             window_roots: RwLock::new(HashMap::new()),
         }
@@ -795,6 +841,21 @@ impl Config {
     /// rendered after this shows them.
     pub fn set_notes(&self, notes: Vec<StartNote>) {
         *self.notes.write().expect("notes lock") = Arc::new(notes);
+    }
+
+    /// Hands over the embedder's lines for a file's page ([`FileLines`]).
+    /// `None`, the default and what this crate's own app runs with, draws
+    /// none. Every file page rendered after this asks it.
+    pub fn set_file_lines(&self, lines: Option<FileLines>) {
+        *self.file_lines.write().expect("file lines lock") = lines;
+    }
+
+    /// The embedder's lines for the file at `rel` under the root `root_id`;
+    /// none where no hook is set. The hook is taken out of its lock before it
+    /// is called, so one that reads this `Config` back cannot wait on itself.
+    pub fn file_lines(&self, root_id: &str, rel: &[String]) -> Vec<FileLine> {
+        let hook = self.file_lines.read().expect("file lines lock").clone();
+        hook.map(|f| f(root_id, rel)).unwrap_or_default()
     }
 
     /// Sets the word [`Config::app_label`] puts after the name. `None` or empty

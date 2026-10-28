@@ -341,6 +341,19 @@ A verb marked `on_file_page` is a pill on the file's own page too, and
 answer, say. Nothing in these names a remote: the embedder's cache is the first
 user, and the words on screen are its own.
 
+Under the notice, on a file's page only, go the embedder's own lines
+(`FileLine`, from the hook `Config::set_file_lines` holds): what the file is
+to the program around this crate — *an ssh config: its hosts can be servers
+here* — and a link to the one thing it offers, which its action claims. Lines
+of their own, never the notice's slot: the notice says what the page is and
+the backend says it, these say what the file is good for and the embedder
+does. Same markup and look, with `line` beside `notice` in the class; the text
+escaped, the link tokenised as the notice's is and drawn only in the app. The
+hook is told the served root's RootId and the file's segments under it, once
+per render of any view of the file (Preview, Source, Raw — over the frame, in a
+box of its own — and the notices a file gets in place of a view), and never for
+a folder. It runs while the page renders, so it reads what is in memory.
+
 ---
 
 ## treesight
@@ -824,6 +837,7 @@ calls `run_with(ctx, ext)`.
 | `init_script` | Replaces `SHORTCUTS` wholesale (needed so a terminal page can keep Alt+arrows). |
 | `picker` | Whether *this* shell can ask for a folder where the crate cannot — the grant flow on Android, and the only way it is reachable without a desktop dialog. |
 | `usage_pages` | `(path, bytes)` pages of the embedder's own, merged into the Usage root; a path already taken replaces the built-in page. |
+| `file_lines` | `Fn(&AppHandle, root_id, rel) -> Vec<FileLine>`: lines of the embedder's own on a file's page, under the backend's notice. Installed at server start with the handle; `Config::set_file_lines` swaps it later. |
 | `flags` | Embedder controls on the header's flag row, installed at server start; anything that comes and goes later uses `Config::set_flags`. |
 | `allowed_origins` | Extra origins the webview may load (plugin scheme pages). |
 | `build` | The downstream binary's own `BuildInfo`, for the footer and its `--version`. `None` means this crate's, which is right only when this crate is what is running. |

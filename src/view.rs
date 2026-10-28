@@ -2,7 +2,7 @@ use crate::data::{delimiter_for, gunzip, parse_delimited, reformat_json, render_
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
 use crate::page::{
-    bare_layout, current_flag, dimmed_flag, flag, group, layout, ln_switch, svg_icon, with_new_window, Prefs,
+    bare_layout, current_flag, dimmed_flag, file_lines_html, flag, group, layout, ln_switch, svg_icon, with_new_window, Prefs,
     ICON_DOWNLOAD, ICON_PRINT, ICON_PREVIEW, ICON_RAW, ICON_SOURCE,
 };
 use crate::util::*;
@@ -241,14 +241,15 @@ fn raw_view(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_no
     // show as it is, and a frame would fetch all of it to show nothing.
     if shown == Shown::Binary {
         let content = format!(
-            "<main><div class=\"bigmsg\"><p>Binary file: nothing to show as text.</p>{}</div></main>",
+            "<main>{}<div class=\"bigmsg\"><p>Binary file: nothing to show as text.</p>{}</div></main>",
+            file_lines_html(state, root, rel),
             download_link(rel, root.vfs.as_ref(), "Download")
                 .map(|dl| format!("<p>{dl}</p>"))
                 .unwrap_or_default()
         );
         return bare_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content);
     }
-    bare_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &framed(&raw_text_href(rel), name))
+    bare_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &with_lines(state, root, rel, framed(&raw_text_href(rel), name)))
 }
 
 /// HTML's Preview: the page as a browser draws it, in a frame like Raw's,
@@ -263,7 +264,34 @@ fn html_preview(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], ur
         view_group(Shown::Drawn, rel, Some(View::Preview), false)
     );
     let src = format!("{}?raw=1&bare=1&as=page", href_path(rel));
-    bare_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &framed(&src, name))
+    bare_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &with_lines(state, root, rel, framed(&src, name)))
+}
+
+/// A frame page's content with the embedder's lines over it
+/// (`page::file_lines_html`). In a box of their own, which takes the padding a
+/// pane would have given them: the frame under them has none and wants none.
+fn with_lines(state: &State, root: &Root, rel: &[String], frame: String) -> String {
+    match file_lines_html(state, root, rel) {
+        lines if lines.is_empty() => frame,
+        lines => format!("<div class=\"lines\">\n{lines}</div>\n{frame}"),
+    }
+}
+
+/// `layout` for a file's page: the embedder's lines go over the content, which
+/// is under the backend's notice, since `layout` puts that first. Every view
+/// of a file that has a pane comes through here, and only those — a folder's
+/// listing calls `layout` itself.
+fn file_layout(
+    state: &State,
+    root: &Root,
+    prefs: Prefs<'_>,
+    rel: &[String],
+    url_now: &str,
+    extra_controls: &str,
+    content: &str,
+) -> String {
+    let content = format!("{}{content}", file_lines_html(state, root, rel));
+    layout(state, root, prefs, rel, url_now, extra_controls, &content)
 }
 
 /// The frame Raw and HTML's Preview draw the file in.
@@ -414,7 +442,7 @@ pub fn file_page(
             meta_line(size, mtime, "large file"),
             human_size(size)
         );
-        return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
     }
 
     if IMAGE_EXTS.contains(&ext.as_str()) {
@@ -424,7 +452,7 @@ pub fn file_page(
             html_escape(&raw_href(rel)),
             html_escape(name)
         );
-        return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
     }
     if VIDEO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -432,7 +460,7 @@ pub fn file_page(
             meta_line(size, mtime, "video"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
     }
     if AUDIO_EXTS.contains(&ext.as_str()) {
         let content = format!(
@@ -440,7 +468,7 @@ pub fn file_page(
             meta_line(size, mtime, "audio"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
     }
     if ext == "pdf" {
         let content = format!(
@@ -448,7 +476,7 @@ pub fn file_page(
             meta_line(size, mtime, "pdf"),
             html_escape(&raw_href(rel))
         );
-        return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
     }
 
     // Text-ish content from here on.
@@ -467,12 +495,12 @@ pub fn file_page(
                         .map(|dl| format!("<p>{dl}</p>"))
                         .unwrap_or_default()
                 );
-                return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+                return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
             }
             // Not even its head: nothing past the limit is read whole.
             None => {
                 let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
-                return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
+                return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
             }
         }
     }
@@ -486,14 +514,14 @@ pub fn file_page(
             Some(_) => {}
             None => {
                 let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
-                return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
+                return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
             }
         }
     }
 
     let Ok(bytes) = vfs.read(canon) else {
         let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
-        return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
     };
 
     // A `.gz` is read as what it holds, under the name it had before it was
@@ -519,7 +547,7 @@ pub fn file_page(
                         .map(|dl| format!("<p>{dl}</p>"))
                         .unwrap_or_default()
                 );
-                return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+                return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
             }
             None => (bytes, name, ext, None),
         },
@@ -538,7 +566,7 @@ pub fn file_page(
                 .map(|dl| format!("<p>{dl}</p>"))
                 .unwrap_or_default()
         );
-        return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
     }
 
     let text = String::from_utf8_lossy(&bytes);
@@ -570,7 +598,7 @@ pub fn file_page(
             };
             let controls = drawn_controls();
             let content = format!("{}{table}", meta_line(size, mtime, &format!("{extra}{unpacked}")));
-            return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content);
+            return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content);
         }
     }
 
@@ -595,7 +623,7 @@ pub fn file_page(
                 false => meta_line(size, mtime, unpacked.trim_start_matches(" &middot; ")),
             };
             let content = format!("{note}<div class=\"md\">{}</div>", body);
-            return layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content);
+            return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content);
         }
     }
 
@@ -670,5 +698,5 @@ pub fn file_page(
         gutter,
         html
     );
-    layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content)
+    file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content)
 }

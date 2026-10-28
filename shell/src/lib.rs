@@ -916,6 +916,20 @@ pub struct ShellExt {
     /// the folder, and a terminal kept that name.
     #[allow(clippy::type_complexity)]
     pub page_title: Option<Box<dyn Fn(&AppHandle, &tauri::Url) -> Option<String> + Send + Sync>>,
+    /// Lines of the embedder's own on a file's page, under the header and the
+    /// backend's notice, in the notice's look (`treeserve::FileLine`): what the
+    /// file is to this app, and a link to the one thing it offers to do with
+    /// it, which an action here claims. Told the served root's RootId — the
+    /// window's, where the page is in a window of its own — and the file's path
+    /// under it as the page's segments; asked each time a file's page is drawn,
+    /// on every view of it, and never for a folder.
+    ///
+    /// Installed when the server starts, holding the handle it is given there,
+    /// as `Config::set_file_lines` — which an embedder can also call through
+    /// [`Serving::state`] to swap it. Runs while a page renders: what it reads
+    /// should be in memory already, never the network or the file.
+    #[allow(clippy::type_complexity)]
+    pub file_lines: Option<Box<dyn Fn(&AppHandle, &str, &[String]) -> Vec<treeserve::FileLine> + Send + Sync>>,
     /// Replaces the shell's keyboard-shortcut script wholesale. A downstream
     /// page can need the very keys the default script binds, so the guard
     /// belongs to whoever knows about that page.
@@ -1059,6 +1073,10 @@ struct Ext {
     edition: Option<Box<dyn Fn(&AppHandle) -> Option<String> + Send + Sync>>,
     #[allow(clippy::type_complexity)]
     page_title: Option<Box<dyn Fn(&AppHandle, &tauri::Url) -> Option<String> + Send + Sync>>,
+    /// Shared rather than boxed, because each server start hands the core a
+    /// closure of its own that holds this one and the handle together.
+    #[allow(clippy::type_complexity)]
+    file_lines: Option<Arc<dyn Fn(&AppHandle, &str, &[String]) -> Vec<treeserve::FileLine> + Send + Sync>>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
@@ -1163,6 +1181,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         notes: ext.notes,
         edition: ext.edition,
         page_title: ext.page_title,
+        file_lines: ext.file_lines.map(Arc::from),
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
@@ -2066,6 +2085,12 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.home_slot = ext.home_slot.clone();
     cfg.set_notes(ext.notes.as_ref().map(|f| f(app)).unwrap_or_default());
     cfg.set_edition(ext.edition.as_ref().and_then(|f| f(app)));
+    // A closure the core can call with no handle of its own: the embedder's,
+    // with this app's handle held beside it.
+    if let Some(lines) = ext.file_lines.clone() {
+        let app = app.clone();
+        cfg.set_file_lines(Some(Arc::new(move |root: &str, rel: &[String]| lines(&app, root, rel))));
+    }
     cfg.places = places(app)
         .into_iter()
         .map(|(label, dir)| (label, treeserve::util::display_path(&dir)))
