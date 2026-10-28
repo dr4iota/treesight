@@ -1171,14 +1171,17 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         .plugin(tauri_plugin_opener::init())
         .manage(Router(Arc::clone(&router.0)))
         .manage(JarState(managed))
-        .register_asynchronous_uri_scheme_protocol(SCHEME, move |_ctx, request, responder| {
+        .register_asynchronous_uri_scheme_protocol(SCHEME, move |ctx, request, responder| {
             let slot = Arc::clone(&router.0);
             let jar = Arc::clone(&jar);
+            // Which window asked: one with a root of its own is answered from
+            // it (`Config::open_window`), any other from the main window's.
+            let label = ctx.webview_label().to_string();
             // Off the webview's thread: highlighting a large file is the slow
             // part of answering, and the tiny_http build had a pool of workers
             // for exactly that reason. Doing it here would stop the window
             // painting while it ran.
-            thread::spawn(move || responder.respond(serve(&slot, &jar, request)));
+            thread::spawn(move || responder.respond(serve(&slot, &jar, request, &label)));
         });
     if let Some(f) = configure {
         builder = f(builder);
@@ -1861,6 +1864,7 @@ fn serve(
     slot: &OnceLock<Arc<treeserve::State>>,
     jar: &Jar,
     request: tauri::http::Request<Vec<u8>>,
+    label: &str,
 ) -> tauri::http::Response<Vec<u8>> {
     let Some(state) = slot.get() else {
         return reply_to_response(treeserve::Reply {
@@ -1869,7 +1873,7 @@ fn serve(
             body: treeserve::Body::Text("not started".into()),
         });
     };
-    let reply = treeserve::handle(state, &to_req(&request, jar));
+    let reply = treeserve::handle_in(state, &to_req(&request, jar), Some(label));
     if stores_cookies(&request) {
         jar.store(&reply);
     }

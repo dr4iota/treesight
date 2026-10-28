@@ -517,6 +517,19 @@ pub struct Config {
     /// in and read while a page renders, which is the whole point of it being
     /// separate from the two lists: they go out immediately and this catches up.
     status: RwLock<HashMap<String, RootNote>>,
+    /// Windows other than the main one, by label, each with a root of its own
+    /// for as long as it is open. A request from one of them is answered from
+    /// its root ([`handle_in`]); everything else here — the lists, the pins,
+    /// the preferences, the status — is shared with the main window.
+    windows: RwLock<HashMap<String, WindowRoot>>,
+}
+
+/// A window's own root, and what to call it — the pair [`Config::set_root_vfs`]
+/// and [`Config::set_root_name`] keep for the main window.
+#[derive(Clone)]
+pub struct WindowRoot {
+    pub root: Arc<Root>,
+    pub name: Option<String>,
 }
 
 /// 128 bits of [`Config::action_token`]: two of the standard library's own
@@ -588,6 +601,7 @@ impl Config {
             intro_acts: RwLock::new(Arc::new(Vec::new())),
             flags: RwLock::new(Arc::new(Vec::new())),
             status: RwLock::new(HashMap::new()),
+            windows: RwLock::new(HashMap::new()),
         }
     }
 
@@ -620,6 +634,36 @@ impl Config {
     pub fn set_root_vfs(&self, root: Root) {
         self.set_root_name(None);
         *self.root.write().expect("root lock") = Some(Arc::new(root));
+    }
+
+    /// Gives the window `label` a root of its own, which it keeps until
+    /// [`Config::close_window`]. The main window's root is not touched.
+    pub fn open_window(&self, label: &str, root: Root, name: Option<String>) {
+        let win = WindowRoot { root: Arc::new(root), name };
+        self.windows.write().expect("windows lock").insert(label.to_string(), win);
+    }
+
+    pub fn close_window(&self, label: &str) {
+        self.windows.write().expect("windows lock").remove(label);
+    }
+
+    /// The root of the window `label`, if it has one of its own.
+    pub fn window(&self, label: &str) -> Option<WindowRoot> {
+        self.windows.read().expect("windows lock").get(label).cloned()
+    }
+
+    /// What to call `root` in a title: the main window's name for the main
+    /// root, a window's for its own. By identity, not id: two windows may serve
+    /// one folder under two names.
+    pub fn name_of(&self, root: &Root) -> Option<String> {
+        if self.root().is_some_and(|r| std::ptr::eq(Arc::as_ptr(&r), root)) {
+            return self.root_name();
+        }
+        let windows = self.windows.read().expect("windows lock");
+        windows
+            .values()
+            .find(|w| std::ptr::eq(Arc::as_ptr(&w.root), root))
+            .and_then(|w| w.name.clone())
     }
 
     pub fn recent(&self) -> Arc<Vec<String>> {
@@ -830,7 +874,7 @@ impl Config {
                 // A drive, a share or `/` has no last component to show, so
                 // name it by the name the embedder gave it — `Cache` for
                 // `cache:/` — or else by the whole id rather than by nothing.
-                None => self.root_name().unwrap_or_else(|| root.id.clone()),
+                None => self.name_of(root).unwrap_or_else(|| root.id.clone()),
             },
         }
     }
@@ -1163,6 +1207,14 @@ fn is_subresource(req: &Req) -> bool {
 /// This is the whole of treeserve as far as a caller is concerned: the HTTP
 /// server pumps it, and so can anything else holding a [`Req`].
 pub fn handle(state: &State, req: &Req) -> Reply {
+    handle_in(state, req, None)
+}
+
+/// [`handle`], for a request from the window `window`. A window with a root of
+/// its own ([`Config::open_window`]) is answered from that root, keeps its own
+/// open folders, and has no start page or wait page — it never leaves its
+/// folder. Any other label, or none, is the main window.
+pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
     if !req.is_get {
         return Reply::plain(405, "method not allowed");
     }
@@ -1173,12 +1225,23 @@ pub fn handle(state: &State, req: &Req) -> Reply {
         None => (url_now.clone(), String::new()),
     };
     let query = parse_query(&query_raw);
+    let own = window.and_then(|l| state.cfg.window(l).map(|w| (l, w)));
+    // The open folders are paths relative to the root, so a window on a root of
+    // its own keeps a set of its own: shared, the same name would be a
+    // different folder in each.
+    let open_name = match &own {
+        Some((label, _)) => format!("{OPEN_NAME}_{label}"),
+        None => OPEN_NAME.to_string(),
+    };
     // Owned here so `Prefs` can borrow it and stay `Copy` for every renderer.
-    let open = open_from(req);
+    let open = open_from(req, &open_name);
     let prefs = prefs_from(state, req, &open);
     // One snapshot of the served root for the whole request, so a re-root
     // mid-request cannot hand half a page one tree and half another.
-    let root = state.cfg.root();
+    let root = match &own {
+        Some((_, w)) => Some(Arc::clone(&w.root)),
+        None => state.cfg.root(),
+    };
 
     // Internal routes (assets + preference cookies).
     match path_raw.as_str() {
@@ -1187,7 +1250,12 @@ pub fn handle(state: &State, req: &Req) -> Reply {
         "/.ts/syntax-light.css" => return css_reply(req, &state.hl.css_light),
         "/.ts/syntax-dark.css" => return css_reply(req, &state.hl.css_dark),
         "/.ts/set" => return set_prefs(&query),
-        "/.ts/tree" => return toggle_open(req, &query),
+        "/.ts/tree" => return toggle_open(req, &query, &open_name),
+        // A window of its own never leaves its folder, so the main window's
+        // two places outside any folder are its folder's top here.
+        HOME_PATH | "/.ts/wait" if own.is_some() => {
+            return Reply::empty(302).with("Location", "/");
+        }
         // Somewhere for the shell to park the window while it finds out whether a
         // folder opens. Only it ever navigates here, and only when `app_ui` is on;
         // served on its own this is a page about nothing.
@@ -1361,14 +1429,17 @@ fn back_target(query: &[(String, String)]) -> String {
 const OPEN_MAX: usize = 24;
 const OPEN_COOKIE_MAX: usize = 3000;
 
+/// The open folders' cookie, and the stem of a window's own (`ts_open_<label>`).
+pub const OPEN_NAME: &str = "ts_open";
+
 /// The `ts_open` cookie: relative paths, percent-encoded, `|`-joined.
 ///
 /// `|` needs no meaning of its own — `percent_encode` leaves only unreserved
 /// characters alone, so a path can never contain the separator.
-fn open_from(req: &Req) -> Vec<String> {
+fn open_from(req: &Req, name: &str) -> Vec<String> {
     for value in req.named("Cookie") {
         for (k, v) in parse_cookies(value) {
-            if k == "ts_open" {
+            if k == name {
                 return v.split('|').filter_map(open_path).take(OPEN_MAX).collect();
             }
         }
@@ -1414,8 +1485,8 @@ fn open_cookie(open: &[String]) -> String {
 /// way. Read the set, change one entry, write it back: the direction is in the
 /// link because a plain toggle is wrong the second time it is followed, which is
 /// exactly what a double click and a reload both do.
-fn toggle_open(req: &Req, query: &[(String, String)]) -> Reply {
-    let mut open = open_from(req);
+fn toggle_open(req: &Req, query: &[(String, String)], name: &str) -> Reply {
+    let mut open = open_from(req, name);
     if let Some(path) = query_get(query, "shut").and_then(open_path) {
         open.retain(|p| *p != path);
     }
@@ -1432,7 +1503,7 @@ fn toggle_open(req: &Req, query: &[(String, String)]) -> Reply {
     let mut reply = Reply::empty(303);
     reply
         .headers
-        .push(cookie_header("ts_open", &open_cookie(&open)));
+        .push(cookie_header(name, &open_cookie(&open)));
     reply.with("Location", &back_target(query))
 }
 
@@ -1749,7 +1820,7 @@ fn serve_raw(req: &Req, vfs: &dyn Vfs, path: &VfsPath, name: &str, attachment: b
 
 #[cfg(test)]
 mod tests {
-    use super::{leaf_of, open_cookie, open_from, open_path, root_id_is_local, toggle_open, Req};
+    use super::{leaf_of, open_cookie, open_from, open_path, root_id_is_local, toggle_open, Req, OPEN_NAME};
     use super::{parse_query, OPEN_MAX};
 
     /// What takes the page's token and what does not, and the token put on
@@ -1939,7 +2010,7 @@ mod tests {
         let open = vec!["a b".to_string(), "c/d".to_string()];
         let value = open_cookie(&open);
         assert_eq!(value, "a%20b|c%2Fd");
-        assert_eq!(open_from(&req(&value)), open);
+        assert_eq!(open_from(&req(&value), OPEN_NAME), open);
     }
 
     /// One entry changes per trip, and the direction is in the link so following
@@ -1947,7 +2018,7 @@ mod tests {
     #[test]
     fn a_trip_through_the_tree_route_changes_one_entry() {
         let open = |q: &str, cookie: &str| {
-            let reply = toggle_open(&req(cookie), &parse_query(q));
+            let reply = toggle_open(&req(cookie), &parse_query(q), OPEN_NAME);
             assert_eq!(reply.status, 303);
             (set_cookie(&reply), reply)
         };
@@ -1968,8 +2039,8 @@ mod tests {
     #[test]
     fn the_oldest_open_directory_makes_room_for_a_new_one() {
         let full: Vec<String> = (0..OPEN_MAX).map(|i| format!("d{i}")).collect();
-        let reply = toggle_open(&req(&open_cookie(&full)), &parse_query("open=late&back=/"));
-        let stored = open_from(&req(set_cookie(&reply).trim_start_matches("ts_open=")));
+        let reply = toggle_open(&req(&open_cookie(&full)), &parse_query("open=late&back=/"), OPEN_NAME);
+        let stored = open_from(&req(set_cookie(&reply).trim_start_matches("ts_open=")), OPEN_NAME);
         assert_eq!(stored.len(), OPEN_MAX);
         assert_eq!(stored.first().map(String::as_str), Some("d1"));
         assert_eq!(stored.last().map(String::as_str), Some("late"));
@@ -2160,6 +2231,61 @@ mod tests {
         assert!(plain.cfg.root().is_some(), "and it closed nothing");
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A window with a root of its own is answered from it, beside the main
+    /// window's, each with its own name and its own open folders — and it has
+    /// no start page to go to.
+    #[test]
+    fn a_window_of_its_own_serves_its_own_root() {
+        let base = std::env::temp_dir().join(format!("treeserve-windows-{}", std::process::id()));
+        let (main, other) = (base.join("main-root"), base.join("other-root"));
+        std::fs::create_dir_all(main.join("only-in-main")).unwrap();
+        std::fs::create_dir_all(other.join("only-in-other")).unwrap();
+        let mut cfg = super::Config::new(main.clone());
+        cfg.app_ui = true;
+        let state = super::state_for(cfg);
+        state.cfg.open_window("files-1", super::Root::local(other.clone()), Some("Other".into()));
+        let get = |url: &str, window: Option<&str>, cookie: &str| {
+            let mut headers = vec![("Accept".to_string(), "text/html".to_string())];
+            if !cookie.is_empty() {
+                headers.push(("Cookie".to_string(), cookie.to_string()));
+            }
+            super::handle_in(&state, &super::Req { url: url.to_string(), headers, is_get: true }, window)
+        };
+        let text = |r: super::Reply| match r.body {
+            super::Body::Text(t) => t,
+            _ => panic!("a page is text"),
+        };
+
+        let mine = text(get("/", Some("files-1"), ""));
+        assert!(mine.contains("only-in-other") && !mine.contains("only-in-main"), "{mine}");
+        assert!(mine.contains("<title>Other</title>"), "{mine}");
+        let theirs = text(get("/", Some("main"), ""));
+        assert!(theirs.contains("only-in-main") && !theirs.contains("only-in-other"), "{theirs}");
+        // A label with no root of its own — a terminal's window — is the main one.
+        let term = text(get("/", Some("term-1"), ""));
+        assert!(term.contains("only-in-main"), "{term}");
+
+        // Opening a folder in one window writes that window's set only.
+        let reply = get("/.ts/tree?open=only-in-other&back=/", Some("files-1"), "");
+        let set = reply.headers.iter().find(|(k, _)| k == "Set-Cookie").map(|(_, v)| v.clone()).unwrap();
+        assert!(set.starts_with("ts_open_files-1=only-in-other"), "{set}");
+        let reply = get("/.ts/tree?open=only-in-main&back=/", None, "ts_open_files-1=only-in-other");
+        let set = reply.headers.iter().find(|(k, _)| k == "Set-Cookie").map(|(_, v)| v.clone()).unwrap();
+        assert!(set.starts_with("ts_open=only-in-main"), "{set}");
+
+        // No start page and no wait page in a window that never leaves its folder.
+        for path in [super::HOME_PATH, "/.ts/wait"] {
+            let reply = get(path, Some("files-1"), "");
+            assert_eq!(reply.status, 302, "{path}");
+            assert!(reply.headers.iter().any(|(k, v)| k == "Location" && v == "/"), "{path}");
+        }
+
+        // Closed, the label is the main window's again.
+        state.cfg.close_window("files-1");
+        assert!(text(get("/", Some("files-1"), "")).contains("only-in-main"));
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     /// The id a remote root is filed under, for the header to show beside a path

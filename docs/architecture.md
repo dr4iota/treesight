@@ -542,6 +542,20 @@ the reader did rather than a fixture, so the only one that can hold something
 they want gone — a folder that moved, or a root some since-fixed bug wrote down
 wrong. It forgets the row and never touches the folder.
 
+### Windows with a root of their own
+
+The main window's root is `Config::root`, and re-rooting changes it. A second
+window gets a root of its own for life: `Config::open_window(label, root,
+name)`, gone with `close_window`. The scheme handler passes the asking
+webview's label to `handle_in`, which answers from that window's root, keeps
+its open folders in a cookie of its own (`ts_open_<label>`, since the set is
+paths relative to the root) and has no start or wait page. A label with no
+root of its own — a terminal's window, or none — is the main window. The root
+is chosen per request, never by swapping `Config::root`: requests from two
+windows run at once on their own threads. Everything else in `Config` is
+shared. `name_of` finds a root's name by identity, not id, since two windows
+may hold one folder.
+
 ### Back
 
 Two addresses, and exactly one step between them. Every page of a tree wears

@@ -788,7 +788,7 @@ fn head_and_header(
     // say — and by the folder otherwise. The header says the rest: the folder in
     // the crumbs, the machine in the tag beside them, neither of which a window
     // title has room for.
-    let named = state.cfg.root_name().unwrap_or_else(|| site_title.clone());
+    let named = state.cfg.name_of(root).unwrap_or_else(|| site_title.clone());
     let title = if rel.is_empty() {
         named
     } else {
