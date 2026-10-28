@@ -136,6 +136,28 @@ fn render_math_nodes<'a>(root: Node<'a>) {
     }
 }
 
+/// Puts every table in a box of its own that scrolls sideways
+/// (`<div class="md-table">`, `app.css`).
+///
+/// A table is as wide as its columns want, and a wide one in the text pushed
+/// the whole pane sideways on a phone: the pane scrolled, and away from the
+/// table its right was empty, the text above and below long gone to the left.
+/// Display math already scrolls in its own `.math-block`; this gives a table
+/// the same. A wrapper rather than `display: block` on the table, which costs
+/// it its table semantics to a screen reader in some engines. Raw nodes either
+/// side of it, so comrak's own table markup stays exactly as it was.
+fn wrap_tables<'a>(arena: &'a Arena<'a>, root: Node<'a>) {
+    let tables: Vec<Node<'a>> = root
+        .descendants()
+        .filter(|n| matches!(n.data().value, NodeValue::Table(_)))
+        .collect();
+    for table in tables {
+        let raw = |html: &str| arena.alloc(NodeValue::Raw(html.to_string()).into());
+        table.insert_before(raw("<div class=\"md-table\">"));
+        table.insert_after(raw("</div>"));
+    }
+}
+
 /// First token of a code fence info string, as comrak splits it.
 fn info_lang(info: &str) -> &str {
     info.split_whitespace().next().unwrap_or("")
@@ -652,6 +674,7 @@ pub fn render_markdown(hl: &Hl, src: &str, tabs: bool, raw: RawHtml) -> String {
     let root = parse_document(&arena, &src, &options);
     render_math_nodes(root);
     render_mermaid_nodes(root);
+    wrap_tables(&arena, root);
     scrub_raw_html_urls(root);
 
     let mut out = String::with_capacity(src.len() * 3 / 2);
@@ -915,6 +938,15 @@ mod tests {
         assert!(block.contains("math-block"), "{block}");
     }
 
+    /// A table scrolls in a box of its own rather than widening the page.
+    #[test]
+    fn a_table_is_wrapped_to_scroll() {
+        let out = html("| a | b |\n|---|---|\n| 1 | 2 |\n\ntext\n").replace('\n', "");
+        assert!(out.contains("<div class=\"md-table\"><table>"), "{out}");
+        assert!(out.contains("</table></div><p>text</p>"), "{out}");
+        assert_eq!(out.matches("md-table").count(), 1, "{out}");
+    }
+
     /// A trailing `\\tag` is drawn beside its formula, not refused with it.
     #[test]
     fn math_tag_is_drawn_beside_the_formula() {
@@ -922,6 +954,10 @@ mod tests {
         assert!(block.contains("<div class=\"math-block tagged\"><math"), "{block}");
         assert!(block.contains("<span class=\"math-tag\">(4.1)</span></div>"), "{block}");
         assert!(!block.contains("math-error"), "{block}");
+        // A ```math fence, the other way to write display math, the same.
+        let fence = html("```math\n\\begin{aligned} a &= b \\\\ &\\le c \\end{aligned} \\tag{4.2}\n```\n");
+        assert!(fence.contains("<div class=\"math-block tagged\"><math"), "{fence}");
+        assert!(fence.contains("<span class=\"math-tag\">(4.2)</span></div>"), "{fence}");
         let inline = html("see $$a \\tag{2}$$ here\n");
         assert!(inline.contains("</math><span class=\"math-tag\">(2)</span>"), "{inline}");
     }

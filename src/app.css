@@ -1561,6 +1561,9 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
   color: var(--muted);
   border-left: .25em solid var(--border);
 }
+/* A table scrolls sideways in its own box (`md::wrap_tables`) instead of
+   widening the pane, as display math does in `.math-block`. */
+.md .md-table { overflow-x: auto; }
 .md table { border-collapse: collapse; }
 .md table th, .md table td { border: 1px solid var(--border); padding: .3rem .7rem; }
 .md table tr:nth-child(2n) { background: var(--bg-subtle); }
@@ -1569,6 +1572,14 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
 .md input[type="checkbox"] { accent-color: var(--accent); }
 
 /* GFM task lists: checkbox replaces the bullet. */
+/* A handset held upright (30rem, as the rest of this sheet has it): lists
+   step in by 1.5em (24px) a level, not the browser's 40px. Each level was a
+   ninth of a 360px phone's column; this
+   still leaves a number up to "99." its room, reaching at most into the
+   pane's own margin. Task lists keep their own, smaller step below. */
+@media (max-width: 30rem) {
+  .md ul, .md ol { padding-left: 1.5em; }
+}
 .md ul.contains-task-list { padding-left: 1.2rem; }
 .md li.task-list-item { list-style: none; }
 .md li.task-list-item > input[type="checkbox"] { margin: 0 .35em 0 -1.2em; }
