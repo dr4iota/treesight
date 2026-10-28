@@ -18,6 +18,7 @@ use std::io::{self, Read, Write};
 #[cfg(desktop)]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -25,10 +26,19 @@ use tauri::{AppHandle, Manager};
 use treeserve::util::percent_encode;
 use treeserve::{Prepared, Vfs, VfsPath};
 
-use crate::{committed, eval, fail, js_quoted, notify, replace_page, Serving, WINDOW};
+use crate::{committed_in, eval_in, fail_in, js_quoted, notify_in, replace_page_in, root_in, Serving, WINDOW};
 
 /// One transfer at a time: two would share one status line and one Cancel.
 static BUSY: AtomicBool = AtomicBool::new(false);
+
+/// The window the one transfer belongs to: its status line shows it, and
+/// closing that window stops it (`cancel_for`). The copy runs on a thread of
+/// its own and would otherwise outlive the page that started it.
+static OWNER: Mutex<Option<String>> = Mutex::new(None);
+
+fn owner() -> Option<String> {
+    OWNER.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 /// How much is moved between two looks at Cancel and two updates of the line.
 const CHUNK: usize = 256 * 1024;
@@ -42,15 +52,30 @@ pub(crate) fn cancel() {
     treeserve::vfs::cancel::ask();
 }
 
+/// The window `label` has closed: a transfer it started stops, and one any
+/// other window started is left alone.
+pub(crate) fn cancel_for(label: &str) {
+    if owner().as_deref() == Some(label) {
+        cancel();
+    }
+}
+
+/// The window a transfer on its way belongs to, if one is on its way.
+pub(crate) fn running_owner() -> Option<String> {
+    BUSY.load(Ordering::SeqCst).then(owner).flatten()
+}
+
 /// The transfer lock, released when dropped.
 pub(crate) struct Turn(());
 
 impl Turn {
-    pub(crate) fn take() -> Option<Turn> {
+    /// The lock, for a transfer the window `label` started.
+    pub(crate) fn take(label: &str) -> Option<Turn> {
         BUSY.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .ok()
             .map(|_| {
                 treeserve::vfs::cancel::clear();
+                *OWNER.lock().unwrap_or_else(|e| e.into_inner()) = Some(label.to_string());
                 Turn(())
             })
     }
@@ -58,6 +83,7 @@ impl Turn {
 
 impl Drop for Turn {
     fn drop(&mut self) {
+        *OWNER.lock().unwrap_or_else(|e| e.into_inner()) = None;
         BUSY.store(false, Ordering::SeqCst);
         treeserve::vfs::cancel::clear();
     }
@@ -65,12 +91,14 @@ impl Drop for Turn {
 
 /// The status line, from any thread. `None` clears it.
 pub(crate) fn progress(app: &AppHandle, line: Option<(&str, f64)>) {
+    // In the window that started it.
+    let label = owner().unwrap_or_else(|| WINDOW.to_string());
     // Into the page on screen only: script sent into one that is about to be
     // replaced runs there and vanishes with it.
-    if !committed(app) {
+    if !committed_in(app, &label) {
         return;
     }
-    let Some(win) = app.get_webview_window(WINDOW) else {
+    let Some(win) = app.get_webview_window(&label) else {
         return;
     };
     let js = match line {
@@ -169,15 +197,17 @@ struct Target {
     /// The folder's address, with its slash, for coming back to it.
     href: String,
     origin: String,
+    /// The window whose page asked, which is told how it went.
+    label: String,
 }
 
-fn target(app: &AppHandle, url: &tauri::Url) -> Result<Target, Option<String>> {
+fn target(app: &AppHandle, label: &str, url: &tauri::Url) -> Result<Target, Option<String>> {
     let serving = app.try_state::<Serving>().ok_or(None)?;
     let cfg = &serving.state().cfg;
     if param(url, "t").as_deref() != Some(cfg.action_token.as_str()) {
         return Err(Some("That link did not come from this window.".into()));
     }
-    let root = cfg.root().ok_or(None)?;
+    let root = root_in(app, label).ok_or(None)?;
     let href = param(url, "dir").ok_or(None)?;
     let resolved = treeserve::resolve_in_root(root.vfs.as_ref(), &href)
         .map_err(|_| Some(format!("{href} is not in this folder.")))?;
@@ -194,6 +224,7 @@ fn target(app: &AppHandle, url: &tauri::Url) -> Result<Target, Option<String>> {
         dir: resolved.path,
         href: format!("{}/", href.trim_end_matches('/')),
         origin: serving.origin.clone(),
+        label: label.to_string(),
     })
 }
 
@@ -201,13 +232,14 @@ fn target(app: &AppHandle, url: &tauri::Url) -> Result<Target, Option<String>> {
 /// the folder it is in with its row lit, or back to the form with the name
 /// kept and the reason under it. Replaced rather than stepped to, so Back
 /// does not walk through the form.
-pub(crate) fn mkdir(app: &AppHandle, url: &tauri::Url) {
+pub(crate) fn mkdir(app: &AppHandle, label: &str, url: &tauri::Url) {
     let app = app.clone();
+    let label = label.to_string();
     let url = url.clone();
     thread::spawn(move || {
-        let t = match target(&app, &url) {
+        let t = match target(&app, &label, &url) {
             Ok(t) => t,
-            Err(Some(why)) => return fail(&app, &why, false),
+            Err(Some(why)) => return fail_in(&app, &label, &why, false),
             Err(None) => return,
         };
         let typed = param(&url, "name").unwrap_or_default();
@@ -230,7 +262,7 @@ pub(crate) fn mkdir(app: &AppHandle, url: &tauri::Url) {
                 percent_encode(&why)
             ),
         };
-        replace_page(&app, &back);
+        replace_page_in(&app, &t.label, &back);
     });
 }
 
@@ -294,10 +326,10 @@ pub(crate) fn set_picker(pick: Box<Picker>) {
 /// and from the system's own otherwise; then one question if any of their
 /// names are taken, the copy with the status line saying how far it is, and
 /// the folder again with the new rows lit.
-pub(crate) fn upload(app: &AppHandle, url: &tauri::Url) {
-    let t = match target(app, url) {
+pub(crate) fn upload(app: &AppHandle, label: &str, url: &tauri::Url) {
+    let t = match target(app, label, url) {
         Ok(t) => t,
-        Err(Some(why)) => return fail(app, &why, false),
+        Err(Some(why)) => return fail_in(app, label, &why, false),
         Err(None) => return,
     };
     // Asked before the picker, so a reader is not sent to choose files that
@@ -306,16 +338,17 @@ pub(crate) fn upload(app: &AppHandle, url: &tauri::Url) {
     // picker was up: a download started meanwhile lost its progress and its
     // Cancel, and a second Upload was told something was being sent.
     if BUSY.load(Ordering::SeqCst) {
-        return fail(app, BUSY_SAYS, false);
+        return fail_in(app, label, BUSY_SAYS, false);
     }
     if PICKER.get().is_some() {
         let app = app.clone();
+        let t_label = t.label.clone();
         thread::spawn(move || {
             let Some(pick) = PICKER.get() else { return };
             match pick(&app) {
                 Ok(Some(files)) if !files.is_empty() => send(&app, t, files),
                 Ok(_) => {} // cancelled
-                Err(e) => fail(&app, &format!("Could not read the picked files: {e}"), false),
+                Err(e) => fail_in(&app, &t_label, &format!("Could not read the picked files: {e}"), false),
             }
         });
         return;
@@ -323,7 +356,7 @@ pub(crate) fn upload(app: &AppHandle, url: &tauri::Url) {
     #[cfg(desktop)]
     pick_on_desktop(app, t);
     #[cfg(mobile)]
-    fail(app, "Upload is not available on this device.", false);
+    fail_in(app, label, "Upload is not available on this device.", false);
 }
 
 /// Either way round: a download holds the same line an upload would.
@@ -340,7 +373,7 @@ fn pick_on_desktop(app: &AppHandle, t: Target) {
     let back = app.clone();
     let _ = app.run_on_main_thread(move || {
         let mut dialog = back.dialog().file().set_title(format!("Upload to {folder}"));
-        if let Some(win) = back.get_webview_window(WINDOW) {
+        if let Some(win) = crate::dialog_parent(&back, &t.label) {
             dialog = dialog.set_parent(&win);
         }
         let app = back.clone();
@@ -440,8 +473,8 @@ fn picked_path(path: PathBuf) -> PickedFile {
 fn send(app: &AppHandle, t: Target, files: Vec<PickedFile>) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-    let Some(_turn) = Turn::take() else {
-        return fail(app, BUSY_SAYS, false);
+    let Some(_turn) = Turn::take(&t.label) else {
+        return fail_in(app, &t.label, BUSY_SAYS, false);
     };
     let mut refused: Vec<String> = Vec::new();
     // Each picked file under the name it will have here, or why it cannot go.
@@ -513,7 +546,7 @@ fn send(app: &AppHandle, t: Target, files: Vec<PickedFile>) {
                 },
             ));
         #[cfg(desktop)]
-        if let Some(win) = app.get_webview_window(WINDOW) {
+        if let Some(win) = crate::dialog_parent(app, &t.label) {
             ask = ask.parent(&win);
         }
         replace = ask.blocking_show();
@@ -576,20 +609,20 @@ fn send(app: &AppHandle, t: Target, files: Vec<PickedFile>) {
         true => format!("{}{}", t.origin, t.href),
         false => format!("{}{}?{lit}", t.origin, t.href),
     };
-    replace_page(app, &page);
+    replace_page_in(app, &t.label, &page);
     // A cancel is the reader's own act, so it is reported only where it left
     // something they may not expect: files that did not go. Said as a notice,
     // not as a failure.
     if !notes.is_empty() {
-        crate::notify(app, &notes.join("\n"));
+        notify_in(app, &t.label, &notes.join("\n"));
     }
     match (cancelled.is_empty(), refused.is_empty()) {
         (true, true) => {}
-        (true, false) => fail(app, &format!("Not sent:\n{}", refused.join("\n")), false),
+        (true, false) => fail_in(app, &t.label, &format!("Not sent:\n{}", refused.join("\n")), false),
         (false, _) => {
             let mut lines = cancelled;
             lines.extend(refused);
-            crate::notify(app, &format!("Upload cancelled. Not sent:\n{}", lines.join("\n")));
+            notify_in(app, &t.label, &format!("Upload cancelled. Not sent:\n{}", lines.join("\n")));
         }
     }
 }
@@ -613,14 +646,20 @@ mod tests {
         assert_eq!(out, data);
         assert!(lines[0].0.starts_with("Saving x · 0.2 of 0.8 MB"), "{lines:?}");
 
-        let turn = Turn::take().expect("nothing else is moving");
-        cancel();
+        // The transfer is its window's: closing another leaves it alone,
+        // closing that one stops it.
+        let turn = Turn::take("files-1").expect("nothing else is moving");
+        assert_eq!(running_owner().as_deref(), Some("files-1"));
+        cancel_for("main");
+        assert!(!treeserve::vfs::cancel::asked(), "another window's close stopped it");
+        cancel_for("files-1");
         let mut out = Vec::new();
         let e = pump_with("Saving x", None, &mut &data[..], &mut out, &mut |_, _| {}).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::Interrupted);
         // Letting go of the turn clears Cancel for the next transfer.
         drop(turn);
         assert!(!treeserve::vfs::cancel::asked());
+        assert_eq!(running_owner(), None, "the window outlived its transfer");
     }
 }
 
@@ -633,15 +672,17 @@ struct Row {
     is_dir: bool,
     /// The row is a symbolic link, and `path` is the link, not where it goes.
     link: bool,
+    /// The window whose page asked.
+    label: String,
 }
 
-fn row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
+fn row(app: &AppHandle, label: &str, url: &tauri::Url) -> Result<Row, Option<String>> {
     let serving = app.try_state::<Serving>().ok_or(None)?;
     let cfg = &serving.state().cfg;
     if param(url, "t").as_deref() != Some(cfg.action_token.as_str()) {
         return Err(Some("That link did not come from this window.".into()));
     }
-    let root = cfg.root().ok_or(None)?;
+    let root = root_in(app, label).ok_or(None)?;
     let href = param(url, "path").ok_or(None)?;
     let resolved = treeserve::resolve_in_root(root.vfs.as_ref(), &href)
         .map_err(|_| Some(format!("{href} is not in this folder.")))?;
@@ -656,6 +697,7 @@ fn row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
         path: resolved.path,
         is_dir,
         link: false,
+        label: label.to_string(),
     })
 }
 
@@ -680,13 +722,13 @@ fn one_name(name: &str, local: bool) -> bool {
 /// checked as [`row`] checks, and its own name joined back on as it is. A row
 /// that is a link is the link — resolving the whole address handed Delete
 /// whatever the link pointed at, folder and all, and left the link.
-fn named_row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
+fn named_row(app: &AppHandle, label: &str, url: &tauri::Url) -> Result<Row, Option<String>> {
     let serving = app.try_state::<Serving>().ok_or(None)?;
     let cfg = &serving.state().cfg;
     if param(url, "t").as_deref() != Some(cfg.action_token.as_str()) {
         return Err(Some("That link did not come from this window.".into()));
     }
-    let root = cfg.root().ok_or(None)?;
+    let root = root_in(app, label).ok_or(None)?;
     let href = param(url, "path").ok_or(None)?;
     let trimmed = href.trim_end_matches('/');
     let (dir, last) = trimmed.rsplit_once('/').unwrap_or(("", trimmed));
@@ -709,11 +751,11 @@ fn named_row(app: &AppHandle, url: &tauri::Url) -> Result<Row, Option<String>> {
             .metadata(&path)
             .map(|m| m.is_dir)
             .map_err(|e| Some(format!("{href}: {e}")))?;
-    Ok(Row { vfs: std::sync::Arc::clone(&root.vfs), path, name, is_dir, link })
+    Ok(Row { vfs: std::sync::Arc::clone(&root.vfs), path, name, is_dir, link, label: label.to_string() })
 }
 
 /// A native question with a button that goes ahead and Cancel. True is yes.
-fn ask(app: &AppHandle, title: &str, message: &str, ok: &str) -> bool {
+fn ask(app: &AppHandle, label: &str, title: &str, message: &str, ok: &str) -> bool {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     #[cfg_attr(mobile, allow(unused_mut))]
     let mut ask = app
@@ -723,9 +765,11 @@ fn ask(app: &AppHandle, title: &str, message: &str, ok: &str) -> bool {
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(ok.into(), "Cancel".into()));
     #[cfg(desktop)]
-    if let Some(win) = app.get_webview_window(WINDOW) {
+    if let Some(win) = crate::dialog_parent(app, label) {
         ask = ask.parent(&win);
     }
+    #[cfg(mobile)]
+    let _ = label;
     ask.blocking_show()
 }
 
@@ -739,15 +783,18 @@ fn ask(app: &AppHandle, title: &str, message: &str, ok: &str) -> bool {
 /// first gets it from `Vfs::prepare`, with its words in the status line and
 /// Cancel under the transfer lock; the lock is let go while the box is up,
 /// as Upload lets it go while the picker is.
-pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
+pub(crate) fn act(app: &AppHandle, label: &str, url: &tauri::Url) {
     let app = app.clone();
+    let label = label.to_string();
     let url = url.clone();
     thread::spawn(move || {
-        let r = match row(&app, &url) {
+        let r = match row(&app, &label, &url) {
             Ok(r) => r,
-            Err(Some(why)) => return fail(&app, &why, false),
+            Err(Some(why)) => return fail_in(&app, &label, &why, false),
             Err(None) => return,
         };
+        let fail = |app: &AppHandle, msg: &str, fatal: bool| fail_in(app, &label, msg, fatal);
+        let notify = |app: &AppHandle, msg: &str| notify_in(app, &label, msg);
         let id = param(&url, "a").unwrap_or_default();
         let Some(action) = r
             .vfs
@@ -757,7 +804,7 @@ pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
             return fail(&app, &format!("That cannot be done to {} now.", r.name), false);
         };
         let prepared = {
-            let Some(_turn) = Turn::take() else {
+            let Some(_turn) = Turn::take(&label) else {
                 return fail(&app, BUSY_SAYS, false);
             };
             let mut last = Instant::now() - TICK;
@@ -778,11 +825,11 @@ pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
             Err(e) => return fail(&app, &format!("{}: {}: {e}", action.label, r.name), false),
         };
         if let Some(c) = &confirm
-            && !ask(&app, &action.label, &c.message, &c.ok)
+            && !ask(&app, &label, &action.label, &c.message, &c.ok)
         {
             return;
         }
-        let Some(_turn) = Turn::take() else {
+        let Some(_turn) = Turn::take(&label) else {
             return fail(&app, BUSY_SAYS, false);
         };
         let what = format!("{} · {}", action.label, r.name);
@@ -815,15 +862,17 @@ pub(crate) fn act(app: &AppHandle, url: &tauri::Url) {
 /// `/.ts/remove`: **Delete**, from a row's far end — a file, or a folder with
 /// nothing in it. Asked every time; never recursive. The backend may add a
 /// line to the question (`Vfs::remove_note`).
-pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
+pub(crate) fn remove(app: &AppHandle, label: &str, url: &tauri::Url) {
     let app = app.clone();
+    let label = label.to_string();
     let url = url.clone();
     thread::spawn(move || {
-        let r = match named_row(&app, &url) {
+        let r = match named_row(&app, &label, &url) {
             Ok(r) => r,
-            Err(Some(why)) => return fail(&app, &why, false),
+            Err(Some(why)) => return fail_in(&app, &label, &why, false),
             Err(None) => return,
         };
+        let fail = |app: &AppHandle, msg: &str, fatal: bool| fail_in(app, &label, msg, fatal);
         if !r.vfs.deletable() || r.path.segments().is_empty() {
             return fail(&app, &format!("{} cannot be deleted here.", r.name), false);
         }
@@ -836,9 +885,7 @@ pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
         if r.is_dir && r.vfs.read_dir(&r.path).is_ok_and(|v| !v.is_empty()) {
             return fail(&app, &format!("{} is not empty; delete what is in it first.", r.name), false);
         }
-        let place = app
-            .try_state::<Serving>()
-            .and_then(|s| s.state().cfg.root_name())
+        let place = crate::root_name_in(&app, &label)
             .map(|n| format!(" from {n}"))
             .unwrap_or_default();
         let head = match (r.link, r.is_dir) {
@@ -850,7 +897,7 @@ pub(crate) fn remove(app: &AppHandle, url: &tauri::Url) {
         if let Some(note) = r.vfs.remove_note(&r.path) {
             message.push_str(&format!("\n\n{note}"));
         }
-        if !ask(&app, "Delete", &message, "Delete") {
+        if !ask(&app, &label, "Delete", &message, "Delete") {
             return;
         }
         match r.vfs.remove(&r.path) {
@@ -873,6 +920,7 @@ const TRASH: &str = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
 /// again in those words; a folder with things in it never does.
 #[cfg(desktop)]
 fn to_trash(app: &AppHandle, r: &Row, host: &std::path::Path) {
+    let fail = |app: &AppHandle, msg: &str, fatal: bool| fail_in(app, &r.label, msg, fatal);
     let what = match (r.link, r.is_dir) {
         (true, _) => format!("the link {}", r.name),
         (_, true) => format!("the folder {}", r.name),
@@ -882,7 +930,7 @@ fn to_trash(app: &AppHandle, r: &Row, host: &std::path::Path) {
         true => "What it points to stays. You can put the link back from there.",
         false => "You can put it back from there.",
     };
-    if !ask(app, "Delete", &format!("Move {what} to the {TRASH}?\n\n{after}"), &format!("Move to {TRASH}")) {
+    if !ask(app, &r.label, "Delete", &format!("Move {what} to the {TRASH}?\n\n{after}"), &format!("Move to {TRASH}")) {
         return;
     }
     let e = match trash::delete(host) {
@@ -897,7 +945,7 @@ fn to_trash(app: &AppHandle, r: &Row, host: &std::path::Path) {
         "{} could not go to the {TRASH}: {e}\n\nDelete it permanently? It cannot be brought back.",
         r.name
     );
-    if !ask(app, "Delete", &again, "Delete") {
+    if !ask(app, &r.label, "Delete", &again, "Delete") {
         return;
     }
     match r.vfs.remove(&r.path) {
@@ -912,10 +960,10 @@ fn to_trash(app: &AppHandle, r: &Row, host: &std::path::Path) {
 /// reload of that folder was a page saying it was not found.
 fn after_change(app: &AppHandle, r: &Row) {
     let Some(parent) = r.path.parent() else {
-        return eval(app, "location.reload()");
+        return eval_in(app, &r.label, "location.reload()");
     };
     if r.vfs.metadata(&parent).is_ok_and(|m| m.is_dir) {
-        return eval(app, "location.reload()");
+        return eval_in(app, &r.label, "location.reload()");
     }
     let mut at = parent;
     while let Some(up) = at.parent() {
@@ -928,7 +976,7 @@ fn after_change(app: &AppHandle, r: &Row) {
         return;
     };
     let href = format!("{}/", treeserve::util::href_path(at.segments()).trim_end_matches('/'));
-    replace_page(app, &format!("{}{href}", serving.origin));
+    replace_page_in(app, &r.label, &format!("{}{href}", serving.origin));
 }
 
 #[cfg(all(test, desktop, target_os = "linux"))]

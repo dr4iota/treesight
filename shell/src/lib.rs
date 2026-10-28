@@ -739,7 +739,10 @@ pub struct Serving {
     /// flag goes false whenever we navigate and true again when a page commits,
     /// and while it is false a page is put up by navigating — which supersedes
     /// the load in flight rather than stacking on it, and costs no entry either.
-    loaded: AtomicBool,
+    ///
+    /// One answer per window, by label: a file window's page committing says
+    /// nothing about the main window's.
+    loaded: Mutex<std::collections::HashSet<String>>,
     /// Whether the page in the window is the start page.
     ///
     /// Which decides whether a folder about to be shown is a step forward or a
@@ -773,7 +776,19 @@ impl Serving {
     /// its own as the app starts waits for this: the first page is the start
     /// page, and a request for that page closes whatever root is open.
     pub fn committed(&self) -> bool {
-        self.loaded.load(Ordering::Relaxed)
+        self.is_loaded(WINDOW)
+    }
+
+    fn is_loaded(&self, label: &str) -> bool {
+        self.loaded.lock().unwrap_or_else(|e| e.into_inner()).contains(label)
+    }
+
+    fn set_loaded(&self, label: &str, loaded: bool) {
+        let mut set = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
+        match loaded {
+            true => set.insert(label.to_string()),
+            false => set.remove(label),
+        };
     }
 
     /// Where a fresh navigation should start: the served root.
@@ -1831,11 +1846,23 @@ impl Jar {
         }
         let mut cookies = self.cookies.lock().unwrap();
         cookies.extend(pairs);
+        self.write(&cookies);
+    }
+
+    /// Forgets one cookie, in memory and in the file.
+    fn remove(&self, name: &str) {
+        let mut cookies = self.cookies.lock().unwrap();
+        if cookies.remove(name).is_some() {
+            self.write(&cookies);
+        }
+    }
+
+    fn write(&self, cookies: &BTreeMap<String, String>) {
         if let Some(file) = self.file.get() {
             if let Some(dir) = file.parent() {
                 let _ = fs::create_dir_all(dir);
             }
-            let _ = fs::write(file, jar_text(&cookies));
+            let _ = fs::write(file, jar_text(cookies));
         }
     }
 }
@@ -2061,12 +2088,12 @@ fn start(app: &AppHandle) -> Result<(), String> {
         origin: origin.clone(),
         entry: entry.clone(),
         home: home.clone(),
-        loaded: AtomicBool::new(false),
+        loaded: Mutex::new(std::collections::HashSet::new()),
         // The window below is built on it.
         at_home: AtomicBool::new(true),
     });
 
-    build_window(app, &home, title)?;
+    build_window(app, WINDOW, &home, title, false)?;
     check_roots(app);
     Ok(())
 }
@@ -2097,12 +2124,12 @@ fn reopen(app: &AppHandle) -> bool {
         return false;
     };
     let title = window_title(&serving.state().cfg);
-    let Ok(win) = build_window(app, &serving.home, title) else {
+    let Ok(win) = build_window(app, WINDOW, &serving.home, title, false) else {
         return false;
     };
     // A new webview, on the start page like a cold start and with nothing
     // committed in it yet.
-    serving.loaded.store(false, Ordering::Relaxed);
+    serving.set_loaded(WINDOW, false);
     serving.at_home.store(true, Ordering::Relaxed);
     show(&win);
     true
@@ -2195,15 +2222,21 @@ pub fn page_window<R: tauri::Runtime>(
 ///
 /// Apart from `start` because a phone can need it twice in one process: see
 /// [`reopen`].
+/// A tree window: the main one (`WINDOW`, opened on the start page), or one
+/// with a root of its own (`own`, `Config::open_window`), which keeps that
+/// root for life — so none of the main window's start page, wait page,
+/// re-root on a drop or Recent applies to it, and its clicks act in it.
 fn build_window(
     app: &AppHandle,
+    label: &str,
     home: &str,
     title: String,
+    own: bool,
 ) -> Result<tauri::WebviewWindow, String> {
     let ext = Arc::clone(&app.state::<SharedExt>().0);
     let win = WebviewWindowBuilder::new(
         app,
-        WINDOW,
+        label,
         // The start page, not the root: nothing is open yet whatever this run was
         // given — a folder from argv is opened after the window exists — and that
         // is what makes it the entry behind everything. A window handed a folder
@@ -2236,7 +2269,17 @@ fn build_window(
             // can arrive in the millisecond between the two; and whoever served
             // it, because the question is whether script has somewhere to run
             // and every page answers it. See `Serving::loaded`.
-            serving.loaded.store(true, Ordering::Relaxed);
+            serving.set_loaded(win.label(), true);
+            // A window of its own has no start page, no wait page and no
+            // re-root: it is named after its own root, and that is all.
+            if own {
+                if payload.event() == tauri::webview::PageLoadEvent::Finished
+                    && origin_allowed(&shell, payload.url())
+                {
+                    let _ = win.set_title(&window_title_in(&serving.state().cfg, win.label()));
+                }
+                return;
+            }
             // **The start page's address closes what was open, here** — when the
             // window arrives, by a link, by Back or by the shell's own load — and
             // not where the router serves it (`treeserve::HOME_PATH`): a frame
@@ -2288,6 +2331,7 @@ fn build_window(
         let app = app.clone();
         let ext = Arc::clone(&ext);
         let shell = shell_origins();
+        let label = label.to_string();
         move |url| {
             // **An action needs the page's token**, before anything acts on it
             // — the embedder's actions included, which are claimed by path
@@ -2299,12 +2343,14 @@ fn build_window(
             if let Some(serving) = app.try_state::<Serving>()
                 && untokened(url, &serving.state().cfg.action_token)
             {
-                fail(&app, "That link did not come from this window.", false);
+                fail_in(&app, &label, "That link did not come from this window.", false);
                 return false;
             }
             // Downstream actions first: a URL an extension claims is handled
-            // entirely by it, the way `/.ts/open` is handled below.
-            if ext.actions.iter().any(|a| a(&app, url)) {
+            // entirely by it, the way `/.ts/open` is handled below. Not yet in
+            // a window of its own: an action is told only the app, and would
+            // act on the main window's root and page.
+            if !own && ext.actions.iter().any(|a| a(&app, url)) {
                 return false;
             }
             // By scheme where the origin is opaque, by whole origin where it is
@@ -2314,13 +2360,13 @@ fn build_window(
                 // The page's own chrome. These paths are not routes: the server
                 // never re-roots itself and would answer 404, so the whole
                 // capability lives here, in the one client that may have it.
-                if shell_action(&app, url) {
+                if shell_action(&app, &label, url) {
                     return false;
                 }
                 // A "Download" link: ask where to put it and copy from disk,
                 // rather than leaving it to a webview download stack that is
                 // invisible on some platforms and absent on others.
-                if is_download_link(url) && save_as(&app, url) {
+                if is_download_link(url) && save_as(&app, &label, url) {
                     return false;
                 }
                 return true;
@@ -2351,6 +2397,7 @@ fn build_window(
         let app = app.clone();
         let ext = Arc::clone(&ext);
         let shell = shell_origins();
+        let label = label.to_string();
         move |url, _features| {
             match origin_allowed(&shell, &url) || origin_allowed(&ext.allowed_origins, &url) {
                 // Navigated to and not replaced, unlike everything else this
@@ -2358,7 +2405,7 @@ fn build_window(
                 // forward, and the only reason it came through here rather than
                 // through the navigation handler is the window it asked for.
                 true => {
-                    if let Some(win) = app.get_webview_window(WINDOW) {
+                    if let Some(win) = app.get_webview_window(&label) {
                         let _ = win.navigate(url);
                     }
                 }
@@ -2371,6 +2418,7 @@ fn build_window(
     // declines to render, say. Without a destination those fail silently.
     .on_download({
         let app = app.clone();
+        let label = label.to_string();
         // Resolved once, on a thread, before any download asks. The callback
         // has to answer with a destination before it returns, so it cannot go
         // looking — and on Android asking where Downloads is is a platform
@@ -2397,8 +2445,8 @@ fn build_window(
                 }
                 tauri::webview::DownloadEvent::Finished { path, success, .. } => match (success, path)
                 {
-                    (true, Some(p)) => notify(&app, &format!("Saved to {}", p.display())),
-                    (false, _) => fail(&app, "The download did not finish.", false),
+                    (true, Some(p)) => notify_in(&app, &label, &format!("Saved to {}", p.display())),
+                    (false, _) => fail_in(&app, &label, "The download did not finish.", false),
                     _ => {}
                 },
                 _ => {}
@@ -2410,18 +2458,92 @@ fn build_window(
     .map_err(|e| format!("Cannot create the window: {e}"))?;
 
     // Dropping a folder on the window re-roots; dropping a file opens its page.
+    // Not on a window of its own, which never leaves its folder: there it is
+    // let go of when the window is, root, open folders and transfer.
     win.on_window_event({
         let app = app.clone();
-        move |event| {
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
-                && let Some(dir) = paths.iter().find(|p| p.is_dir())
-            {
-                open_root(&app, dir.clone(), true);
+        let label = label.to_string();
+        move |event| match event {
+            tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) if !own => {
+                if let Some(dir) = paths.iter().find(|p| p.is_dir()) {
+                    open_root(&app, dir.clone(), true);
+                }
             }
+            tauri::WindowEvent::Destroyed if own => window_gone(&app, &label),
+            _ => {}
         }
     });
 
     Ok(win)
+}
+
+/// Opens the window `label` on a root of its own, for life, at `path` inside it
+/// — a folder or a file — at `size` and `at` (logical), and shows it. Desktop
+/// only. Call it off the main thread: building a webview waits on that thread,
+/// and on Windows a command running there hangs for good.
+///
+/// The window answers from its own root (`Config::open_window`), keeps its own
+/// open folders, and has none of the main window's ways out of a folder. Closing
+/// it lets the root go, forgets its open folders and stops a transfer it
+/// started.
+#[cfg(desktop)]
+pub fn open_window(
+    app: &AppHandle,
+    label: &str,
+    root: treeserve::Root,
+    name: Option<String>,
+    path: &str,
+    size: tauri::LogicalSize<f64>,
+    at: tauri::LogicalPosition<f64>,
+) -> Result<tauri::WebviewWindow, String> {
+    let serving = app.try_state::<Serving>().ok_or("not started")?;
+    if app.get_webview_window(label).is_some() {
+        return Err(format!("A window called {label} is already open."));
+    }
+    let cfg = &serving.state().cfg;
+    cfg.open_window(label, root, name);
+    // A label is used again — the next run's first, on another folder — and
+    // the open folders it kept were paths in that one.
+    forget_open_folders(app, label);
+    let url = format!("{}{}", serving.origin, path);
+    let built = build_window(app, label, &url, window_title_in(cfg, label), true).and_then(|win| {
+        let _ = win.set_size(size);
+        let _ = win.set_position(at);
+        win.show().map_err(|e| format!("Cannot show the window: {e}"))?;
+        let _ = win.set_focus();
+        Ok(win)
+    });
+    if built.is_err() {
+        window_gone(app, label);
+        if let Some(win) = app.get_webview_window(label) {
+            let _ = win.destroy();
+        }
+    }
+    built
+}
+
+/// The window an upload or download on its way belongs to — which closing
+/// that window, or quitting, would stop — if one is on its way.
+pub fn transfer_owner() -> Option<String> {
+    transfer::running_owner()
+}
+
+/// A window of its own has gone: its root, its open folders and any transfer
+/// it started go with it.
+fn window_gone(app: &AppHandle, label: &str) {
+    transfer::cancel_for(label);
+    forget_open_folders(app, label);
+    if let Some(serving) = app.try_state::<Serving>() {
+        serving.set_loaded(label, false);
+        serving.state().cfg.close_window(label);
+    }
+}
+
+/// Drops the window `label`'s own open folders from the jar, and its file.
+fn forget_open_folders(app: &AppHandle, label: &str) {
+    if let Some(jar) = app.try_state::<JarState>() {
+        jar.0.remove(&format!("{}_{label}", treeserve::OPEN_NAME));
+    }
 }
 
 /// Finds out what the pane's shortcuts actually are, off the critical path.
@@ -2621,22 +2743,20 @@ fn download_name(url: &tauri::Url) -> String {
 /// So the link is always claimed. It is only ever drawn for a file; one made by
 /// hand that names something else says so from the thread rather than falling
 /// through to a navigation, which would arrive back here.
-fn save_as(app: &AppHandle, url: &tauri::Url) -> bool {
+fn save_as(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
     // The router's own gate, mirrored — where the backend has no copy to give,
     // the link is not claimed at all, and the navigation proceeds to the
     // server, whose `?dl=1` handling turns it back into the ordinary view.
     // Claiming first made that gate unreachable: any link in served content
     // could write `?dl=1` and start a copy the button would never have offered.
-    let downloadable = app
-        .try_state::<Serving>()
-        .and_then(|serving| serving.state().cfg.root())
-        .is_some_and(|root| root.vfs.downloadable());
+    let downloadable = root_in(app, label).is_some_and(|root| root.vfs.downloadable());
     if !downloadable {
         return false;
     }
     let app = app.clone();
+    let label = label.to_string();
     let url = url.clone();
-    thread::spawn(move || save_asked(&app, &url));
+    thread::spawn(move || save_asked(&app, &label, &url));
     true
 }
 
@@ -2645,21 +2765,18 @@ fn save_as(app: &AppHandle, url: &tauri::Url) -> bool {
 /// The URL is resolved back to its path with the server's own checks, so the
 /// bytes are copied straight from the served tree — no second HTTP round trip,
 /// and nothing outside the root can be reached.
-fn save_asked(app: &AppHandle, url: &tauri::Url) {
+fn save_asked(app: &AppHandle, label: &str, url: &tauri::Url) {
     // No window state at all: nothing was clicked in a served page, so there is
     // nobody to tell.
-    let Some(serving) = app.try_state::<Serving>() else {
-        return;
-    };
-    let Some(root) = serving.state().cfg.root() else {
+    let Some(root) = root_in(app, label) else {
         return;
     };
     let Ok(target) = treeserve::resolve_in_root(root.vfs.as_ref(), url.path()) else {
-        fail(app, &format!("{} is not in this folder.", url.path()), false);
+        fail_in(app, label, &format!("{} is not in this folder.", url.path()), false);
         return;
     };
     if !root.vfs.metadata(&target.path).map(|m| m.is_file).unwrap_or(false) {
-        fail(app, &format!("{} is not a file to save.", url.path()), false);
+        fail_in(app, label, &format!("{} is not a file to save.", url.path()), false);
         return;
     }
     // The save sheet on a phone hands back a `content://` URI, and the copy
@@ -2697,6 +2814,7 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
     let vfs = Arc::clone(&root.vfs);
     let src = target.path;
     let back = app.clone();
+    let label = label.to_string();
     // One dialog at a time, as `ask_for_folder` has it.
     let Some(turn) = DialogTurn::take() else {
         return;
@@ -2714,7 +2832,7 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
     // Parented, like every other dialog this shell raises: without it the sheet
     // is a window of its own for the compositor to place, and it can land behind
     // the one that asked for it.
-    if let Some(win) = back.get_webview_window(WINDOW) {
+    if let Some(win) = dialog_parent(&back, &label) {
         dialog = dialog.set_parent(&win);
     }
     dialog.save_file(move |dest| {
@@ -2738,10 +2856,10 @@ fn save_asked(app: &AppHandle, url: &tauri::Url) {
             // said `0755` of a document is a trap a browser would not set. A
             // file saved over keeps the mode it had (`part_mode`).
             let mode = vfs.metadata(&src).ok().and_then(|m| m.mode);
-            let copied = copy_bounded(&app, &vfs, &src, &dest, mode);
+            let copied = copy_bounded(&app, &label, &vfs, &src, &dest, mode);
             match copied {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => fail(&app, &format!("Could not save {}: {e}", dest.display()), false),
+                Err(e) => fail_in(&app, &label, &format!("Could not save {}: {e}", dest.display()), false),
                 Ok(_) => {}
             }
         });
@@ -2895,6 +3013,7 @@ const MAX_DOWNLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// says what it was going to be.
 fn copy_bounded(
     app: &AppHandle,
+    label: &str,
     vfs: &Arc<dyn treeserve::Vfs>,
     src: &treeserve::VfsPath,
     dest: &Path,
@@ -2928,7 +3047,7 @@ fn copy_bounded(
         // Through the status line when nothing else holds it, so a large file
         // from a far machine says how far it has got and can be cancelled;
         // behind an upload, quietly.
-        let copied = match transfer::Turn::take() {
+        let copied = match transfer::Turn::take(label) {
             Some(_turn) => {
                 let name = src.segments().last().cloned().unwrap_or_default();
                 let done = transfer::pump(app, &format!("Saving {name}"), len, &mut from, &mut to);
@@ -2973,11 +3092,12 @@ fn save_into_files(app: &AppHandle, target: &treeserve::Resolved, root: &treeser
     let app = app.clone();
     thread::spawn(move || {
         // No mode: Files is the app's own, and nothing runs from it.
-        let copied = copy_bounded(&app, &vfs, &src, &dest, None);
+        let copied = copy_bounded(&app, WINDOW, &vfs, &src, &dest, None);
         match copied {
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Ok(_) => notify(
+            Ok(_) => notify_in(
                 &app,
+                WINDOW,
                 &format!(
                     "Saved to Files as {}",
                     dest.file_name().unwrap_or_default().to_string_lossy()
@@ -3014,7 +3134,7 @@ fn save_through_sheet(app: &AppHandle, target: &treeserve::Resolved, root: &tree
         let staged = (|| -> io::Result<PathBuf> {
             fs::create_dir_all(&dir)?;
             let tmp = free_name(&dir, &name);
-            copy_bounded(&app, &vfs, &src, &tmp, None)?;
+            copy_bounded(&app, WINDOW, &vfs, &src, &tmp, None)?;
             Ok(tmp)
         })();
         let SaveTarget { mut write, discard } = dest;
@@ -3023,7 +3143,7 @@ fn save_through_sheet(app: &AppHandle, target: &treeserve::Resolved, root: &tree
         let copied = staged.and_then(|tmp| {
             let out = fs::File::open(&tmp).and_then(|mut f| {
                 let len = f.metadata().ok().map(|m| m.len());
-                match transfer::Turn::take() {
+                match transfer::Turn::take(WINDOW) {
                     Some(_turn) => {
                         let done = transfer::pump(&app, &format!("Saving {name}"), len, &mut f, &mut write);
                         transfer::progress(&app, None);
@@ -3104,7 +3224,16 @@ fn untokened(url: &tauri::Url, token: &str) -> bool {
 /// Handles the page's own controls, which are links rather than script: the
 /// back button, the picker button, and the two lists that re-root. Returns
 /// whether the navigation was one of ours and should therefore be cancelled.
-fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
+fn shell_action(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
+    // A window with a root of its own never leaves it: whatever would open
+    // another folder, close this one or change the lists that do is claimed
+    // and does nothing. Its page does not draw them; this is for the link
+    // that does anyway — the token proves the page drew it, not which page.
+    if has_own_root(app, label)
+        && matches!(url.path(), "/.ts/open" | "/.ts/close" | "/.ts/root" | "/.ts/place" | "/.ts/forget")
+    {
+        return true;
+    }
     match url.path() {
         "/.ts/open" => ask_for_folder(app.clone(), false),
         // The other end of having a folder open. What was open is in Recent, so
@@ -3116,19 +3245,19 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // starts at the top of the document and leaves the old page behind in the
         // history. A reload keeps the scroll and keeps Back meaning the folder
         // before this one.
-        "/.ts/reload" => eval(app, "location.reload()"),
+        "/.ts/reload" => eval_in(app, label, "location.reload()"),
         // The Print flag, and Ctrl+P, which in this window is not the engine's to
         // answer: there is no menu here that would have carried it. The page's
         // print rules are what makes the result worth looking at — no header, no
         // status line, no pane, and the light palette whatever is on screen.
-        "/.ts/print" => eval(app, "window.print()"),
+        "/.ts/print" => eval_in(app, label, "window.print()"),
         // A folder's New folder, its form sent; its Upload; and the status
         // line's Cancel for either an upload or a download. See `transfer`.
-        "/.ts/mkdir" => transfer::mkdir(app, url),
+        "/.ts/mkdir" => transfer::mkdir(app, label, url),
         // A row's marks: Delete, and the backend's own verbs on the row.
-        "/.ts/remove" => transfer::remove(app, url),
-        "/.ts/act" => transfer::act(app, url),
-        "/.ts/upload" => transfer::upload(app, url),
+        "/.ts/remove" => transfer::remove(app, label, url),
+        "/.ts/act" => transfer::act(app, label, url),
+        "/.ts/upload" => transfer::upload(app, label, url),
         "/.ts/cancel" => transfer::cancel(),
         // The theme / line-number / pane toggles, and the tree's disclosure
         // arrows. Both answer 303-and-a-cookie, and a 303 is the one reply a
@@ -3138,39 +3267,38 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
         // followed it and the page changed under your hand, which is the
         // behaviour to restore. What is stored is still the router's call — only
         // going back to the page is this side's.
-        "/.ts/set" | "/.ts/tree" => set_pref(app, url),
+        "/.ts/set" | "/.ts/tree" => set_pref(app, label, url),
         // A Recent row's own button. Nothing to open and nothing to wait for, so
         // unlike its neighbours this one answers here and reloads: the pane is
         // part of the page, and the row has to leave it.
         // The header's own control, which acts on whatever is open — so unlike its
         // neighbours it needs no path, and a reload is what puts the new state on
         // screen: the flag is part of the page and has to change with it.
-        "/.ts/pin" => off_the_callback(app, |app| {
-            if let Some(serving) = app.try_state::<Serving>()
-                && let Some(root) = serving.state().cfg.root()
-            {
-                // The name its Recent row has, where the opener gives one —
-                // `Thor: /home/pi`, not just `Thor` for every folder pinned on
-                // that server — and the window's name where it does not.
-                let label = row_label_of(app, &root.id).or_else(|| serving.state().cfg.root_name());
-                pin_root_id(app, &root.id, label);
-                eval(app, "location.reload()");
-            }
-        }),
+        "/.ts/pin" => {
+            let window = label.to_string();
+            off_the_callback(app, move |app| {
+                if let Some(root) = root_in(app, &window) {
+                    // The name its Recent row has, where the opener gives one —
+                    // `Thor: /home/pi`, not just `Thor` for every folder pinned
+                    // on that server — and the window's name where it does not.
+                    let name = row_label_of(app, &root.id).or_else(|| root_name_in(app, &window));
+                    pin_root_id(app, &root.id, name);
+                    eval_in(app, &window, "location.reload()");
+                }
+            })
+        }
         // Two callers: the same control once the root is pinned, with nothing to
         // say, and a row in the list, which names the one it means.
         "/.ts/unpin" => {
             let id = match url.query_pairs().find(|(k, _)| k == "path") {
                 Some((_, path)) => Some(path.trim().to_string()),
-                None => app
-                    .try_state::<Serving>()
-                    .and_then(|s| s.state().cfg.root())
-                    .map(|root| root.id.clone()),
+                None => root_in(app, label).map(|root| root.id.clone()),
             };
             if let Some(id) = id {
+                let window = label.to_string();
                 off_the_callback(app, move |app| {
                     unpin_root_id(app, &id);
-                    eval(app, "location.reload()");
+                    eval_in(app, &window, "location.reload()");
                 });
             }
         }
@@ -3227,13 +3355,14 @@ fn shell_action(app: &AppHandle, url: &tauri::Url) -> bool {
 /// the page it applies to, so the comparison below has one answer today. It is
 /// kept because the `back=` it exists for is a link somebody may yet draw, and a
 /// thread costs a click.
-fn set_pref(app: &AppHandle, url: &tauri::Url) {
+fn set_pref(app: &AppHandle, label: &str, url: &tauri::Url) {
     let app = app.clone();
+    let label = label.to_string();
     let url = url.clone();
-    thread::spawn(move || set_pref_now(&app, &url));
+    thread::spawn(move || set_pref_now(&app, &label, &url));
 }
 
-fn set_pref_now(app: &AppHandle, url: &tauri::Url) {
+fn set_pref_now(app: &AppHandle, label: &str, url: &tauri::Url) {
     let Some(serving) = app.try_state::<Serving>() else {
         return;
     };
@@ -3244,13 +3373,15 @@ fn set_pref_now(app: &AppHandle, url: &tauri::Url) {
     // reads from the `Cookie`, and with no cookie to read it wrote a set of one —
     // so opening a directory quietly shut every other one, and a second level
     // could never appear. `/.ts/set` never noticed, its keys being independent.
-    let reply = treeserve::handle(
+    // As the window asked it: a tree's open folders are that window's own.
+    let reply = treeserve::handle_in(
         serving.state(),
         &treeserve::Req {
             url: path_and_query(url),
             headers: with_jar(Vec::new(), &jar.0),
             is_get: true,
         },
+        Some(label),
     );
     jar.0.store(&reply);
     // Every link to here carries `back=`. A request without one is `ZOOM`'s,
@@ -3262,7 +3393,7 @@ fn set_pref_now(app: &AppHandle, url: &tauri::Url) {
         return;
     };
     let here = app
-        .get_webview_window(WINDOW)
+        .get_webview_window(label)
         .and_then(|w| w.url().ok())
         .map(|u| path_and_query(&u));
     // A toggle is always clicked on the page it applies to, so this is the usual
@@ -3271,8 +3402,8 @@ fn set_pref_now(app: &AppHandle, url: &tauri::Url) {
     // is written down under. The navigation is for a `back=` that points
     // somewhere else, which nothing draws today.
     match here.as_deref() == Some(back.as_str()) {
-        true => eval(app, "location.reload()"),
-        false => replace_page(app, &format!("{}{}", serving.origin, back)),
+        true => eval_in(app, label, "location.reload()"),
+        false => replace_page_in(app, label, &format!("{}{}", serving.origin, back)),
     }
 }
 
@@ -3330,8 +3461,38 @@ fn close_folder(app: &AppHandle) {
 /// `Serving::loaded`, and `open_failed`, which is the second place that learned
 /// it the hard way.
 fn committed<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {
-    app.try_state::<Serving>()
-        .is_some_and(|s| s.loaded.load(Ordering::Relaxed))
+    committed_in(app, WINDOW)
+}
+
+/// [`committed`], for the window `label`.
+pub(crate) fn committed_in<R: tauri::Runtime>(app: &AppHandle<R>, label: &str) -> bool {
+    app.try_state::<Serving>().is_some_and(|s| s.is_loaded(label))
+}
+
+/// The root a page in the window `label` is drawn from: its own, where it has
+/// one (`Config::open_window`), and the main window's otherwise.
+pub(crate) fn root_in(app: &AppHandle, label: &str) -> Option<Arc<treeserve::Root>> {
+    let serving = app.try_state::<Serving>()?;
+    let cfg = &serving.state().cfg;
+    match cfg.window(label) {
+        Some(w) => Some(w.root),
+        None => cfg.root(),
+    }
+}
+
+/// What the root of the window `label` is called, where something named it.
+pub(crate) fn root_name_in(app: &AppHandle, label: &str) -> Option<String> {
+    let serving = app.try_state::<Serving>()?;
+    let cfg = &serving.state().cfg;
+    match cfg.window(label) {
+        Some(w) => w.name,
+        None => cfg.root_name(),
+    }
+}
+
+/// Whether `label` is a window with a root of its own, which never leaves it.
+fn has_own_root(app: &AppHandle, label: &str) -> bool {
+    app.try_state::<Serving>().is_some_and(|s| s.state().cfg.window(label).is_some())
 }
 
 /// Whether the window is showing the start page.
@@ -3386,7 +3547,7 @@ fn push_page(app: &AppHandle, url: &str) {
 /// see [`Serving::loaded`].
 fn note_navigating(app: &AppHandle) {
     if let Some(serving) = app.try_state::<Serving>() {
-        serving.loaded.store(false, Ordering::Relaxed);
+        serving.set_loaded(WINDOW, false);
     }
 }
 
@@ -3441,11 +3602,19 @@ pub fn show_tree(app: &AppHandle) {
 /// or, on Android, swipes and finds the gesture doing nothing several times
 /// before it leaves.
 pub fn replace_page<R: tauri::Runtime>(app: &AppHandle<R>, url: &str) {
-    let Some(win) = app.get_webview_window(WINDOW) else {
+    replace_page_in(app, WINDOW, url);
+}
+
+/// [`replace_page`], in the window `label`. Only the main window has a start
+/// page to keep track of.
+pub fn replace_page_in<R: tauri::Runtime>(app: &AppHandle<R>, label: &str, url: &str) {
+    let Some(win) = app.get_webview_window(label) else {
         return;
     };
-    note_page(app, url);
-    match committed(app) {
+    if label == WINDOW {
+        note_page(app, url);
+    }
+    match committed_in(app, label) {
         true => {
             let _ = win.eval(&format!("location.replace('{}')", js_quoted(url)));
         }
@@ -3496,7 +3665,11 @@ pub fn repaint_notes<R: tauri::Runtime>(app: &AppHandle<R>, ids: &[String]) {
 }
 
 fn eval(app: &AppHandle, js: &str) {
-    if let Some(w) = app.get_webview_window(WINDOW) {
+    eval_in(app, WINDOW, js);
+}
+
+pub(crate) fn eval_in(app: &AppHandle, label: &str, js: &str) {
+    if let Some(w) = app.get_webview_window(label) {
         let _ = w.eval(js);
     }
 }
@@ -3599,16 +3772,26 @@ fn places(app: &AppHandle) -> Vec<(String, PathBuf)> {
 /// The window's title for a page the tree served: what the root is called, if
 /// whoever re-rooted said, and otherwise the folder it ends in.
 fn window_title(cfg: &Config) -> String {
+    window_title_in(cfg, WINDOW)
+}
+
+/// [`window_title`], for the window `label`: named after its own root where it
+/// has one.
+fn window_title_in(cfg: &Config, label: &str) -> String {
     // Whatever this program is called, which is not necessarily this crate.
     let app = cfg
         .app_name
         .clone()
         .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
-    let Some(root) = cfg.root() else {
+    let (root, name) = match cfg.window(label) {
+        Some(w) => (Some(w.root), w.name),
+        None => (cfg.root(), cfg.root_name()),
+    };
+    let Some(root) = root else {
         // Nothing open: the app is all there is to name.
         return app;
     };
-    if let Some(name) = cfg.root_name() {
+    if let Some(name) = name {
         return format!("{name} — {app}");
     }
     match treeserve::leaf_of(&root.id) {
@@ -3628,8 +3811,8 @@ fn origin_allowed(allowed: &[String], url: &tauri::Url) -> bool {
 }
 
 /// Says something happened, for actions with no visible result of their own.
-fn notify(app: &AppHandle, msg: &str) {
-    raise(app, msg, MessageDialogKind::Info, false);
+pub(crate) fn notify_in(app: &AppHandle, label: &str, msg: &str) {
+    raise(app, label, msg, MessageDialogKind::Info, false);
 }
 
 /// Reports a problem in a native dialog, since a GUI build has nowhere to print.
@@ -3639,12 +3822,24 @@ fn notify(app: &AppHandle, msg: &str) {
 /// so it is told (`__tsStay`). Only while that page is the one committed: a
 /// navigation of ours in flight is leaving it for real.
 fn fail(app: &AppHandle, msg: &str, fatal: bool) {
-    if committed(app)
-        && let Some(win) = app.get_webview_window(WINDOW)
+    fail_in(app, WINDOW, msg, fatal);
+}
+
+/// [`fail`], said over the window `label` — the one whose page asked.
+pub(crate) fn fail_in(app: &AppHandle, label: &str, msg: &str, fatal: bool) {
+    if committed_in(app, label)
+        && let Some(win) = app.get_webview_window(label)
     {
         let _ = win.eval("window.__tsStay && window.__tsStay()");
     }
-    raise(app, msg, MessageDialogKind::Error, fatal);
+    raise(app, label, msg, MessageDialogKind::Error, fatal);
+}
+
+/// The window a dialog about `label` is parented to: that one while it is
+/// open, the main one once it has gone. A phone's dialog has no parent.
+#[cfg(desktop)]
+pub(crate) fn dialog_parent(app: &AppHandle, label: &str) -> Option<tauri::WebviewWindow> {
+    app.get_webview_window(label).or_else(|| app.get_webview_window(WINDOW))
 }
 
 /// Every dialog this shell raises: on the thread that may raise one, and
@@ -3656,8 +3851,9 @@ fn fail(app: &AppHandle, msg: &str, fatal: bool) {
 /// nothing on screen saying why. And these are reached from webview callbacks —
 /// a finished download reports from `on_download` — so the hop belongs here
 /// rather than at each call site, which is where it kept being forgotten.
-fn raise(app: &AppHandle, msg: &str, kind: MessageDialogKind, fatal: bool) {
+fn raise(app: &AppHandle, label: &str, msg: &str, kind: MessageDialogKind, fatal: bool) {
     let app = app.clone();
+    let label = label.to_string();
     let msg = msg.to_string();
     let _ = app.clone().run_on_main_thread(move || {
         // Titled by the program the reader is running, which is the
@@ -3675,9 +3871,11 @@ fn raise(app: &AppHandle, msg: &str, kind: MessageDialogKind, fatal: bool) {
         // No `parent` on the builder on mobile, where a dialog belongs to the
         // one activity and has nothing to get lost behind.
         #[cfg(desktop)]
-        if let Some(win) = app.get_webview_window(WINDOW) {
+        if let Some(win) = dialog_parent(&app, &label) {
             dialog = dialog.parent(&win);
         }
+        #[cfg(mobile)]
+        let _ = &label;
         let back = app.clone();
         dialog.show(move |_| {
             if fatal {

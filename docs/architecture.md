@@ -556,6 +556,19 @@ windows run at once on their own threads. Everything else in `Config` is
 shared. `name_of` finds a root's name by identity, not id, since two windows
 may hold one folder.
 
+`open_window` (desktop) builds such a window with the main window's handlers,
+told which window they are in: a click acts on that window's root and page
+(`shell_action`, `set_pref`, the transfer routes, Download), and its dialogs and
+messages are parented to it (`fail_in`, `dialog_parent`). What would leave the
+folder — `/.ts/open`, `close`, `root`, `place`, `forget` — is claimed and does
+nothing there, token or not, and a dropped folder is ignored. "Committed" is
+per window. The one transfer records its window: its progress goes there, and
+closing that window cancels it (`transfer::cancel_for`); `transfer_owner` says
+which window would lose one. On `Destroyed` the window's root, its
+`ts_open_<label>` cookie and its committed flag go. An embedder's actions are
+not yet run there: they are told only the app, and would act on the main
+window.
+
 ### Back
 
 Two addresses, and exactly one step between them. Every page of a tree wears
