@@ -114,7 +114,7 @@ The main pane's zoom is a cookie too (`ts_zoom`, whole percent, 50–300), and
 the page puts it on `<html>` as `--ts-zoom` for the CSS `zoom` of what is in
 `main`, not of `main`: the header and the pane were measured (`header_fit`),
 and the pane's padding and scrollbars stay as they are. Only the shell changes
-it, from its `ZOOM` script — keys and Ctrl+wheel in steps of the body text's
+it, from its `ZOOM` script — keys and Ctrl+wheel in steps of the pane's text's
 pixels, a damped pinch — which draws the change at once and stores it with a
 `/.ts/set?zoom=` that carries no `back=`, so the shell stores it without the
 reload a link's preference gets. A browser has no such script and keeps its

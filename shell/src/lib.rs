@@ -460,9 +460,10 @@ addEventListener('keydown', function (e) {
 /// and a two-finger pinch in the pane moves it smoothly. The header and the
 /// sidebar are not zoomed (`app.css`, `--ts-zoom`).
 ///
-/// **A step is counted in the body text's pixels**, 15px at 100% (`app.css`'s
-/// `body`): 1px up to 16, 2px up to 24, 4px beyond — 8 to 44px. A percentage
-/// step was 1.5px at the size a reader is at most often and 7.5px at the top.
+/// **A step is counted in the pane's text's pixels**, 16px at 100% (`app.css`'s
+/// `main`): 1px up to 16, 2px up to 24, 4px beyond — 8 to 48px, which is 50% to
+/// 300%. A percentage step was 1.5px at the size a reader is at most often and
+/// 7.5px at the top.
 /// A wheel steps once a notch: a mouse's arrives whole, a touchpad's small
 /// deltas are added up to one.
 ///
@@ -488,9 +489,9 @@ addEventListener('keydown', function (e) {
 const ZOOM: &str = r#"
 (function () {
   var MIN = __TS_ZOOM_MIN__, MAX = __TS_ZOOM_MAX__, PINCH = 0.35;
-  // The steps, as the body text's size in px (15 at 100%).
-  var BASE = 15, STEPS = [];
-  for (var px = 8; px <= 44; px += px < 16 ? 1 : px < 24 ? 2 : 4) STEPS.push(px);
+  // The steps, as the pane's text's size in px (16 at 100%).
+  var BASE = 16, STEPS = [];
+  for (var px = 8; px <= 48; px += px < 16 ? 1 : px < 24 ? 2 : 4) STEPS.push(px);
   // Looked up each time: this runs before the document has an `<html>`.
   var root = function () { return document.documentElement; };
   var pane = function () {

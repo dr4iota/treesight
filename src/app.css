@@ -1070,6 +1070,12 @@ main {
   flex: 1; min-width: 0; overflow: auto;
   padding: 1rem max(1.25rem, var(--safe-right)) 3rem max(1.25rem, var(--safe-left));
 }
+/* 16px, the sidebar's and the start page's lists' size, where the `body`'s
+   15px read small beside them on a phone and on Windows alike. Not `body`'s
+   own: the header's widths were measured at 15px (`header_fit`). This page's
+   `main` only, by the classes its `body` carries — an embedder's page that
+   links this sheet has a `main` of its own, measured at 15px too. */
+:is(body.fitted, body.nothing) main { font-size: 1rem; }
 /* The reader's zoom, the main pane's content alone: the header and the
    sidebar keep the sizes they were measured at, and so does the pane itself —
    its padding and its scrollbars — which on `main` grew with the text (Windows,
@@ -1479,7 +1485,7 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
 .codewrap pre {
   margin: 0;
   padding: .8rem 0;
-  font: 12.8px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .codewrap pre.gutter {
   text-align: right;
@@ -1525,7 +1531,7 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
   background: none;
   border: none;
   padding: 0;
-  font-size: 12.8px;
+  font-size: 14px;
 }
 .md blockquote {
   margin: 0;
