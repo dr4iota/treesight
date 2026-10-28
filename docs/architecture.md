@@ -110,6 +110,16 @@ HTML pages are `Cache-Control: no-store`. Raw bodies get an ETag from
 directories are cookies (`ts_theme`, `ts_ln`, `ts_sidebar`, `ts_open`), not
 query strings, so a shared URL stays shareable.
 
+The main pane's zoom is a cookie too (`ts_zoom`, whole percent, 50–300), and
+the page puts it on `<html>` as `--ts-zoom` for the CSS `zoom` of what is in
+`main`, not of `main`: the header and the pane were measured (`header_fit`),
+and the pane's padding and scrollbars stay as they are. Only the shell changes
+it, from its `ZOOM` script — keys and Ctrl+wheel in steps of the body text's
+pixels, a damped pinch — which draws the change at once and stores it with a
+`/.ts/set?zoom=` that carries no `back=`, so the shell stores it without the
+reload a link's preference gets. A browser has no such script and keeps its
+own zoom.
+
 **The shell keeps its own cookie jar** (`Jar`, `shell/src/lib.rs`), because a
 custom scheme has nowhere to keep cookies. `treesight://localhost` has an
 opaque origin — it serializes to "null" — and a scheme request never reaches

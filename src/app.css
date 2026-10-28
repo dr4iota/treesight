@@ -1070,6 +1070,17 @@ main {
   flex: 1; min-width: 0; overflow: auto;
   padding: 1rem max(1.25rem, var(--safe-right)) 3rem max(1.25rem, var(--safe-left));
 }
+/* The reader's zoom, the main pane's content alone: the header and the
+   sidebar keep the sizes they were measured at, and so does the pane itself —
+   its padding and its scrollbars — which on `main` grew with the text (Windows,
+   27 Oct 2026). `zoom`, not a font size, because what is in here is sized in
+   px, rem and em alike; a zoomed box keeps the width it is given and its lines
+   wrap inside it, so the pane does not widen. */
+:is(body.fitted, body.nothing) main > * { zoom: var(--ts-zoom, 1); }
+/* A pinch in the pane is the shell's (`ZOOM` there), not the engine's: one
+   finger still scrolls. Only where that script runs — a browser keeps its own
+   pinch. */
+html[data-ts-pinch] main { touch-action: pan-x pan-y; }
 @media (width > 50rem) {
   body:not(.nopane) nav.tree + main { padding-left: 1.25rem; }
 }
@@ -2210,6 +2221,7 @@ body.nothing .start .row > a.aside {
   }
   .shell { display: block; overflow: visible; }
   main { padding: 0; overflow: visible; }
+  :is(body.fitted, body.nothing) main > * { zoom: 1; }
   main:has(> .tablewrap) { display: block; }
   .tablewrap { overflow: visible; border: none; }
   /* A heading is no use at the foot of a page with nothing of its own under it. */

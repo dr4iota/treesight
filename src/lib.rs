@@ -1122,6 +1122,7 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
         theme: state.cfg.theme,
         ln: state.cfg.ln,
         sidebar: state.cfg.sidebar,
+        zoom: 100,
         open,
     };
     for value in req.named("Cookie") {
@@ -1134,6 +1135,7 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
                 }
                 "ts_ln" => prefs.ln = v == "1",
                 "ts_sidebar" => prefs.sidebar = v == "1",
+                "ts_zoom" => prefs.zoom = page::zoom_from_str(&v).unwrap_or(100),
                 _ => {}
             }
         }
@@ -1434,8 +1436,9 @@ fn toggle_open(req: &Req, query: &[(String, String)]) -> Reply {
     reply.with("Location", &back_target(query))
 }
 
-/// `/.ts/set?theme=dark&ln=1&sidebar=0&back=/some/where` — store prefs in
-/// cookies and bounce back. Pure SSR option switching, no JS.
+/// `/.ts/set?theme=dark&ln=1&sidebar=0&zoom=125&back=/some/where` — store
+/// prefs in cookies and bounce back. Pure SSR option switching, no JS; only the
+/// zoom comes from the shell's script, which has drawn it already.
 fn set_prefs(query: &[(String, String)]) -> Reply {
     let mut reply = Reply::empty(303);
     for (k, v) in query {
@@ -1448,6 +1451,9 @@ fn set_prefs(query: &[(String, String)]) -> Reply {
             }
             "sidebar" if v == "0" || v == "1" => {
                 reply.headers.push(cookie_header("ts_sidebar", v));
+            }
+            "zoom" if page::zoom_from_str(v).is_some() => {
+                reply.headers.push(cookie_header("ts_zoom", v));
             }
             _ => {}
         }
@@ -1785,6 +1791,19 @@ mod tests {
             .find(|(k, _)| k == "Set-Cookie")
             .map(|(_, v)| v.split(';').next().unwrap_or_default().to_string())
             .expect("a cookie")
+    }
+
+    /// The zoom is stored only as whole percent in range; anything else would
+    /// be a cookie every later page had to second-guess.
+    #[test]
+    fn a_zoom_is_stored_only_in_range() {
+        let set = |v: &str| super::set_prefs(&[("zoom".to_string(), v.to_string())]);
+        assert_eq!(set_cookie(&set("125")), "ts_zoom=125");
+        assert_eq!(set_cookie(&set("50")), "ts_zoom=50");
+        assert_eq!(set_cookie(&set("300")), "ts_zoom=300");
+        for bad in ["49", "301", "1.25", "", "-100", "big"] {
+            assert!(!set(bad).headers.iter().any(|(k, _)| k == "Set-Cookie"), "{bad}");
+        }
     }
 
     /// The pages' whole script story is this header: served markup carries no

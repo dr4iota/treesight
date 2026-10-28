@@ -204,13 +204,14 @@ const WAIT: &str = r#"
   // The shell's own links that it answers in place — a row's verb, Delete,
   // Download, Print, New folder, Upload, Cancel, Open a folder — leave the
   // page up, often behind a question that may be dismissed: following one is
-  // not leaving, and the wait goes on.
+  // not leaving, and the wait goes on. So does a preference, which reloads
+  // this page or, from `ZOOM`, is only stored.
   // And a link out of the app, which the shell hands to the system's own
   // browser or drops: this page stays where it is. **A link of ours carries
   // no host** (docs/architecture.md, *Links carry no host*), so an href
   // that names a scheme is somebody else's — plain localhost included.
   var inPlace = function (u) {
-    return /^\/\.ts\/(act|remove|print|mkdir|upload|cancel|open)$/.test(u.pathname)
+    return /^\/\.ts\/(act|remove|print|mkdir|upload|cancel|open|set)$/.test(u.pathname)
       || u.searchParams.has('dl');
   };
   addEventListener('click', function (e) {
@@ -452,6 +453,159 @@ addEventListener('keydown', function (e) {
   else { return; }
   e.preventDefault();
 });
+"#;
+
+/// The main pane's zoom: `Ctrl+=` and `Ctrl+−` step it, as does `Ctrl+wheel` —
+/// which is also what a touchpad's pinch arrives as — `Ctrl+0` puts it back,
+/// and a two-finger pinch in the pane moves it smoothly. The header and the
+/// sidebar are not zoomed (`app.css`, `--ts-zoom`).
+///
+/// **A step is counted in the body text's pixels**, 15px at 100% (`app.css`'s
+/// `body`): 1px up to 16, 2px up to 24, 4px beyond — 8 to 44px. A percentage
+/// step was 1.5px at the size a reader is at most often and 7.5px at the top.
+/// A wheel steps once a notch: a mouse's arrives whole, a touchpad's small
+/// deltas are added up to one.
+///
+/// Drawn here at once and stored after a pause, by `/.ts/set?zoom=` with no
+/// `back=`, which `set_pref` takes as "already on screen": a reload a step
+/// would flash the page and lose the pinch under the fingers. Every page after
+/// gets it from the cookie, so it never arrives late.
+///
+/// Not one of the key bindings an embedder replaces: it acts only on a tree
+/// page — one that links `/.ts/app.css` and has a `main` — and never in a frame,
+/// so a terminal that wants `Ctrl+−` for itself, or a page of the embedder's,
+/// is left alone.
+///
+/// The pinch is damped: the zoom goes as the fingers' ratio to the power
+/// `PINCH`, so spreading them to twice as far apart is +27%, not +100%. Text
+/// wants a few percent at a time, and an undamped pinch overshot every time.
+///
+/// **A two-finger tap in the pane puts it back to 100%**, a phone's `Ctrl+0`:
+/// up within `TAP` ms of the second finger landing, neither moving more than a
+/// few pixels. The terminal asks for a hold as well, because there two fingers also
+/// pan and a reset by accident costs a view; here nothing else is done with two
+/// fingers that keep still, and a reset by accident costs one pinch.
+const ZOOM: &str = r#"
+(function () {
+  var MIN = __TS_ZOOM_MIN__, MAX = __TS_ZOOM_MAX__, PINCH = 0.35;
+  // The steps, as the body text's size in px (15 at 100%).
+  var BASE = 15, STEPS = [];
+  for (var px = 8; px <= 44; px += px < 16 ? 1 : px < 24 ? 2 : 4) STEPS.push(px);
+  // Looked up each time: this runs before the document has an `<html>`.
+  var root = function () { return document.documentElement; };
+  var pane = function () {
+    if (window.top !== window || !document.querySelector('link[href="/.ts/app.css"]')) return null;
+    return document.querySelector('main');
+  };
+  var now = function () {
+    var v = parseFloat(root().style.getPropertyValue('--ts-zoom'));
+    return v > 0 ? v * 100 : 100;
+  };
+  // The line at a height `y` on screen stays at that height: the pane's top
+  // for a key or the wheel, the fingers' midpoint for a pinch. Never about a
+  // point across: text reflows to the pane's width, so the pane starts at its
+  // left edge as it did, and a zoom about the pointer — the terminal's, whose
+  // grid does not reflow — pushed the start of every line off screen. As a
+  // fraction of the pane, so it holds whatever units the engine scrolls in.
+  var apply = function (pct, y) {
+    var main = pane();
+    if (!main) return;
+    pct = Math.min(MAX, Math.max(MIN, pct));
+    var r = main.getBoundingClientRect();
+    var fy = y == null ? 0 : Math.min(1, Math.max(0, (y - r.top) / r.height));
+    var py = (main.scrollTop + main.clientHeight * fy) / main.scrollHeight;
+    if (Math.abs(pct - 100) < 0.5) root().style.removeProperty('--ts-zoom');
+    else root().style.setProperty('--ts-zoom', String(pct / 100));
+    main.scrollTop = py * main.scrollHeight - main.clientHeight * fy;
+  };
+  // One redraw a frame, however many events a wheel or a pinch sends.
+  var want = null;
+  var soon = function (pct, y) {
+    if (!want) requestAnimationFrame(function () { var w = want; want = null; if (w) apply(w.p, w.y); });
+    want = { p: pct, y: y };
+  };
+  var timer = 0;
+  var save = function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      var m = document.querySelector('meta[name="ts-token"]');
+      location.assign('/.ts/set?zoom=' + Math.round(now()) + (m ? '&t=' + encodeURIComponent(m.content) : ''));
+    }, 500);
+  };
+  // The step after the current size, up or down; the size itself at either
+  // end. A tenth of a pixel of slack: what is stored is whole percent, which
+  // puts a step within 0.08px of itself, and no more, or a pinch that stopped
+  // just short of a step had the next key pass it by.
+  var step = function (up) {
+    var cur = now() * BASE / 100, i;
+    if (up) { for (i = 0; i < STEPS.length; i++) if (STEPS[i] > cur + 0.1) return STEPS[i] * 100 / BASE; }
+    else { for (i = STEPS.length - 1; i >= 0; i--) if (STEPS[i] < cur - 0.1) return STEPS[i] * 100 / BASE; }
+    return now();
+  };
+  addEventListener('keydown', function (e) {
+    if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.altKey || !pane()) return;
+    var next;
+    if (e.key === '=' || e.key === '+') next = step(true);
+    else if (e.key === '-' || e.key === '_') next = step(false);
+    else if (e.key === '0') next = 100;
+    else return;
+    e.preventDefault();
+    apply(next);
+    save();
+  });
+  var wheeled = 0, wheelAt = 0;
+  addEventListener('wheel', function (e) {
+    if (!e.ctrlKey || !pane()) return;
+    e.preventDefault();
+    var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+    // Begun afresh after a pause or on a turn, so a half-step left over is
+    // not spent by the next gesture.
+    if (e.timeStamp - wheelAt > 250 || dy * wheeled < 0) wheeled = 0;
+    wheelAt = e.timeStamp;
+    wheeled += dy;
+    if (Math.abs(wheeled) < 50) return;
+    apply(step(wheeled < 0));
+    wheeled = 0;
+    save();
+  }, { passive: false });
+  var pinch = null, tap = null, TAP = 350;
+  var gap = function (t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); };
+  addEventListener('touchstart', function (e) {
+    var main = pane();
+    pinch = null;
+    tap = null;
+    if (!main || e.touches.length !== 2) return;
+    if (!main.contains(e.touches[0].target) || !main.contains(e.touches[1].target)) return;
+    var d = gap(e.touches);
+    if (d > 0) pinch = { d: d, z: now() };
+    // Timed from the second finger: the first may have landed in the same
+    // event, or long before as a scroll.
+    tap = { t: e.timeStamp, at: {} };
+    for (var i = 0; i < 2; i++) tap.at[e.touches[i].identifier] = [e.touches[i].clientX, e.touches[i].clientY];
+  }, { passive: true });
+  addEventListener('touchmove', function (e) {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    var t = e.touches, i, a;
+    for (i = 0; tap && i < 2; i++) {
+      a = tap.at[t[i].identifier];
+      if (!a || Math.hypot(t[i].clientX - a[0], t[i].clientY - a[1]) > 12) tap = null;
+    }
+    soon(pinch.z * Math.pow(gap(t) / pinch.d, PINCH), (t[0].clientY + t[1].clientY) / 2);
+  }, { passive: false });
+  var lift = function (e) {
+    if (pinch && e.touches.length < 2) { pinch = null; save(); }
+    if (e.touches.length > 0) return;
+    // Not undone by a move of the fingers' still waiting for its frame.
+    if (tap && e.type === 'touchend' && e.timeStamp - tap.t < TAP) { want = null; apply(100); save(); }
+    tap = null;
+  };
+  addEventListener('touchend', lift);
+  addEventListener('touchcancel', lift);
+  addEventListener('DOMContentLoaded', function () {
+    if (pane()) root().setAttribute('data-ts-pinch', '');
+  });
+})();
 "#;
 
 /// The running server, kept in Tauri's managed state. Public so a downstream
@@ -867,10 +1021,12 @@ addEventListener('DOMContentLoaded', function () {
 fn window_script(custom: Option<String>, ours: &[String]) -> String {
     let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{}",
+        "{VIEWPORT}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{ZOOM}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
+    .replace("__TS_ZOOM_MIN__", &treeserve::page::ZOOM_MIN.to_string())
+    .replace("__TS_ZOOM_MAX__", &treeserve::page::ZOOM_MAX.to_string())
     .replace(OURS_SLOT, &format!("[{ours}]"))
 }
 
@@ -3027,6 +3183,11 @@ fn set_pref_now(app: &AppHandle, url: &tauri::Url) {
         },
     );
     jar.0.store(&reply);
+    // Every link to here carries `back=`. A request without one is `ZOOM`'s,
+    // which has drawn the change already: storing it is all there is to do.
+    if !url.query_pairs().any(|(k, _)| k == "back") {
+        return;
+    }
     let Some(back) = header(&reply, "Location") else {
         return;
     };
@@ -3895,7 +4056,7 @@ mod tests {
         assert!(mine.contains("pageshow"), "no restore");
         assert!(mine.contains(".notice[data-wait]"), "no wait for a notice that waits");
         assert!(mine.contains("if (leaving === Infinity ||"), "a page being left would be reloaded under its navigation");
-        assert!(mine.contains("(act|remove|print|mkdir|upload|cancel|open)"), "a link the shell answers in place would end the wait");
+        assert!(mine.contains("(act|remove|print|mkdir|upload|cancel|open|set)"), "a link the shell answers in place would end the wait");
         assert!(mine.contains("navigationType === 'traverse'"), "Back would reload under its navigation");
         assert!(mine.contains("f.value !== f.defaultValue"), "a reload would wipe a field's unsent text");
         assert!(mine.contains("getElementById('ts-drawer')"), "a reload would shut the drawer under the reader");
@@ -3921,6 +4082,9 @@ mod tests {
         assert!(theirs.contains(".notice[data-wait]"), "the wait went with the keys");
         assert!(theirs.contains("data-touch"), "the platform script went with the keys");
         assert!(theirs.contains("#ts"), "the scroll keeper went with the keys");
+        assert!(theirs.contains("'/.ts/set?zoom='"), "the zoom went with the keys");
+        assert!(theirs.contains(&format!("var MIN = {}, MAX = {},", treeserve::page::ZOOM_MIN, treeserve::page::ZOOM_MAX)), "{theirs}");
+        assert!(!theirs.contains("__TS_ZOOM_"), "the zoom's range was left a placeholder");
         // The binding, not the key's name: the wait watches Alt+Left too, to
         // know Back is under way, and binds nothing.
         assert!(!theirs.contains("e.key === 'ArrowLeft') { history.back(); }"), "the keys are the embedder's now");

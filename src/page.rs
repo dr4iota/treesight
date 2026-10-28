@@ -46,11 +46,37 @@ impl ThemeMode {
     }
 }
 
+/// The main pane's zoom, in percent, smallest and largest.
+pub const ZOOM_MIN: u16 = 50;
+pub const ZOOM_MAX: u16 = 300;
+
+/// A zoom as the cookie and `/.ts/set` carry it: whole percent, in range.
+pub fn zoom_from_str(s: &str) -> Option<u16> {
+    s.parse().ok().filter(|z| (ZOOM_MIN..=ZOOM_MAX).contains(z))
+}
+
+/// What `<html>` carries for `app.css`: the theme when it is not the system's,
+/// and the main pane's zoom when it is not 100%.
+fn root_attrs(prefs: Prefs<'_>) -> String {
+    let mut attrs = match prefs.theme {
+        ThemeMode::Auto => String::new(),
+        m => format!(" data-theme=\"{}\"", m.as_str()),
+    };
+    if prefs.zoom != 100 {
+        attrs.push_str(&format!(" style=\"--ts-zoom: {}\"", f32::from(prefs.zoom) / 100.0));
+    }
+    attrs
+}
+
 #[derive(Clone, Copy)]
 pub struct Prefs<'a> {
     pub theme: ThemeMode,
     pub ln: bool,
     pub sidebar: bool,
+    /// How large the main pane is drawn, in percent: the shell's Ctrl+= and
+    /// Ctrl+−, Ctrl+wheel and pinch (`ZOOM` there). The header and the pane
+    /// stay as they are. Always within `ZOOM_MIN..=ZOOM_MAX`.
+    pub zoom: u16,
     /// Directories the reader opened in the pane, `/`-joined relative paths.
     ///
     /// A borrow, so `Prefs` stays `Copy` and every renderer keeps taking it by
@@ -758,10 +784,7 @@ fn head_and_header(
         format!("{} — {}", rel.join("/"), named)
     };
 
-    let data_theme = match prefs.theme {
-        ThemeMode::Auto => String::new(),
-        m => format!(" data-theme=\"{}\"", m.as_str()),
-    };
+    let data_theme = root_attrs(prefs);
     // The syntax colours live in a stylesheet of their own, which is out of reach
     // of the print rules in ours: a dark theme would send its own pale code to
     // paper and the page would print with a gap where the listing was. So paper
@@ -1051,10 +1074,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
     };
     let mut controls = String::new();
     controls.push_str(&theme_flag(&state.cfg.action_token, prefs.theme, url_now));
-    let data_theme = match prefs.theme {
-        ThemeMode::Auto => String::new(),
-        m => format!(" data-theme=\"{}\"", m.as_str()),
-    };
+    let data_theme = root_attrs(prefs);
     format!(
         r#"<!DOCTYPE html>
 <html lang="en"{data_theme}>
@@ -2768,6 +2788,7 @@ mod tests {
             theme: ThemeMode::Light,
             ln: false,
             sidebar: false,
+            zoom: 100,
             open: &[],
         }
     }
@@ -2791,6 +2812,24 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The zoom rides on `<html>`, for `main` to read, and only when it is not
+    /// 100%: a page at the default looks as it always did, theme included.
+    #[test]
+    fn the_zoom_is_on_the_root_and_only_when_set() {
+        let dir = tmp_dir("zoom");
+        let state = state_at(dir.clone());
+        let page = |prefs: Prefs<'_>| {
+            let root = state.cfg.root().expect("these tests always serve one");
+            listing_page(&state, &root, prefs, &[], &VfsPath::new(Vec::new()), &[], "/")
+        };
+        let html = page(Prefs { zoom: 125, ..prefs() });
+        assert!(html.contains("<html lang=\"en\" data-theme=\"light\" style=\"--ts-zoom: 1.25\">"), "{html}");
+        let html = page(prefs());
+        assert!(html.contains("<html lang=\"en\" data-theme=\"light\">"), "{html}");
+        assert!(!html.contains("--ts-zoom"), "{html}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// The arrow is a control of its own, and it says which way it goes. The row
