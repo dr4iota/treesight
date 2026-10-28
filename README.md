@@ -219,8 +219,11 @@ Example: `treeserve -p 9000 ~/projects/notes`
   same paragraph stays literal text. Formulas are typeset on the server:
   pulldown-latex converts
   the LaTeX to MathML, so formulas render as text in the browser with no
-  JavaScript and no webfont download. Formulas that don't parse are shown in
-  red with the parser message as a tooltip. Escape a literal dollar sign as
+  JavaScript and no webfont download. A trailing `\tag{X}` is drawn as `(X)`
+  at the right of its formula, and `\varprojlim`, `\varinjlim`, `\varliminf`
+  and `\varlimsup` are drawn as the limits they stand for. Formulas that don't
+  parse are shown in red with the parser message as a tooltip. Escape a literal
+  dollar sign as
   `\$`. Rendering quality depends on the browser having a math font
   (Cambria Math on Windows, Latin Modern/STIX/DejaVu Math on Linux,
   built into Firefox); without one, the browser's default math layout is used.

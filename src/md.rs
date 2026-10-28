@@ -7,8 +7,6 @@ use comrak::html::{dangerous_url, render_sourcepos, ChildRendering};
 use comrak::nodes::{Node, NodeValue};
 use comrak::options::Plugins;
 use comrak::{create_formatter, parse_document, Arena, Options};
-use pulldown_latex::config::DisplayMode;
-use pulldown_latex::{push_mathml, Parser as LatexParser, RenderConfig, Storage};
 
 use mermaid_rs_renderer::{render_with_options, RenderOptions, Theme};
 
@@ -82,60 +80,6 @@ impl SyntaxHighlighterAdapter for CodeAdapter<'_> {
     }
 }
 
-/// LaTeX → MathML, server-side.
-///
-/// Broken math is not fatal: the source is shown in red with the parser
-/// message as its tooltip, which keeps the rest of the document readable
-/// (pulldown-latex's own `<merror>` output inlines the full multi-line
-/// diagnostic, which swamps the page).
-fn latex_to_mathml(latex: &str, display: bool) -> String {
-    let storage = Storage::new();
-    if let Some(err) = latex_error(latex, &storage) {
-        return format!(
-            "<code class=\"math-error\" title=\"{}\">{}</code>",
-            html_escape(&err),
-            html_escape(latex.trim())
-        );
-    }
-
-    let parser = LatexParser::new(latex, &storage);
-    let config = RenderConfig {
-        display_mode: if display {
-            DisplayMode::Block
-        } else {
-            DisplayMode::Inline
-        },
-        // Keep the source in the output so copy/paste and assistive tech get
-        // the original TeX.
-        annotation: Some(latex),
-        // Mid red: the renderer bakes this into the markup, so it has to be
-        // legible against both the light and the dark background.
-        error_color: (229, 83, 75),
-        ..RenderConfig::default()
-    };
-    let mut out = String::new();
-    match push_mathml(&mut out, parser, config) {
-        // pulldown-latex 0.8 renders `\ ` and `~` as the text "&nbsp;" and
-        // then escapes its `&`, so the page would show "&nbsp;" literally.
-        Ok(()) => out.replace("&amp;nbsp;", "&#160;"),
-        Err(e) => format!(
-            "<code class=\"math-error\" title=\"{}\">{}</code>",
-            html_escape(&e.to_string()),
-            html_escape(latex.trim())
-        ),
-    }
-}
-
-/// First line of the first parse error, if the formula does not parse.
-fn latex_error(latex: &str, storage: &Storage) -> Option<String> {
-    LatexParser::new(latex, storage)
-        .find_map(|ev| ev.err())
-        .map(|e| {
-            let msg = e.to_string();
-            msg.lines().next().unwrap_or("invalid LaTeX").to_string()
-        })
-}
-
 /// Replaces math nodes with pre-rendered MathML.
 ///
 /// Comrak's math extensions only mark math up as `data-math-style` spans (they
@@ -175,12 +119,18 @@ fn render_math_nodes<'a>(root: Node<'a>) {
             _ => {}
         }
 
-        let mathml = latex_to_mathml(&latex, display);
-        let html = if block {
+        let rendered = crate::latex::render(&latex, display);
+        // A `\tag` the renderer was spared (`latex::split_tag`), drawn
+        // beside the formula: at the block's right edge, or after it inline.
+        let tag = rendered
+            .tag
+            .map(|t| format!("<span class=\"math-tag\">{}</span>", html_escape(&t)));
+        let html = match (block, tag) {
             // The wrapper centers the formula and anchors equation numbers.
-            format!("<div class=\"math-block\">{}</div>", mathml)
-        } else {
-            mathml
+            (true, None) => format!("<div class=\"math-block\">{}</div>", rendered.html),
+            (true, Some(tag)) => format!("<div class=\"math-block tagged\">{}{tag}</div>", rendered.html),
+            (false, None) => rendered.html,
+            (false, Some(tag)) => format!("{}{tag}", rendered.html),
         };
         target.data_mut().value = NodeValue::Raw(html);
     }
@@ -963,6 +913,17 @@ mod tests {
         let block = html("```math\nx^2\n```\n");
         assert!(block.contains("<math"), "{block}");
         assert!(block.contains("math-block"), "{block}");
+    }
+
+    /// A trailing `\\tag` is drawn beside its formula, not refused with it.
+    #[test]
+    fn math_tag_is_drawn_beside_the_formula() {
+        let block = html("$$\na = b \\tag{4.1}\n$$\n");
+        assert!(block.contains("<div class=\"math-block tagged\"><math"), "{block}");
+        assert!(block.contains("<span class=\"math-tag\">(4.1)</span></div>"), "{block}");
+        assert!(!block.contains("math-error"), "{block}");
+        let inline = html("see $$a \\tag{2}$$ here\n");
+        assert!(inline.contains("</math><span class=\"math-tag\">(2)</span>"), "{inline}");
     }
 
     #[test]

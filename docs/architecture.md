@@ -202,7 +202,8 @@ for one of the tree heading's.
 | `page.rs` | Listing, tree pane, Places/Recent/sections, layout, wait/error pages, SVG icons |
 | `view.rs` | File page: media, PDF, markdown, mermaid files, tables, highlighted source; a `.gz` unpacked first |
 | `data.rs` | CSV/TSV parser and table; JSON layout that copies every token as written; capped `gunzip` |
-| `md.rs` | comrak + syntect fences; mermaid → dual light/dark SVG; LaTeX → MathML |
+| `md.rs` | comrak + syntect fences; mermaid → dual light/dark SVG; math nodes to `latex.rs` |
+| `latex.rs` | LaTeX → MathML through pulldown-latex 0.8, and every workaround around it: before parsing (`split_tag` takes off a trailing `\tag`, `rewrite_commands` spells commands it lacks), after (`finish`) |
 | `hl.rs` | syntect / two-face; class-prefixed CSS generated at startup |
 | `util.rs` | HTML/percent/glob, `display_path` (strips `\\?\`), media extension lists, `MAX_HIGHLIGHT_BYTES` (2 MiB) |
 | `app.css` / `math.css` | compiled in with `include_str!` |

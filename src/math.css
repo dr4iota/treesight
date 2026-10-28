@@ -35,6 +35,28 @@ math mtext {
   text-align: left;
   margin: 0;
 }
+/* A `\tag` the renderer was spared (`latex::split_tag`): the formula centred
+ * in the column as untagged ones are, its label at the right edge. Three
+ * columns, the outer two sharing what is left, so the formula stays where it
+ * would be without a label; a formula too wide takes it all, and the block
+ * scrolls as any other does. */
+.math-block.tagged {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+}
+.math-block.tagged > math {
+  grid-column: 2;
+}
+.math-tag {
+  white-space: nowrap;
+  padding-left: 1em;
+}
+.math-block.tagged > .math-tag {
+  grid-column: 3;
+  justify-self: end;
+}
+
 /* Fallback when display math ends up inline (mixed into a paragraph). */
 math[display="block"] {
   max-width: 100%;

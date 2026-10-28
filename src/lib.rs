@@ -65,6 +65,7 @@ pub fn with_token(href: &str, token: &str) -> String {
     format!("{head}{sep}t={token}{frag}")
 }
 
+mod latex;
 pub mod md;
 pub mod modes;
 pub mod page;
