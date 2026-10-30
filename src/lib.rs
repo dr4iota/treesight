@@ -6,6 +6,7 @@
 pub mod data;
 pub mod embed;
 pub mod hl;
+pub mod icons;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]

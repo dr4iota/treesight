@@ -32,3 +32,9 @@ This — the same work, as the commits it always was:
     Add a Vfs trait behind the tree reader
     Route the local backend through Vfs
     Note the Vfs seam in docs/architecture.md
+
+## Icons
+
+- **Icons have one source: `src/icons.rs`.** Every mark is defined there once
+  and drawn with `svg_icon`; a page, a script or another constant takes it
+  from there (an embedder through `icons::ALL`). Never paste an SVG path.

@@ -1,9 +1,9 @@
 use crate::data::{delimiter_for, gunzip, parse_delimited, reformat_json, render_table, MAX_TABLE_ROWS};
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
+use crate::icons::{svg_icon, ICON_DOWNLOAD, ICON_PREVIEW, ICON_PRINT, ICON_RAW, ICON_SOURCE};
 use crate::page::{
-    bare_layout, current_flag, dimmed_flag, file_lines_html, flag, group, layout, ln_switch, svg_icon, with_new_window, Prefs,
-    ICON_DOWNLOAD, ICON_PRINT, ICON_PREVIEW, ICON_RAW, ICON_SOURCE,
+    bare_layout, current_flag, dimmed_flag, file_lines_html, flag, group, layout, ln_switch, with_new_window, Prefs,
 };
 use crate::util::*;
 use crate::vfs::VfsPath;
