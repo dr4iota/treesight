@@ -374,13 +374,46 @@ pub struct PaneSection {
 /// replaces, so nothing downstream changes.
 pub type HeadingAct = (String, String, String);
 
-/// What the start page says under its lists: a sentence or two, and a link that
-/// finishes it. Both plain text, escaped by the page.
+/// What the start page says under its lists: a paragraph of text with links in
+/// it, wherever the sentence wants them — before, between or after the words.
+/// Every piece is plain text, escaped by the page, and every link gets the
+/// page's action token, so an embedder writes words and hrefs and never markup.
+/// A note with no words, only links, is not drawn.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StartNote {
-    pub text: String,
-    /// **(label, href)**, drawn inline after the text, on the same line.
-    pub link: Option<(String, String)>,
+    /// In order, joined as given: the spaces are the sentence's own.
+    pub parts: Vec<NotePart>,
+}
+
+/// One piece of a [`StartNote`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NotePart {
+    Text(String),
+    Link { label: String, href: String },
+}
+
+impl StartNote {
+    /// A note of words alone.
+    pub fn text(text: impl Into<String>) -> Self {
+        StartNote::default().then(text)
+    }
+
+    /// More words, after what is there.
+    pub fn then(mut self, text: impl Into<String>) -> Self {
+        self.parts.push(NotePart::Text(text.into()));
+        self
+    }
+
+    /// A link, after what is there.
+    pub fn link(mut self, label: impl Into<String>, href: impl Into<String>) -> Self {
+        self.parts.push(NotePart::Link { label: label.into(), href: href.into() });
+        self
+    }
+
+    /// Whether it has any words to draw.
+    pub fn has_text(&self) -> bool {
+        self.parts.iter().any(|p| matches!(p, NotePart::Text(t) if !t.trim().is_empty()))
+    }
 }
 
 /// A line of the embedder's own on a file's page, under the header and under

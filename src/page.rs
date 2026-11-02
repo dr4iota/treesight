@@ -1,7 +1,7 @@
 use crate::md::{render_markdown, RawHtml};
 use crate::util::*;
 use crate::vfs::{Place, ResolveError, Vfs, VfsPath};
-use crate::{Config, Drawn, Root, RootNote, State};
+use crate::{Config, Drawn, NotePart, Root, RootNote, State};
 use crate::icons::*;
 
 pub use crate::vfs::Entry;
@@ -1205,7 +1205,7 @@ fn pane_html(
     // in the tree carries the button for that.
     if state.cfg.app_ui {
         let (href, icon, title) = match state.cfg.is_pinned(&root.id) {
-            true => ("/.ts/unpin", ICON_STARRED, "Starred — click to remove"),
+            true => ("/.ts/unpin", ICON_STARRED, "Starred. Click to remove"),
             false => ("/.ts/pin", ICON_STAR, "Star this folder"),
         };
         acts.push((href.to_string(), icon.to_string(), title.to_string()));
@@ -2630,27 +2630,28 @@ pub fn start_page(state: &State, prefs: Prefs<'_>, url_now: &str) -> String {
     lists.push_str("</div>");
     // Under the lists, not beside the title. The ways in are what this page is
     // for; a note here is what is left to say once those are on screen.
-    // The link finishes the sentence rather than standing under it: a button
-    // of its own would be one more way in, and the ways in are above. More
-    // than one note is a paragraph each, under one rule.
+    // A link sits in the sentence rather than standing under it: a button of
+    // its own would be one more way in, and the ways in are above. More than
+    // one note is a paragraph each, under one rule.
     let notes: String = state
         .cfg
         .notes()
         .iter()
-        .filter(|n| !n.text.is_empty())
+        .filter(|n| n.has_text())
         .map(|n| {
-            format!(
-                "<p>{}{}</p>",
-                html_escape(&n.text),
-                match &n.link {
-                    Some((label, href)) => format!(
-                        " <a href=\"{}\">{}</a>",
+            let body: String = n
+                .parts
+                .iter()
+                .map(|p| match p {
+                    NotePart::Text(t) => html_escape(t),
+                    NotePart::Link { label, href } => format!(
+                        "<a href=\"{}\">{}</a>",
                         html_escape(&act(state, href)),
                         html_escape(label)
                     ),
-                    None => String::new(),
-                }
-            )
+                })
+                .collect();
+            format!("<p>{body}</p>")
         })
         .collect();
     let note = match notes.is_empty() {
@@ -3262,12 +3263,9 @@ mod tests {
         state.cfg.app_commit = Some("a1b2c3d4+2".to_string());
         state.cfg.intro = Some("A sentence of <its> own.".to_string());
         state.cfg.set_notes(vec![
-            StartNote {
-                text: "A note of <its> own.".to_string(),
-                link: Some(("Do <it>".to_string(), "/x?a=1&b=2".to_string())),
-            },
-            StartNote { text: String::new(), link: Some(("Nothing".to_string(), "/y".to_string())) },
-            StartNote { text: "And another.".to_string(), link: None },
+            StartNote::text("A note of <its> own. ").link("Do <it>", "/x?a=1&b=2").then(" & more, or ").link("that", "/z").then("."),
+            StartNote::default().link("Nothing", "/y"),
+            StartNote::text("And another."),
         ]);
         state.cfg.set_edition(Some("Plus".to_string()));
         let html = start_page(&state, prefs(), "/");
@@ -3284,9 +3282,10 @@ mod tests {
         // is the same, and it sits under the lists rather than in the intro.
         assert!(html.contains("A sentence of &lt;its&gt; own."), "{html}");
         assert!(html.contains("A note of &lt;its&gt; own."), "{html}");
-        // Its link on the same line, both halves escaped.
+        // Its links inside the sentence, with words after them, every piece
+        // escaped and joined as given.
         assert!(
-            html.contains("own. <a href=\"/x?a=1&amp;b=2\">Do &lt;it&gt;</a></p>"),
+            html.contains("own. <a href=\"/x?a=1&amp;b=2\">Do &lt;it&gt;</a> &amp; more, or <a href=\"/z\">that</a>.</p>"),
             "{html}"
         );
         // The edition is for the build line, and the page's name stays the name.
@@ -3295,7 +3294,7 @@ mod tests {
         let note_at = html.find("class=\"startnote\"").expect("note");
         assert!(note_at > lists_at, "the note sits under the lists: {html}");
         // In order, a paragraph each, and one with no text is not drawn.
-        assert!(html.contains("</a></p><p>And another.</p></div>"), "{html}");
+        assert!(html.contains("</a>.</p><p>And another.</p></div>"), "{html}");
         assert!(!html.contains("Nothing"), "{html}");
         // Taken back, and nothing is left behind — not an empty paragraph with a
         // rule over it.
