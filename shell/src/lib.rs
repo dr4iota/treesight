@@ -1131,7 +1131,10 @@ const PROGRESS: &str = r#"
 window.__tsProgress = function (text, frac) {
   var f = document.querySelector('footer');
   if (!f) return;
-  var p = f.querySelector('.ts-progress');
+  // Not the note, which wears this class for its look: a page redialling
+  // under its note can still start an upload, which took the note for its
+  // bar, wrote over its words and threw on the bar it has not got.
+  var p = f.querySelector('.ts-progress:not(.ts-note)');
   if (text === null) { if (p) p.remove(); return; }
   if (!p) {
     p = document.createElement('span');
@@ -1142,6 +1145,23 @@ window.__tsProgress = function (text, frac) {
   }
   p.querySelector('.what').textContent = text;
   p.querySelector('.bar i').style.width = (frac * 100) + '%';
+};
+// A line of its own for a wait with nothing to cancel — a server being
+// dialled again under the page (`note_in`). The progress line's place and
+// look, without the bar or Cancel; `null` takes it away.
+window.__tsNote = function (text) {
+  var f = document.querySelector('footer');
+  if (!f) return;
+  var n = f.querySelector('.ts-note');
+  if (text === null) { if (n) n.remove(); return; }
+  if (!n) {
+    n = document.createElement('span');
+    n.className = 'ts-progress ts-note';
+    n.setAttribute('role', 'status');
+    n.innerHTML = '<span class="what"></span>';
+    f.appendChild(n);
+  }
+  n.querySelector('.what').textContent = text;
 };
 // What the shell just made — a new folder, an upload — is lit by the page
 // (`.row.made`), and in a long folder it was lit below the fold, where the
@@ -4053,6 +4073,27 @@ fn origin_allowed(allowed: &[String], url: &tauri::Url) -> bool {
         Some(scheme) if !a.contains('/') => url.scheme() == scheme,
         _ => url.origin().ascii_serialization() == *a,
     })
+}
+
+/// A line in the status bar of the window `label`, for a wait the reader
+/// would otherwise see only as a page slow to come: `None` takes it away. Into
+/// the page on screen only, as `transfer::progress` puts its own, and gone with
+/// that page when the next one lands.
+pub fn note_in(app: &AppHandle, label: &str, text: Option<&str>) {
+    if !committed_in(app, label) {
+        return;
+    }
+    let Some(win) = app.get_webview_window(label) else {
+        return;
+    };
+    let js = match text {
+        Some(text) => format!(
+            "window.__tsNote && window.__tsNote('{}')",
+            js_quoted(text).replace(['\n', '\r'], " ")
+        ),
+        None => "window.__tsNote && window.__tsNote(null)".to_string(),
+    };
+    let _ = win.eval(&js);
 }
 
 /// Says something happened, for actions with no visible result of their own.

@@ -1812,6 +1812,11 @@ footer .ts-progress .bar {
 }
 footer .ts-progress .bar i { display: block; height: 100%; width: 0; background: var(--link); }
 footer .ts-progress a { color: var(--link); }
+/* A wait with nothing to cancel (`__tsNote`): words only, and they are the
+   point of it — *Reconnecting to …* cut to *Reconnecting to Pas…* names no
+   server. So the path gives way first, as it does to a transfer's bar, up to
+   half the line. */
+footer .ts-note { flex-shrink: 0; max-width: 50%; }
 /* A handset: the line is too short to share. Measured at 360px, the words got
    one letter beside the path, the folder button and the bar; while something
    is moving, that is all the line says. */
@@ -1819,6 +1824,7 @@ footer .ts-progress a { color: var(--link); }
   footer:has(.ts-progress) > :not(.ts-progress) { display: none; }
   footer .ts-progress { margin-left: 0; flex: 1 1 auto; }
   footer .ts-progress .bar { flex: 0 1 5rem; min-width: 3rem; }
+  footer .ts-note { max-width: none; }
 }
 footer {
   /* The other end: a gesture strip, or a navigation bar. */
