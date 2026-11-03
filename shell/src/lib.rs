@@ -37,6 +37,35 @@ pub const BUILD: BuildInfo = treestamp::build_info!("TREESIGHT_SHELL_");
 /// The one window's label — public so a downstream action ([`ShellExt`])
 /// can find the same window the shell drives.
 pub const WINDOW: &str = "main";
+
+thread_local! {
+    static WORKING_FOR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The window the calling thread is working for — the one whose page it is
+/// answering, or whose transfer it is running — or [`WINDOW`] where nothing
+/// said. A backend that has to ask something midway, such as a redial's
+/// password, asks there rather than in the main window.
+pub fn working_for() -> String {
+    WORKING_FOR.with(|w| w.borrow().clone()).unwrap_or_else(|| WINDOW.to_string())
+}
+
+/// Says this thread is working for the window `label` until it is dropped,
+/// for [`working_for`]; what was said before comes back then.
+pub struct WorkingFor(Option<String>);
+
+impl WorkingFor {
+    pub fn enter(label: &str) -> Self {
+        Self(WORKING_FOR.with(|w| w.replace(Some(label.to_string()))))
+    }
+}
+
+impl Drop for WorkingFor {
+    fn drop(&mut self) {
+        let before = self.0.take();
+        WORKING_FOR.with(|w| *w.borrow_mut() = before);
+    }
+}
 /// How many roots the Recent list keeps.
 const RECENT_MAX: usize = 8;
 
@@ -1930,6 +1959,7 @@ fn serve(
             body: treeserve::Body::Text("not started".into()),
         });
     };
+    let _for = WorkingFor::enter(label);
     let reply = treeserve::handle_in(state, &to_req(&request, jar), Some(label));
     if stores_cookies(&request) {
         jar.store(&reply);
@@ -3193,6 +3223,7 @@ fn copy_bounded(
     dest: &Path,
     mode: Option<u32>,
 ) -> io::Result<u64> {
+    let _for = WorkingFor::enter(label);
     let len = vfs.metadata(src).ok().map(|m| m.len);
     if let Some(len) = len
         && len > MAX_DOWNLOAD_BYTES
@@ -3570,6 +3601,7 @@ fn set_pref_now(app: &AppHandle, label: &str, url: &tauri::Url) {
     // so opening a directory quietly shut every other one, and a second level
     // could never appear. `/.ts/set` never noticed, its keys being independent.
     // As the window asked it: a tree's open folders are that window's own.
+    let _for = WorkingFor::enter(label);
     let reply = treeserve::handle_in(
         serving.state(),
         &treeserve::Req {
@@ -4442,6 +4474,26 @@ fn let_go_of(app: &AppHandle, was: Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A thread works for the main window until told otherwise, and a nested
+    /// window gives way to the one before it when its guard goes.
+    #[test]
+    fn a_thread_works_for_the_window_it_was_told() {
+        use super::{working_for, WorkingFor, WINDOW};
+        assert_eq!(working_for(), WINDOW);
+        {
+            let _a = WorkingFor::enter("site1");
+            assert_eq!(working_for(), "site1");
+            {
+                let _b = WorkingFor::enter("site2");
+                assert_eq!(working_for(), "site2");
+            }
+            assert_eq!(working_for(), "site1");
+            // Another thread was told nothing.
+            assert_eq!(std::thread::spawn(working_for).join().unwrap(), WINDOW);
+        }
+        assert_eq!(working_for(), WINDOW);
+    }
 
     /// What the gate lets through: an action with this window's token, a page,
     /// Refresh, a link out; and what it stops: an action with none, with

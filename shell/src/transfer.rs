@@ -237,6 +237,7 @@ pub(crate) fn mkdir(app: &AppHandle, label: &str, url: &tauri::Url) {
     let label = label.to_string();
     let url = url.clone();
     thread::spawn(move || {
+        let _for = crate::WorkingFor::enter(&label);
         let t = match target(&app, &label, &url) {
             Ok(t) => t,
             Err(Some(why)) => return fail_in(&app, &label, &why, false),
@@ -473,6 +474,7 @@ fn picked_path(path: PathBuf) -> PickedFile {
 fn send(app: &AppHandle, t: Target, files: Vec<PickedFile>) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+    let _for = crate::WorkingFor::enter(&t.label);
     let Some(_turn) = Turn::take(&t.label) else {
         return fail_in(app, &t.label, BUSY_SAYS, false);
     };
@@ -788,6 +790,7 @@ pub(crate) fn act(app: &AppHandle, label: &str, url: &tauri::Url) {
     let label = label.to_string();
     let url = url.clone();
     thread::spawn(move || {
+        let _for = crate::WorkingFor::enter(&label);
         let r = match row(&app, &label, &url) {
             Ok(r) => r,
             Err(Some(why)) => return fail_in(&app, &label, &why, false),
@@ -867,6 +870,7 @@ pub(crate) fn remove(app: &AppHandle, label: &str, url: &tauri::Url) {
     let label = label.to_string();
     let url = url.clone();
     thread::spawn(move || {
+        let _for = crate::WorkingFor::enter(&label);
         let r = match named_row(&app, &label, &url) {
             Ok(r) => r,
             Err(Some(why)) => return fail_in(&app, &label, &why, false),
