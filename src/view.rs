@@ -1,4 +1,4 @@
-use crate::data::{delimiter_for, gunzip, parse_delimited, reformat_json, render_table, MAX_TABLE_ROWS};
+use crate::data::{delimiter_for, gunzip, parse_delimited, Gunzipped, reformat_json, render_table, MAX_TABLE_ROWS};
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
 use crate::icons::{svg_icon, ICON_DOWNLOAD, ICON_PREVIEW, ICON_PRINT, ICON_RAW, ICON_SOURCE};
@@ -528,16 +528,17 @@ pub fn file_page(
     // packed, so `syslog.2.gz` is a log and `rows.csv.gz` a table; Download
     // hands over the packed file, and there is no Raw (`view_group`'s
     // `packed`). One that is not gzip after all
-    // falls through as its own bytes, which is the binary notice.
+    // falls through as its own bytes, which is the binary notice. One cut
+    // short shows what unpacked before the cut, and the meta line says so.
     let (bytes, name, ext, unpacked) = match unpacked_name(name) {
         Some(inner_name) => match gunzip(&bytes[..], MAX_HIGHLIGHT_BYTES) {
-            Some((inner, false)) => {
+            Some((inner, how @ (Gunzipped::Whole | Gunzipped::Broken))) => {
                 let len = inner.len() as u64;
-                (inner, inner_name, ext_of(inner_name), Some(len))
+                (inner, inner_name, ext_of(inner_name), Some((len, how == Gunzipped::Broken)))
             }
             // A notice and Download, as for a binary file: Raw here would be
             // the packed bytes, which are no text to show.
-            Some((_, true)) => {
+            Some((_, Gunzipped::More)) => {
                 let content = format!(
                     "{}<div class=\"bigmsg\"><p>File is too large to render once unpacked \
                      (over {}).</p>{}</div>",
@@ -555,13 +556,18 @@ pub fn file_page(
     };
     // What the meta line adds for a packed file: how big it is opened.
     let unpacked = unpacked
-        .map(|n| format!(" &middot; gzip, {} unpacked", human_size(n)))
+        .map(|(n, broken)| {
+            let tail = if broken { " before an error" } else { "" };
+            format!(" &middot; gzip, {} unpacked{tail}", human_size(n))
+        })
         .unwrap_or_default();
 
     if looks_binary(&bytes[..bytes.len().min(8192)]) {
         let content = format!(
             "{}<div class=\"bigmsg\"><p>Binary file.</p>{}</div>",
-            meta_line(size, mtime, "binary"),
+            // A packed one says what it unpacked to, and a cut-short one
+            // that it stopped at an error, as the text path's line does.
+            meta_line(size, mtime, &format!("binary{unpacked}")),
             download_link(rel, vfs, "Download")
                 .map(|dl| format!("<p>{dl}</p>"))
                 .unwrap_or_default()

@@ -387,16 +387,35 @@ fn is_literal_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '+' | '.')
 }
 
-/// What a `.gz` holds, up to `cap` bytes, and whether there was more. Read
-/// through a `take`, so a small file that inflates to gigabytes stops at the
-/// cap rather than filling memory. `None` for something that is not gzip after
-/// all. Members in a row are read as one stream, as `zcat` reads them.
-pub fn gunzip(read: impl Read, cap: u64) -> Option<(Vec<u8>, bool)> {
+/// How far a `.gz` unpacked: `More` past the cap, `Broken` where the stream
+/// ended early or went bad — a truncated download, a log cut off mid-write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gunzipped {
+    Whole,
+    More,
+    Broken,
+}
+
+/// What a `.gz` holds, up to `cap` bytes, and how far it got. Read through a
+/// `take`, so a small file that inflates to gigabytes stops at the cap rather
+/// than filling memory. `None` for something that is not gzip after all. Members
+/// in a row are read as one stream, and a stream that breaks keeps what came
+/// before the break, as `zcat` prints it.
+pub fn gunzip(bytes: &[u8], cap: u64) -> Option<(Vec<u8>, Gunzipped)> {
+    if !bytes.starts_with(&[0x1f, 0x8b]) {
+        return None;
+    }
     let mut out = Vec::new();
-    MultiGzDecoder::new(read).take(cap + 1).read_to_end(&mut out).ok()?;
+    // On an error `read_to_end` has already appended what it read.
+    let broken = MultiGzDecoder::new(bytes).take(cap + 1).read_to_end(&mut out).is_err();
     let more = out.len() as u64 > cap;
     out.truncate(cap as usize);
-    Some((out, more))
+    let how = match (more, broken) {
+        (true, _) => Gunzipped::More,
+        (false, true) => Gunzipped::Broken,
+        (false, false) => Gunzipped::Whole,
+    };
+    Some((out, how))
 }
 
 #[cfg(test)]
@@ -503,18 +522,35 @@ mod tests {
 
     #[test]
     fn a_gzip_opens_and_a_bomb_stops_at_the_cap() {
-        assert_eq!(gunzip(&gz(b"line\n")[..], 100), Some((b"line\n".to_vec(), false)));
+        use Gunzipped::*;
+        assert_eq!(gunzip(&gz(b"line\n")[..], 100), Some((b"line\n".to_vec(), Whole)));
         // Members in a row read as one, as `zcat` reads them.
         let two = [gz(b"a\n"), gz(b"b\n")].concat();
-        assert_eq!(gunzip(&two[..], 100), Some((b"a\nb\n".to_vec(), false)));
-        assert_eq!(gunzip(&two[..], 3), Some((b"a\nb".to_vec(), true)));
+        assert_eq!(gunzip(&two[..], 100), Some((b"a\nb\n".to_vec(), Whole)));
+        assert_eq!(gunzip(&two[..], 3), Some((b"a\nb".to_vec(), More)));
         // Eight megabytes of zeros is a few kilobytes packed; the read stops one
         // byte past the cap.
         let bomb = gz(&vec![0u8; 8 << 20]);
         assert!(bomb.len() < 64 << 10);
         let (head, more) = gunzip(&bomb[..], 1 << 20).unwrap();
-        assert!(more && head.len() == 1 << 20);
+        assert!(more == More && head.len() == 1 << 20);
         assert_eq!(gunzip(&b"not gzip"[..], 100), None);
+    }
+
+    #[test]
+    fn a_cut_gzip_keeps_what_unpacked() {
+        // Cut short, as a download or a log stopped mid-write: what came
+        // before the cut is kept, as `zcat` prints it before its error.
+        let text: Vec<u8> = (0..2000).flat_map(|i| format!("line {i}\n").into_bytes()).collect();
+        let packed = gz(&text);
+        let (head, how) = gunzip(&packed[..packed.len() / 2], 1 << 20).unwrap();
+        assert_eq!(how, Gunzipped::Broken);
+        assert!(!head.is_empty() && text.starts_with(&head), "{} bytes", head.len());
+        // Cut in the header: gzip, broken, nothing to show.
+        assert_eq!(gunzip(&packed[..4], 100), Some((Vec::new(), Gunzipped::Broken)));
+        // A second member cut short keeps the whole first one.
+        let two = [gz(b"a\n"), gz(b"b\n")].concat();
+        assert_eq!(gunzip(&two[..two.len() - 3], 100).map(|(o, h)| (o.starts_with(b"a\n"), h)), Some((true, Gunzipped::Broken)));
     }
 
     #[test]

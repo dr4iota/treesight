@@ -4234,6 +4234,13 @@ mod tests {
         let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
         enc.write_all(&vec![b'x'; (MAX_HIGHLIGHT_BYTES + 1) as usize]).unwrap();
         fs::write(dir.join("big.log.gz"), enc.finish().unwrap()).unwrap();
+        let log: String = (0..2000).map(|i| format!("entry {i}\n")).collect();
+        let packed = pack(log.as_bytes());
+        fs::write(dir.join("cut.log.gz"), &packed[..packed.len() / 2]).unwrap();
+        // And one whose bytes are binary, cut short the same way.
+        let blob: Vec<u8> = (0..20000u32).flat_map(|i| [0u8, (i % 251) as u8, 7, 0]).collect();
+        let packed_blob = pack(&blob);
+        fs::write(dir.join("cut.bin.gz"), &packed_blob[..packed_blob.len() / 2]).unwrap();
         let state = state_at(dir.clone());
         let root = state.cfg.root().expect("these tests always serve one");
         let page = |name: &str, query: &[(String, String)]| {
@@ -4289,6 +4296,15 @@ mod tests {
         // One that unpacks past the limit says so instead of reading on.
         let html = page("big.log.gz", &[]);
         assert!(html.contains("too large to render once unpacked"), "{html}");
+        // One cut short, as `zcat` reads it: what unpacked before the cut,
+        // and the meta line saying where it stopped.
+        let html = page("cut.log.gz", &[]);
+        assert!(!html.contains("Binary file.") && html.contains("entry"), "{html}");
+        assert!(html.contains(" lines &middot; gzip, ") && html.contains("unpacked before an error"), "{html}");
+        // Binary once unpacked still says it stopped at an error: a whole
+        // binary `.gz` and a cut one are not the same file.
+        let html = page("cut.bin.gz", &[]);
+        assert!(html.contains("Binary file.") && html.contains("binary &middot; gzip, ") && html.contains("unpacked before an error"), "{html}");
 
         // Raw's group names what the page draws, for a `.gz` too: Source
         // dimmed where the page is that notice, a link where it is the text.
