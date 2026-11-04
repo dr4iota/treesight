@@ -33,6 +33,20 @@ the first 4 KiB of it in hex, eight bytes to a line on a phone and sixteen on
 a wider window. Any other file that is not text has **Source** alone. None of
 these, nor a `.gz` file, has Raw: there is no showing them as they are.
 
+## Full screen
+
+**Full screen**, beside **Refresh**, shows the file alone: no header, no
+sidebar, no status line, and the window full screen on its monitor — on a
+phone, the status and navigation bars hidden too. It is on the view a file
+opens in: **Preview**, or **Source** where a file has no Preview. It stays on
+from one file to the next, and ends when you open a folder.
+
+A tap shows, for a moment, the way out at the top right and the file's name,
+size and date at the top left, and a tap while they show hides them; a tap on
+a link follows the link. On a computer, moving the
+mouse shows it too. To leave, tap it, or press **Esc** or **F11**, or Back on
+a phone.
+
 What can be done with the file — **Print**, **Download**, and any action the
 app adds — is a second set. **Download** saves a copy as stored. A file can
 also be saved without opening it, from its row in the folder: see below.

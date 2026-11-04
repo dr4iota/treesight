@@ -1,7 +1,7 @@
 use crate::data::{delimiter_for, gunzip, parse_delimited, Gunzipped, reformat_json, render_table, MAX_TABLE_ROWS};
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
-use crate::icons::{svg_icon, ICON_DOWNLOAD, ICON_PREVIEW, ICON_PRINT, ICON_RAW, ICON_SOURCE};
+use crate::icons::{svg_icon, ICON_DOWNLOAD, ICON_FULLSCREEN, ICON_PREVIEW, ICON_PRINT, ICON_RAW, ICON_SOURCE};
 use crate::page::{
     bare_layout, current_flag, dimmed_flag, file_lines_html, flag, group, layout, ln_switch, with_new_window, Prefs,
 };
@@ -47,6 +47,40 @@ fn print_flag(state: &State) -> String {
     } else {
         String::new()
     }
+}
+
+/// Full screen, on a file's default view — its Preview, or its Source where
+/// that is its only view — and on no other: the file alone, the header, the
+/// pane and the status line gone, and the window full screen too (the shell's
+/// `/.ts/full`, and its `FULL` script, which keeps it and leaves it). Shell
+/// only, as Print is: it is the window's to do.
+fn full_flag(state: &State, rel: &[String], vfs: &dyn Vfs) -> String {
+    if !state.cfg.app_ui {
+        return String::new();
+    }
+    let link = flag(
+        "",
+        &crate::page::act(state, "/.ts/full?on=1"),
+        &svg_icon(ICON_FULLSCREEN),
+        "Full screen",
+        "Full screen (F11)",
+    );
+    // What a tap in full screen shows at the top left, where the header was:
+    // the file's name and the status line's facts, its size and when it last
+    // changed. On the link the script reads, so the page says it once.
+    let name = rel.last().map(String::as_str).unwrap_or("");
+    let facts = vfs
+        .metadata(&VfsPath::new(rel.to_vec()))
+        .map(|m| match m.mtime {
+            Some(t) => format!("{} \u{b7} {}", human_size(m.len), fmt_time(t)),
+            None => human_size(m.len),
+        })
+        .unwrap_or_default();
+    link.replacen(
+        "<a ",
+        &format!("<a data-ts-name=\"{}\" data-ts-facts=\"{}\" ", html_escape(name), html_escape(&facts)),
+        1,
+    )
 }
 
 /// The verbs group: what can be done with the file — Print where the view is a
@@ -273,7 +307,7 @@ fn html_preview(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], ur
     let name = rel.last().map(String::as_str).unwrap_or("");
     let controls = format!(
         "{}{}",
-        verbs(state, rel, root.vfs.as_ref(), false),
+        full_flag(state, rel, root.vfs.as_ref()) + &verbs(state, rel, root.vfs.as_ref(), false),
         view_group(Shown::Drawn, rel, Some(View::Preview), false)
     );
     let src = format!("{}?raw=1&bare=1&as=page", href_path(rel));
@@ -477,8 +511,12 @@ fn binary_source(
     let ext = ext_of(name);
     let word = media_word(&ext).unwrap_or("binary");
     let kind = kind::describe(bytes, &ext).unwrap_or_else(|| word.to_string());
+    let full = match shown {
+        Shown::Binary => full_flag(state, rel, root.vfs.as_ref()),
+        _ => String::new(),
+    };
     let controls = format!(
-        "{}{}",
+        "{full}{}{}",
         verbs(state, rel, root.vfs.as_ref(), false),
         view_group(shown, rel, Some(View::Source), false)
     );
@@ -501,7 +539,7 @@ fn viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url
     let name = rel.last().map(String::as_str).unwrap_or("");
     let controls = format!(
         "{}{}",
-        verbs(state, rel, root.vfs.as_ref(), false),
+        full_flag(state, rel, root.vfs.as_ref()) + &verbs(state, rel, root.vfs.as_ref(), false),
         view_group(Shown::Media, rel, Some(View::Preview), false)
     );
     let frame = format!(
@@ -596,7 +634,8 @@ pub fn file_page(
     }
     let media_controls = || {
         format!(
-            "{}{}",
+            "{}{}{}",
+            full_flag(state, rel, vfs),
             verbs(state, rel, vfs, false),
             view_group(Shown::Media, rel, Some(View::Preview), false)
         )
@@ -723,7 +762,8 @@ pub fn file_page(
     // The drawn views below: the verbs, and Preview lit.
     let drawn_controls = || {
         format!(
-            "{}{}",
+            "{}{}{}",
+            full_flag(state, rel, vfs),
             verbs(state, rel, vfs, true),
             view_group(Shown::Drawn, rel, Some(View::Preview), !unpacked.is_empty())
         )
@@ -824,8 +864,10 @@ pub fn file_page(
         true => View::Preview,
         false => View::Source,
     };
+    let default_view = lit == View::Preview || shown_as == Shown::Text;
     let controls = format!(
-        "{}{}",
+        "{}{}{}",
+        if default_view { full_flag(state, rel, vfs) } else { String::new() },
         verbs(state, rel, vfs, true),
         view_group(shown_as, rel, Some(lit), packed)
     );

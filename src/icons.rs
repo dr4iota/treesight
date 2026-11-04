@@ -69,6 +69,10 @@ pub const ICON_PREVIEW: &str = "<path d=\"M1.6 8s2.4-4.2 6.4-4.2S14.4 8 14.4 8s-
 /// here and a second spelling of it would only be a second spelling.
 pub const ICON_REFRESH: &str =
     "<path d=\"M12.16 5.8A4.8 4.8 0 1 1 8 3.4\"/><path d=\"M6.5 2.1L8 3.4l-1.5 1.3\"/>";
+/// Full screen: four corners, pointing out to the screen's.
+pub const ICON_FULLSCREEN: &str = "<path d=\"M2.6 6V2.6H6M10 2.6h3.4V6M13.4 10v3.4H10M6 13.4H2.6V10\"/>";
+/// Leaving full screen: the same four corners, turned in.
+pub const ICON_FULLSCREEN_EXIT: &str = "<path d=\"M6 2.6V6H2.6M13.4 6H10V2.6M10 13.4V10h3.4M2.6 10H6v3.4\"/>";
 /// Print: the sheet going in above, the machine, and the sheet coming out across
 /// its front. Three rectangles and no ink drop or wireless wave — the drawing has
 /// to survive being 14 pixels wide.
@@ -204,6 +208,8 @@ pub const ALL: &[(&str, &str)] = &[
     ("source", ICON_SOURCE),
     ("preview", ICON_PREVIEW),
     ("refresh", ICON_REFRESH),
+    ("fullscreen", ICON_FULLSCREEN),
+    ("fullscreen-exit", ICON_FULLSCREEN_EXIT),
     ("print", ICON_PRINT),
     ("menu", ICON_MENU),
     ("up", ICON_UP),

@@ -2306,3 +2306,48 @@ body.nothing .start .row > a.aside {
   .md .mermaid-light { display: block !important; }
   .md .mermaid-dark { display: none !important; }
 }
+
+/* Full screen (`data-ts-full`, set by the shell's FULL script): the file
+   alone. The header, the pane, the drawer and the status line go; the text
+   keeps the view's own margin or the side's safe area, whichever is more, and
+   scrolls under the system's bars and cutout beyond it, edge to edge. A frame
+   takes the whole screen, and the viewer in it keeps its own margins by the
+   same rule (term-ui's viewers, told the insets). */
+:root[data-ts-full] body > header,
+:root[data-ts-full] body > footer,
+:root[data-ts-full] nav.tree,
+:root[data-ts-full] .drawer-scrim,
+:root[data-ts-full] .lines { display: none !important; }
+:root[data-ts-full] main {
+  padding: max(1rem, var(--safe-top)) max(1.25rem, var(--safe-right))
+    max(3rem, var(--safe-bottom)) max(1.25rem, var(--safe-left));
+}
+:root[data-ts-full] body > iframe.raw { width: 100%; height: 100%; margin: 0; }
+/* A rendered page's column, which keeps its measure, in the middle of a
+   screen it has to itself. */
+:root[data-ts-full] .md { margin-inline: auto; }
+/* The way out, which the script draws on a text view and a frame that cannot
+   draw its own: at the top right, clear of the cutout and the bar. */
+.ts-full-exit {
+  position: fixed; z-index: 50; top: max(12px, var(--safe-top)); right: max(12px, var(--safe-right));
+  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+  border-radius: 16px; border: 1px solid var(--border); color: var(--muted);
+  background: color-mix(in srgb, var(--bg-subtle) 90%, transparent);
+  opacity: 0; transition: opacity .4s; pointer-events: none;
+}
+.ts-full-exit.on { opacity: 1; transition: none; pointer-events: auto; }
+.ts-full-exit svg { width: 18px; height: 18px; }
+/* Opposite it, the file: its name, in up to two lines, and the status line's
+   facts under it. As wide as the screen leaves beside the way out. */
+.ts-full-info {
+  position: fixed; z-index: 50; top: max(12px, var(--safe-top)); left: max(12px, var(--safe-left));
+  max-width: calc(100% - max(12px, var(--safe-left)) - max(12px, var(--safe-right)) - 52px);
+  box-sizing: border-box; padding: .4rem .7rem; border-radius: 12px; border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-subtle) 90%, transparent);
+  opacity: 0; transition: opacity .4s; pointer-events: none;
+}
+.ts-full-info.on { opacity: 1; transition: none; }
+.ts-full-info .nm { font-weight: 600; font-size: .9rem; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.ts-full-info .facts { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media print { .ts-full-exit, .ts-full-info { display: none; } }

@@ -556,6 +556,186 @@ addEventListener('keydown', function (e) {
 });
 "#;
 
+/// The window `label` full screen, or back: the embedder's way where it has
+/// one, the window's own otherwise. Off the navigation callback and onto the
+/// main thread, as a window's own state is changed everywhere else here.
+fn full_screen(app: &AppHandle, label: &str, on: bool) {
+    let label = label.to_string();
+    off_the_callback(app, move |app| {
+        let back = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let hook = back.try_state::<SharedExt>().map(|ext| Arc::clone(&ext.0));
+            match hook.as_ref().and_then(|ext| ext.fullscreen.as_ref()) {
+                Some(f) => f(&back, &label, on),
+                // A phone's bars are the platform's: only an embedder's code
+                // reaches them, so with no hook the page's half is all there is.
+                #[cfg(desktop)]
+                None => {
+                    if let Some(win) = back.get_webview_window(&label) {
+                        let _ = win.set_fullscreen(on);
+                    }
+                }
+                #[cfg(mobile)]
+                None => {
+                    let _ = (&label, on);
+                }
+            }
+        });
+    });
+}
+
+/// **Full screen** (treesight's `view::full_flag`): the file alone, with the
+/// header, the pane and the status line gone (`data-ts-full`, `app.css`) and
+/// the window full screen (`/.ts/full`). Kept for the window in its session
+/// storage, so the next page is drawn full screen from its first frame — a
+/// window's storage is its own, so another window is left as it is — and left
+/// at a page that does not offer it, a folder's.
+///
+/// Out by the exit button, Esc, F11, and Back, which leaves full screen before
+/// it leaves the page: going in pushes an entry for Back to take. In by the
+/// header's button and F11. **A tap shows the controls** for 2.5 s — on a text
+/// view the exit button at the top right and the file's name and facts at the
+/// top left, which the page put on its Full screen link — and a tap while they show hides
+/// them; a tap on a link or a control is its own, and a move of the mouse shows
+/// them as well. A viewer in a frame (an embedder's: `iframe.viewer`) draws its
+/// own controls: it is told the state, the safe area's insets and the file's
+/// name and facts (shown at the top left, where the header was), and asks
+/// for the way out with a message, which is taken only from that frame and
+/// only for this.
+const FULL: &str = r#"
+(function () {
+  if (window.top !== window) return;
+  var KEY = 'ts-full', SHOW_MS = 2500;
+  var root = function () { return document.documentElement; };
+  var tree = function () { return !!document.querySelector('link[href="/.ts/app.css"]'); };
+  var held = function () { try { return sessionStorage.getItem(KEY) === '1'; } catch (e) { return false; } };
+  var hold = function (on) { try { if (on) sessionStorage.setItem(KEY, '1'); else sessionStorage.removeItem(KEY); } catch (e) {} };
+  // Before the first paint, so a page in full screen never shows its header.
+  if (held() && root()) root().setAttribute('data-ts-full', '');
+  var token = function () { var m = document.querySelector('meta[name="ts-token"]'); return m ? m.content : ''; };
+  var tell = function (on) { location.assign('/.ts/full?on=' + (on ? 1 : 0) + '&t=' + encodeURIComponent(token())); };
+  var link = function () { return document.querySelector('a[href^="/.ts/full"]'); };
+  var offered = function () { return !!link(); };
+  // The file's name and facts, which the page put on its Full screen link.
+  var info = function () {
+    var a = link();
+    return { name: (a && a.getAttribute('data-ts-name')) || '', facts: (a && a.getAttribute('data-ts-facts')) || '' };
+  };
+  var viewer = function () { return document.querySelector('iframe.viewer'); };
+  // The safe area as the stylesheet resolves it, in pixels.
+  var insets = function () {
+    var p = document.createElement('div');
+    p.style.cssText = 'position:fixed;visibility:hidden;padding:var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left)';
+    document.body.appendChild(p);
+    var c = getComputedStyle(p);
+    var out = { top: parseFloat(c.paddingTop) || 0, right: parseFloat(c.paddingRight) || 0, bottom: parseFloat(c.paddingBottom) || 0, left: parseFloat(c.paddingLeft) || 0 };
+    p.remove();
+    return out;
+  };
+  var told = function () {
+    var f = viewer();
+    if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'ts-full', on: held(), insets: insets(), info: info() }, '*');
+  };
+  var exitEl = null, infoEl = null, timer = 0;
+  var draw = function () {
+    if (exitEl || viewer() || !document.body) return;
+    // At the top left, opposite the way out: the name, and its facts.
+    var i = info();
+    infoEl = document.createElement('div');
+    infoEl.className = 'ts-full-info';
+    infoEl.setAttribute('aria-hidden', 'true');
+    var name = document.createElement('div');
+    name.className = 'nm';
+    name.textContent = i.name;
+    var facts = document.createElement('div');
+    facts.className = 'facts';
+    facts.textContent = i.facts;
+    infoEl.appendChild(name);
+    infoEl.appendChild(facts);
+    document.body.appendChild(infoEl);
+    exitEl = document.createElement('a');
+    exitEl.className = 'ts-full-exit';
+    exitEl.href = '#';
+    exitEl.setAttribute('role', 'button');
+    exitEl.setAttribute('aria-label', 'Exit full screen');
+    exitEl.title = 'Exit full screen (Esc)';
+    exitEl.innerHTML = '__TS_FULL_EXIT__';
+    exitEl.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); leave(); });
+    document.body.appendChild(exitEl);
+  };
+  // The controls come and go together.
+  var lit = function (on) {
+    [exitEl, infoEl].forEach(function (el) { if (el) el.classList.toggle('on', on); });
+  };
+  var show = function () {
+    if (!exitEl) return;
+    lit(true);
+    clearTimeout(timer);
+    timer = setTimeout(function () { lit(false); }, SHOW_MS);
+  };
+  var hide = function () { clearTimeout(timer); lit(false); };
+  var enter = function () {
+    if (held() || !offered()) return;
+    hold(true);
+    root().setAttribute('data-ts-full', '');
+    history.pushState({ tsFull: 1 }, '');
+    draw();
+    show();
+    told();
+    tell(true);
+  };
+  var leave = function (byBack) {
+    if (!held()) return;
+    hold(false);
+    root().removeAttribute('data-ts-full');
+    hide();
+    told();
+    tell(false);
+    // The entry going in pushed, taken back, so Back after is the page before
+    // — a moment later, once the shell has had the navigation that tells it:
+    // a traversal begun first could cancel that navigation unseen.
+    if (!byBack && history.state && history.state.tsFull) setTimeout(function () { history.back(); }, 150);
+  };
+  addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href^="/.ts/full"]');
+    if (a && tree()) { e.preventDefault(); enter(); return; }
+    if (!held() || !exitEl) return;
+    // A link's, a control's, or a selection's: theirs.
+    if (e.target.closest && e.target.closest('a, button, input, select, textarea, summary, label')) return;
+    var sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    if (exitEl.classList.contains('on')) hide(); else show();
+  }, true);
+  addEventListener('pointermove', function (e) { if (held() && e.pointerType === 'mouse') show(); });
+  addEventListener('keydown', function (e) {
+    if (!tree()) return;
+    if (e.key === 'F11') { e.preventDefault(); if (held()) leave(); else enter(); }
+    else if (e.key === 'Escape' && held()) { e.preventDefault(); leave(); }
+  });
+  addEventListener('popstate', function () { if (held()) leave(true); });
+  addEventListener('message', function (e) {
+    var f = viewer();
+    if (!f || e.source !== f.contentWindow || !e.data) return;
+    if (e.data.type === 'ts-full-exit') leave();
+    else if (e.data.type === 'ts-full-toggle') { if (held()) leave(); else enter(); }
+    else if (e.data.type === 'ts-full-ready') told();
+  });
+  addEventListener('resize', function () { if (held()) told(); });
+  addEventListener('DOMContentLoaded', function () {
+    if (!tree() || !held()) return;
+    // A page with nothing to show alone — a folder, the start page — ends it.
+    if (!offered()) { hold(false); root().removeAttribute('data-ts-full'); tell(false); return; }
+    // An entry of this page's own for Back to take, as going in pushed one:
+    // a page reached in full screen is left by Back, before Back leaves it.
+    if (!(history.state && history.state.tsFull)) history.pushState({ tsFull: 1 }, '');
+    draw();
+    show();
+    var f = viewer();
+    if (f) f.addEventListener('load', told);
+  });
+})();
+"#;
+
 /// The main pane's zoom: `Ctrl+=` and `Ctrl+−` step it, as does `Ctrl+wheel` —
 /// which is also what a touchpad's pinch arrives as — `Ctrl+0` puts it back,
 /// and a two-finger pinch in the pane moves it smoothly. The header and the
@@ -1016,6 +1196,12 @@ pub struct ShellExt {
     /// for — a PDF, a picture (`Config::set_viewer`). Installed when the
     /// server starts.
     pub viewer: Option<treeserve::Viewer>,
+    /// How the window `label` goes full screen and back, where this shell's
+    /// way does not reach: a desktop window does it itself (`set_fullscreen`);
+    /// a phone's status and navigation bars are the platform's, and only the
+    /// embedder's own code can hide them. Called on the main thread.
+    #[allow(clippy::type_complexity)]
+    pub fullscreen: Option<Box<dyn Fn(&AppHandle, &str, bool) + Send + Sync>>,
     /// Replaces the shell's keyboard-shortcut script wholesale. A downstream
     /// page can need the very keys the default script binds, so the guard
     /// belongs to whoever knows about that page.
@@ -1164,6 +1350,8 @@ struct Ext {
     #[allow(clippy::type_complexity)]
     file_lines: Option<Arc<dyn Fn(&AppHandle, &str, &[String]) -> Vec<treeserve::FileLine> + Send + Sync>>,
     viewer: Option<treeserve::Viewer>,
+    #[allow(clippy::type_complexity)]
+    fullscreen: Option<Box<dyn Fn(&AppHandle, &str, bool) + Send + Sync>>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
@@ -1238,10 +1426,11 @@ addEventListener('DOMContentLoaded', function () {
 fn window_script(custom: Option<String>, ours: &[String]) -> String {
     let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{ZOOM}\n{}",
+        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{ZOOM}\n{FULL}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
+    .replace("__TS_FULL_EXIT__", &js_quoted(&treeserve::icons::svg_icon(treeserve::icons::ICON_FULLSCREEN_EXIT)))
     .replace("__TS_ZOOM_MIN__", &treeserve::page::ZOOM_MIN.to_string())
     .replace("__TS_ZOOM_MAX__", &treeserve::page::ZOOM_MAX.to_string())
     .replace(OURS_SLOT, &format!("[{ours}]"))
@@ -1290,6 +1479,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         page_title: ext.page_title,
         file_lines: ext.file_lines.map(Arc::from),
         viewer: ext.viewer,
+        fullscreen: ext.fullscreen,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
@@ -3553,6 +3743,12 @@ fn shell_action(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
         // history. A reload keeps the scroll and keeps Back meaning the folder
         // before this one.
         "/.ts/reload" => eval_in(app, label, "location.reload()"),
+        // Full screen and back, for the window it was asked in: the FULL
+        // script has the page's side of it already, and keeps it.
+        "/.ts/full" => {
+            let on = url.query_pairs().any(|(k, v)| k == "on" && v == "1");
+            full_screen(app, label, on);
+        }
         // The Print flag, and Ctrl+P, which in this window is not the engine's to
         // answer: there is no menu here that would have carried it. The page's
         // print rules are what makes the result worth looking at — no header, no

@@ -3537,6 +3537,49 @@ mod tests {
     /// a binary notice, and for text too big to highlight Raw itself with
     /// Source dimmed. The verbs are a group of their own, and Line numbers is
     /// on the listing's meta line rather than in the header.
+    /// Full screen is on a file's default view — its Preview, or its Source
+    /// where that is its only view — and on no other, nor on a folder; and
+    /// only in the app, whose window it is.
+    #[test]
+    fn full_screen_is_offered_on_a_files_default_view() {
+        let dir = tmp_dir("full");
+        fs::write(dir.join("a.md"), "# a\n").unwrap();
+        fs::write(dir.join("b.rs"), "fn main() {}\n").unwrap();
+        fs::write(dir.join("c.png"), [0u8; 4]).unwrap();
+        fs::write(dir.join("d.bin"), [0u8, 1, 2]).unwrap();
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let root = state.cfg.root().expect("these tests always serve one");
+        let src = [("src".to_string(), "1".to_string())];
+        let page = |state: &State, name: &str, query: &[(String, String)]| {
+            let rel = vec![name.to_string()];
+            crate::view::file_page(state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), query, "/")
+        };
+        let raw = |name: &str| {
+            let rel = vec![name.to_string()];
+            crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/")
+        };
+        let full = |html: &str| html.contains("/.ts/full?on=1");
+        assert!(full(&page(&state, "a.md", &[])), "Markdown's Preview");
+        assert!(!full(&page(&state, "a.md", &src)), "not its Source");
+        assert!(!full(&raw("a.md")), "nor its Raw");
+        assert!(full(&page(&state, "b.rs", &[])), "code, whose only view is Source");
+        assert!(full(&page(&state, "c.png", &[])) && !full(&page(&state, "c.png", &src)), "a picture's Preview only");
+        assert!(full(&page(&state, "d.bin", &[])), "a binary file's Source, its only view");
+        let folder = listing_page(&state, &root, prefs(), &[], &VfsPath::root(), &[], "/");
+        assert!(!full(&folder), "not a folder");
+        // Beside Refresh, ahead of the file's own.
+        let md = page(&state, "a.md", &[]);
+        assert!(md.find("/.ts/reload").unwrap() < md.find("/.ts/full").unwrap(), "{md}");
+        assert!(md.find("/.ts/full").unwrap() < md.find("?dl=1").unwrap(), "{md}");
+        // The facts a tap in full screen shows, on the link the script reads.
+        assert!(md.contains("data-ts-name=\"a.md\" data-ts-facts=\"4 B \u{b7} "), "{md}");
+        // Off the app, a browser's window is its own business.
+        state.cfg.app_ui = false;
+        assert!(!full(&page(&state, "a.md", &[])));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn a_files_views_are_one_group_with_the_shown_one_lit() {
         let dir = tmp_dir("views");

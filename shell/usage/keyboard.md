@@ -13,6 +13,8 @@ On a computer with a keyboard:
 | `Ctrl+=`, `Ctrl+−` | Zoom the file in or out |
 | `Ctrl+0`, `Ctrl+double-click` | Zoom back to 100% |
 | `Ctrl+wheel` | Zoom the file a step at a time |
+| `F11` | Full screen, and back |
+| `Esc` | Leave full screen |
 
 On a touch screen, pinch the file with two fingers to zoom it. To go back to
 100%, hold two fingers still on it: after a moment a note at the top says
