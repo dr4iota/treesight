@@ -490,14 +490,14 @@ fn binary_source(
     file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content)
 }
 
-/// A PDF's Preview where the embedder has a viewer of its own: the file in its
+/// A Preview where the embedder has a viewer of its own for the kind: the file in its
 /// frame, on a page that is the frame and nothing else, as HTML's Preview is.
 /// The frame keeps scripts and its own origin, which is a different one from
 /// the page's, so it reaches nothing here; and a link the reader taps may move
 /// the window, which is how a document's link reaches the shell and goes to the
 /// browser, as one in Markdown does. Nothing else — no forms, no popups, and no
 /// moving the window without a tap.
-fn pdf_viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str, viewer: &crate::PdfViewer) -> String {
+fn viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str, src: &str) -> String {
     let name = rel.last().map(String::as_str).unwrap_or("");
     let controls = format!(
         "{}{}",
@@ -505,8 +505,8 @@ fn pdf_viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String],
         view_group(Shown::Media, rel, Some(View::Preview), false)
     );
     let frame = format!(
-        "<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"{}\" title=\"{}\"></iframe>",
-        html_escape(&(viewer.src)(&root.id, rel)),
+        "<iframe class=\"raw viewer\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"{}\" title=\"{}\"></iframe>",
+        html_escape(src),
         html_escape(name)
     );
     bare_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &with_lines(state, root, rel, frame))
@@ -601,10 +601,11 @@ pub fn file_page(
             view_group(Shown::Media, rel, Some(View::Preview), false)
         )
     };
-    if media && !want_source && ext == "pdf" {
-        if let Some(viewer) = state.cfg.pdf_viewer() {
-            return pdf_viewer_page(state, root, prefs, rel, url_now, &viewer);
-        }
+    if media && !want_source
+        && let Some(kind) = crate::Viewed::of(name)
+        && let Some(src) = state.cfg.viewer().and_then(|viewer| (viewer.src)(kind, &root.id, rel))
+    {
+        return viewer_page(state, root, prefs, rel, url_now, &src);
     }
     let element = match ext.as_str() {
         _ if want_source => None,

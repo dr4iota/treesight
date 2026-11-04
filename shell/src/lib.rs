@@ -1012,9 +1012,10 @@ pub struct ShellExt {
     /// should be in memory already, never the network or the file.
     #[allow(clippy::type_complexity)]
     pub file_lines: Option<Box<dyn Fn(&AppHandle, &str, &[String]) -> Vec<treeserve::FileLine> + Send + Sync>>,
-    /// A viewer of the embedder's own for a PDF's Preview, in place of the
-    /// engine's (`Config::set_pdf_viewer`). Installed when the server starts.
-    pub pdf_viewer: Option<treeserve::PdfViewer>,
+    /// A viewer of the embedder's own for the Preview of the kinds it answers
+    /// for — a PDF, a picture (`Config::set_viewer`). Installed when the
+    /// server starts.
+    pub viewer: Option<treeserve::Viewer>,
     /// Replaces the shell's keyboard-shortcut script wholesale. A downstream
     /// page can need the very keys the default script binds, so the guard
     /// belongs to whoever knows about that page.
@@ -1162,7 +1163,7 @@ struct Ext {
     /// closure of its own that holds this one and the handle together.
     #[allow(clippy::type_complexity)]
     file_lines: Option<Arc<dyn Fn(&AppHandle, &str, &[String]) -> Vec<treeserve::FileLine> + Send + Sync>>,
-    pdf_viewer: Option<treeserve::PdfViewer>,
+    viewer: Option<treeserve::Viewer>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
@@ -1288,7 +1289,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         edition: ext.edition,
         page_title: ext.page_title,
         file_lines: ext.file_lines.map(Arc::from),
-        pdf_viewer: ext.pdf_viewer,
+        viewer: ext.viewer,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
@@ -2199,7 +2200,7 @@ fn start(app: &AppHandle) -> Result<(), String> {
         let app = app.clone();
         cfg.set_file_lines(Some(Arc::new(move |root: &str, rel: &[String]| lines(&app, root, rel))));
     }
-    cfg.set_pdf_viewer(ext.pdf_viewer.clone());
+    cfg.set_viewer(ext.viewer.clone());
     cfg.places = places(app)
         .into_iter()
         .map(|(label, dir)| (label, treeserve::util::display_path(&dir)))

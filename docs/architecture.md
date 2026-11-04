@@ -165,12 +165,13 @@ held to the same rule by the `Content-Security-Policy` every page carries
 (`html_reply`): raw HTML in a rendered document cannot script, whichever
 backend served it.
 
-One frame may script: an embedder's PDF viewer (`Config::set_pdf_viewer`),
-which a PDF's Preview draws where it would otherwise hand the file to the
-engine's `<embed>`. It is the embedder's page on the embedder's origin — a
+One frame may script: an embedder's viewer (`Config::set_viewer`), which a
+PDF's or a picture's Preview draws, for the kinds it answers for, where this
+crate would otherwise hand a PDF to the engine's `<embed>` and draw a picture
+as an `<img>`. It is the embedder's page on the embedder's origin — a
 different one from the tree's, so it reaches nothing here — and only that
-page's policy names it in `frame-src`. Without one, a PDF is the engine's, as
-it always was, and this crate still ships no script.
+page's policy names it in `frame-src`. Without one, a PDF is the engine's and a
+picture an `<img>`, as they always were, and this crate still ships no script.
 
 Script is not the whole of it, though, and the rest is why `md::RawHtml`
 exists. `style-src 'unsafe-inline'` is what lets a page carry its theme, and

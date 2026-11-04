@@ -458,15 +458,39 @@ pub struct FileLine {
 /// It runs with no lock of this crate's held, and may read the `Config` back.
 pub type FileLines = Arc<dyn Fn(&str, &[String]) -> Vec<FileLine> + Send + Sync>;
 
-/// An embedder's own viewer for a PDF's Preview, drawn in a frame where this
-/// crate would otherwise hand the file to the engine's (`<embed>`), which some
-/// engines do not have and none draws in the page's colours. See
-/// [`Config::set_pdf_viewer`].
+/// What an embedder's viewer may draw: a file's Preview of one of these kinds
+/// is its frame, where it answers for the kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Viewed {
+    /// A PDF, which this crate would otherwise hand to the engine's viewer
+    /// (`<embed>`), which some engines do not have and none draws in the
+    /// page's colours.
+    Pdf,
+    /// A picture, which this crate draws as an `<img>` and cannot zoom.
+    Image,
+}
+
+impl Viewed {
+    /// The kind a file's name says it is, if it is one a viewer may draw.
+    pub fn of(name: &str) -> Option<Viewed> {
+        let ext = util::ext_of(name);
+        match ext.as_str() {
+            "pdf" => Some(Viewed::Pdf),
+            e if util::IMAGE_EXTS.contains(&e) => Some(Viewed::Image),
+            _ => None,
+        }
+    }
+}
+
+/// An embedder's own viewer, drawn in a frame on a file's Preview for the
+/// kinds it answers for (`Viewed`). See [`Config::set_viewer`].
 #[derive(Clone)]
-pub struct PdfViewer {
-    /// The frame's address for the file at `rel` under the root `root_id`.
-    pub src: Arc<dyn Fn(&str, &[String]) -> String + Send + Sync>,
-    /// What a PDF's page adds to its `frame-src` so that address may load —
+pub struct Viewer {
+    /// The frame's address for the file at `rel` under the root `root_id`, a
+    /// file of kind `kind`; `None` for a kind this viewer does not draw.
+    #[allow(clippy::type_complexity)]
+    pub src: Arc<dyn Fn(Viewed, &str, &[String]) -> Option<String> + Send + Sync>,
+    /// What a viewed file's page adds to its `frame-src` so that address may load —
     /// sources as a policy writes them (`viewer: http://viewer.localhost`).
     pub frame_src: String,
     /// The origins the viewer fetches a PDF's bytes from, as a request's
@@ -614,9 +638,9 @@ pub struct Config {
     /// for the same reason the others are: the shell builds this `Config` fresh
     /// when it starts, so a hook has to be handed over after that.
     file_lines: RwLock<Option<FileLines>>,
-    /// The embedder's PDF viewer, where it has one. Behind a lock for the
-    /// reason `file_lines` is.
-    pdf_viewer: RwLock<Option<PdfViewer>>,
+    /// The embedder's viewer, where it has one. Behind a lock for the reason
+    /// `file_lines` is.
+    viewer: RwLock<Option<Viewer>>,
     /// What the Places and Recent paths turned out to be, for the ones anything
     /// has got round to looking at. Written by the embedder as its answers come
     /// in and read while a page renders, which is the whole point of it being
@@ -710,7 +734,7 @@ impl Config {
             intro_acts: RwLock::new(Arc::new(Vec::new())),
             flags: RwLock::new(Arc::new(Vec::new())),
             file_lines: RwLock::new(None),
-            pdf_viewer: RwLock::new(None),
+            viewer: RwLock::new(None),
             status: RwLock::new(HashMap::new()),
             window_roots: RwLock::new(HashMap::new()),
         }
@@ -906,15 +930,16 @@ impl Config {
         *self.file_lines.write().expect("file lines lock") = lines;
     }
 
-    /// Draws a PDF's Preview in the embedder's viewer, or with `None` hands it
-    /// to the engine's own again.
-    pub fn set_pdf_viewer(&self, viewer: Option<PdfViewer>) {
-        *self.pdf_viewer.write().expect("pdf viewer lock") = viewer;
+    /// Draws the Preview of the kinds of file the embedder's viewer answers
+    /// for in it, or with `None` as this crate does: a PDF in the engine's
+    /// own viewer, a picture as an `<img>`.
+    pub fn set_viewer(&self, viewer: Option<Viewer>) {
+        *self.viewer.write().expect("viewer lock") = viewer;
     }
 
-    /// The embedder's PDF viewer, out of its lock.
-    pub fn pdf_viewer(&self) -> Option<PdfViewer> {
-        self.pdf_viewer.read().expect("pdf viewer lock").clone()
+    /// The embedder's viewer, out of its lock.
+    pub fn viewer(&self) -> Option<Viewer> {
+        self.viewer.read().expect("viewer lock").clone()
     }
 
     /// The embedder's lines for the file at `rel` under the root `root_id`;
@@ -1598,7 +1623,7 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
         let as_text = query_get(&query, "as") == Some("text");
         let reply = serve_raw(req, root.vfs.as_ref(), &canon, &name, want_dl, as_text);
         // The embedder's viewer reads a PDF from an origin of its own.
-        return match (state.cfg.pdf_viewer(), req.header("Origin")) {
+        return match (state.cfg.viewer(), req.header("Origin")) {
             (Some(viewer), Some(origin)) if ext_of(&name) == "pdf" && viewer.origins.iter().any(|o| o == origin) => {
                 reply.with("Access-Control-Allow-Origin", origin).with("Vary", "Origin")
             }
@@ -1610,11 +1635,10 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
         200,
         view::file_page(state, &root, prefs, &rel, &canon, &query, &url_now),
     );
-    // A PDF's Preview may be the embedder's viewer, from an origin of its own.
-    match state.cfg.pdf_viewer() {
-        Some(viewer) if ext_of(&name) == "pdf" && query_get(&query, "src") != Some("1") => {
-            page.framing(&viewer.frame_src)
-        }
+    // A Preview may be the embedder's viewer, from an origin of its own.
+    let viewed = Viewed::of(&name).filter(|_| query_get(&query, "src") != Some("1"));
+    match (state.cfg.viewer(), viewed) {
+        (Some(viewer), Some(kind)) if (viewer.src)(kind, &root.id, &rel).is_some() => page.framing(&viewer.frame_src),
         _ => page,
     }
 }
@@ -2502,13 +2526,15 @@ mod tests {
 
         // The embedder's viewer: its frame, on a page that is only the frame,
         // and its origin in this page's policy and no other.
-        state.cfg.set_pdf_viewer(Some(super::PdfViewer {
-            src: std::sync::Arc::new(|root: &str, rel: &[String]| format!("viewer://x/?r={}&p={}", root.len(), rel.join("/"))),
+        state.cfg.set_viewer(Some(super::Viewer {
+            src: std::sync::Arc::new(|kind: super::Viewed, root: &str, rel: &[String]| {
+                (kind == super::Viewed::Pdf).then(|| format!("viewer://x/?r={}&p={}", root.len(), rel.join("/")))
+            }),
             frame_src: "viewer:".to_string(),
             origins: vec!["viewer://x".to_string()],
         }));
         let (pdf, csp) = get("/a.pdf");
-        assert!(pdf.contains("<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"viewer://x/?r="), "{pdf}");
+        assert!(pdf.contains("<iframe class=\"raw viewer\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"viewer://x/?r="), "{pdf}");
         assert!(pdf.contains("&amp;p=a.pdf\" title=\"a.pdf\"></iframe>") && !pdf.contains("<embed"), "{pdf}");
         assert!(csp.contains("frame-src 'self' viewer:;"), "{csp}");
         let (_, csp) = get("/a.pdf?src=1");
@@ -2527,6 +2553,19 @@ mod tests {
         assert_eq!(cors("/a.pdf?raw=1&bare=1", "viewer://x").as_deref(), Some("viewer://x"));
         assert_eq!(cors("/a.pdf?raw=1&bare=1", "http://elsewhere"), None);
         assert_eq!(cors("/b.png?raw=1&bare=1", "viewer://x"), None, "a PDF's only");
+
+        // A viewer that draws pictures too: a picture's Preview is its frame,
+        // and its page's policy frames it; its Source is still ours.
+        state.cfg.set_viewer(Some(super::Viewer {
+            src: std::sync::Arc::new(|kind: super::Viewed, _: &str, rel: &[String]| Some(format!("viewer://x/{kind:?}?p={}", rel.join("/")))),
+            frame_src: "viewer:".to_string(),
+            origins: vec!["viewer://x".to_string()],
+        }));
+        let (png, csp) = get("/b.png");
+        assert!(png.contains("src=\"viewer://x/Image?p=b.png\"") && !png.contains("<img class=\"preview-img\""), "{png}");
+        assert!(csp.contains("frame-src 'self' viewer:;"), "{csp}");
+        let (png_src, csp) = get("/b.png?src=1");
+        assert!(png_src.contains("class=\"hexwrap\"") && csp.contains("frame-src 'self';"), "{png_src}");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
