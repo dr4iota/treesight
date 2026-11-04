@@ -7,6 +7,8 @@ use crate::page::{
 };
 use crate::util::*;
 use crate::vfs::VfsPath;
+use crate::kind;
+use std::fmt::Write as _;
 use std::io::Read;
 use crate::{Root, State};
 
@@ -68,7 +70,8 @@ fn verbs(state: &State, rel: &[String], vfs: &dyn Vfs, print: bool) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Shown {
     /// Drawn, played or rendered by an element: an image, a film, a sound, a
-    /// PDF. Raw would be the same thing in a frame, so there is no group.
+    /// PDF. Preview is that, and Source the bytes it is made of
+    /// ([`binary_source`]); no Raw, which would be the same thing in a frame.
     Media,
     /// Text the app draws as well as highlights: Markdown, Mermaid, a table,
     /// JSON laid out, HTML as a page.
@@ -77,9 +80,9 @@ enum Shown {
     Text,
     /// Text past the highlight limit: Raw, with Source dimmed to say why.
     TooBig,
-    /// Not text, or text that only unpacks too big: a notice and Download.
-    /// No Raw, which shows a file as it is, and there is no showing these as
-    /// they are — a frame pointed at one is blank, or a download.
+    /// Not text: Source alone, its first bytes ([`binary_source`]). No Raw,
+    /// which shows a file as it is, and there is no showing these as they are
+    /// — a frame pointed at one is blank, or a download.
     Binary,
     /// Nothing to draw at all: past what the backend hands over, or unreadable.
     Nothing,
@@ -94,6 +97,7 @@ enum View {
 
 const PREVIEW_TITLE: &str = "The file as this app shows it";
 const SOURCE_TITLE: &str = "Highlighted source";
+const BYTES_TITLE: &str = "What the file is made of";
 
 /// The view group: how the file is shown, as one choice with the view on
 /// screen lit (`current_flag`), so a change of view changes which segment is
@@ -112,17 +116,21 @@ fn view_group(shown: Shown, rel: &[String], lit: Option<View>, packed: bool) -> 
     let preview = || seg(View::Preview, &base, ICON_PREVIEW, "Preview", PREVIEW_TITLE);
     // Source is the page itself where there is no Preview, and asked for
     // where there is.
-    let source = |href: &str| seg(View::Source, href, ICON_SOURCE, "Source", SOURCE_TITLE);
+    let source_title = match shown {
+        Shown::Media | Shown::Binary => BYTES_TITLE,
+        _ => SOURCE_TITLE,
+    };
+    let source = |href: &str| seg(View::Source, href, ICON_SOURCE, "Source", source_title);
     let raw = match packed {
         true => String::new(),
         false => seg(View::Raw, &format!("{base}?raw=1"), ICON_RAW, "Raw", "The file as it is on disk"),
     };
     let segments = match shown {
-        // Raw is not offered for these, but its address still answers: there it
-        // says how to get back.
-        Shown::Media if lit == Some(View::Raw) => format!("{}{raw}", preview()),
-        Shown::Binary if lit == Some(View::Raw) => raw,
-        Shown::Media | Shown::Nothing | Shown::Binary => String::new(),
+        // No Raw on either: there is no showing these as they are. Its address
+        // still answers, with nothing lit, and says how to get back.
+        Shown::Media => format!("{}{}", preview(), source(&format!("{base}?src=1"))),
+        Shown::Binary => source(&base),
+        Shown::Nothing => String::new(),
         Shown::Drawn => format!("{}{}{raw}", preview(), source(&format!("{base}?src=1"))),
         Shown::Text => format!("{}{raw}", source(&base)),
         Shown::TooBig => format!(
@@ -237,11 +245,16 @@ fn raw_view(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_no
         verbs(state, rel, root.vfs.as_ref(), false),
         view_group(shown, rel, Some(View::Raw), false)
     );
-    // A binary file's Raw is reached only by its address: there is nothing to
-    // show as it is, and a frame would fetch all of it to show nothing.
-    if shown == Shown::Binary {
+    // A binary file's Raw, or a picture's, is reached only by its address:
+    // there is nothing to show as it is, and a frame would fetch all of it to
+    // show nothing — or, for a picture, Preview again.
+    if matches!(shown, Shown::Binary | Shown::Media) {
+        let words = match shown {
+            Shown::Media => "Nothing to show as text: Preview shows this file, and Source its first bytes.",
+            _ => "Binary file: nothing to show as text. Source shows its first bytes.",
+        };
         let content = format!(
-            "<main>{}<div class=\"bigmsg\"><p>Binary file: nothing to show as text.</p>{}</div></main>",
+            "<main>{}<div class=\"bigmsg\"><p>{words}</p>{}</div></main>",
             file_lines_html(state, root, rel),
             download_link(rel, root.vfs.as_ref(), "Download")
                 .map(|dl| format!("<p>{dl}</p>"))
@@ -372,10 +385,111 @@ fn shown_of(vfs: &dyn Vfs, canon: &VfsPath, name: &str) -> Shown {
 
 /// The first 8 KiB, which is all the binary test reads.
 fn head_of(vfs: &dyn Vfs, canon: &VfsPath) -> Option<Vec<u8>> {
-    let mut head = Vec::with_capacity(8192);
-    vfs.open(canon).ok()?.take(8192).read_to_end(&mut head).ok()?;
+    head_of_len(vfs, canon, 8192)
+}
+
+/// The first `len` bytes, or the whole file where it is shorter. Read through
+/// `open`, which every backend streams, so a large file costs only its head.
+fn head_of_len(vfs: &dyn Vfs, canon: &VfsPath, len: u64) -> Option<Vec<u8>> {
+    let mut head = Vec::with_capacity(len.min(1 << 16) as usize);
+    vfs.open(canon).ok()?.take(len).read_to_end(&mut head).ok()?;
     Some(head)
 }
+
+/// How much of a binary file its Source shows.
+const HEX_BYTES: usize = 4096;
+
+/// The start of a file in hex: offset, the bytes, and the same bytes as text
+/// where they are printable. Eight to a line and sixteen, both on the page,
+/// and the box's own width shows one of them (`.hexwrap` in `app.css`): no
+/// script measures anything here, and eight is what a phone held upright fits.
+fn hex_view(bytes: &[u8], total: u64, unpacked: bool) -> String {
+    let head = &bytes[..bytes.len().min(HEX_BYTES)];
+    let rows = |per: usize| {
+        let mut out = String::with_capacity(head.len() * 9);
+        for (n, line) in head.chunks(per).enumerate() {
+            let mut hex = String::with_capacity(per * 3 + 1);
+            for i in 0..per {
+                if i > 0 {
+                    hex.push(' ');
+                }
+                if i == 8 {
+                    hex.push(' ');
+                }
+                match line.get(i) {
+                    Some(b) => {
+                        let _ = write!(hex, "{b:02x}");
+                    }
+                    None => hex.push_str("  "),
+                }
+            }
+            let text: String = line.iter().map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect();
+            let _ = writeln!(out, "<span class=\"o\">{:08x}</span>  {hex}  <span class=\"t\">{}</span>", n * per, html_escape(&text));
+        }
+        out
+    };
+    let of = if unpacked { " unpacked" } else { "" };
+    let note = match (head.len() as u64) < total {
+        true => format!("The first {} of {}{of}", human_size(head.len() as u64), human_size(total)),
+        false => format!("All of it{of}, {}", human_size(total)),
+    };
+    format!(
+        "<div class=\"hexwrap\"><pre class=\"hex n8\">{}</pre><pre class=\"hex n16\">{}</pre><p class=\"hexnote\">{note}</p></div>",
+        rows(8),
+        rows(16)
+    )
+}
+
+/// What a file the page draws but cannot list is called on its status line
+/// where its first bytes say nothing [`kind::describe`] knows.
+fn media_word(ext: &str) -> Option<&'static str> {
+    if IMAGE_EXTS.contains(&ext) {
+        Some("image")
+    } else if VIDEO_EXTS.contains(&ext) {
+        Some("video")
+    } else if AUDIO_EXTS.contains(&ext) {
+        Some("audio")
+    } else if ext == "pdf" {
+        Some("pdf")
+    } else {
+        None
+    }
+}
+
+/// A binary file's Source: what its first bytes say it is, on the status line,
+/// then those bytes in hex. `shown` picks the group — Preview and Source for a
+/// file the page also draws, Source alone for one it does not. `bytes` are the
+/// file's, or what a `.gz` unpacked to, `total` long, which `unpacked` says.
+#[allow(clippy::too_many_arguments)]
+fn binary_source(
+    state: &State,
+    root: &Root,
+    prefs: Prefs<'_>,
+    rel: &[String],
+    url_now: &str,
+    shown: Shown,
+    bytes: &[u8],
+    (size, mtime): (u64, Option<std::time::SystemTime>),
+    total: u64,
+    unpacked: &str,
+) -> String {
+    let name = rel.last().map(String::as_str).unwrap_or("");
+    let ext = ext_of(name);
+    let word = media_word(&ext).unwrap_or("binary");
+    let kind = kind::describe(bytes, &ext).unwrap_or_else(|| word.to_string());
+    let controls = format!(
+        "{}{}",
+        verbs(state, rel, root.vfs.as_ref(), false),
+        view_group(shown, rel, Some(View::Source), false)
+    );
+    let content = format!(
+        "{}{}",
+        meta_line(size, mtime, &format!("{kind}{unpacked}")),
+        hex_view(bytes, total, !unpacked.is_empty())
+    );
+    file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content)
+}
+
 
 /// Whether a file past the highlight limit is text, and so opens in Raw with
 /// Source dimmed, rather than a notice. Never a `.gz`, whose Raw is the packed
@@ -445,38 +559,50 @@ pub fn file_page(
         return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
     }
 
-    if IMAGE_EXTS.contains(&ext.as_str()) {
-        let content = format!(
-            "{}<div class=\"fit\"><a href=\"{1}\"><img class=\"preview-img\" src=\"{1}\" alt=\"{2}\"></a></div>",
-            meta_line(size, mtime, "image"),
+    // What the page draws: Preview is the file alone, as Markdown's is, and
+    // Source the bytes it is made of. An SVG is text, so its Source is its
+    // listing, below with the rest of the text.
+    let want_source = query_get(query, "src") == Some("1");
+    let media = media_word(&ext).is_some();
+    if media && want_source {
+        let Some(head) = head_of_len(vfs, canon, kind::HEAD) else {
+            let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
+            return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
+        };
+        if looks_binary(&head[..head.len().min(8192)]) || ext == "pdf" {
+            return binary_source(state, root, prefs, rel, url_now, Shown::Media, &head, (size, mtime), size, "");
+        }
+    }
+    let media_controls = || {
+        format!(
+            "{}{}",
+            verbs(state, rel, vfs, false),
+            view_group(Shown::Media, rel, Some(View::Preview), false)
+        )
+    };
+    let element = match ext.as_str() {
+        _ if want_source => None,
+        e if IMAGE_EXTS.contains(&e) => Some(format!(
+            "<div class=\"fit\"><a href=\"{0}\"><img class=\"preview-img\" src=\"{0}\" alt=\"{1}\"></a></div>",
             html_escape(&raw_href(rel)),
             html_escape(name)
-        );
-        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
-    }
-    if VIDEO_EXTS.contains(&ext.as_str()) {
-        let content = format!(
-            "{}<div class=\"fit\"><video class=\"preview\" controls src=\"{}\"></video></div>",
-            meta_line(size, mtime, "video"),
+        )),
+        e if VIDEO_EXTS.contains(&e) => Some(format!(
+            "<div class=\"fit\"><video class=\"preview\" controls src=\"{}\"></video></div>",
             html_escape(&raw_href(rel))
-        );
-        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
-    }
-    if AUDIO_EXTS.contains(&ext.as_str()) {
-        let content = format!(
-            "{}<audio class=\"preview\" controls src=\"{}\"></audio>",
-            meta_line(size, mtime, "audio"),
+        )),
+        e if AUDIO_EXTS.contains(&e) => Some(format!(
+            "<audio class=\"preview\" controls src=\"{}\"></audio>",
             html_escape(&raw_href(rel))
-        );
-        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
-    }
-    if ext == "pdf" {
-        let content = format!(
-            "{}<div class=\"fit\"><embed class=\"pdf\" src=\"{}\" type=\"application/pdf\"></div>",
-            meta_line(size, mtime, "pdf"),
+        )),
+        "pdf" => Some(format!(
+            "<div class=\"fit\"><embed class=\"pdf\" src=\"{}\" type=\"application/pdf\"></div>",
             html_escape(&raw_href(rel))
-        );
-        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+        )),
+        _ => None,
+    };
+    if let Some(content) = element {
+        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &media_controls()), &content);
     }
 
     // Text-ish content from here on.
@@ -486,17 +612,17 @@ pub fn file_page(
     if size > MAX_HIGHLIGHT_BYTES {
         match too_big_is_text(vfs, canon, &ext) {
             Some(true) => return raw_view(state, root, prefs, rel, url_now, Shown::TooBig),
-            Some(false) => {
-                let content = format!(
-                    "{}<div class=\"bigmsg\"><p>File is too large to show here ({}).</p>{}</div>",
-                    meta_line(size, mtime, "large file"),
-                    human_size(size),
-                    download_link(rel, vfs, "Download")
-                        .map(|dl| format!("<p>{dl}</p>"))
-                        .unwrap_or_default()
-                );
-                return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
-            }
+            // Its Source needs its head only, whatever its size.
+            Some(false) => match head_of_len(vfs, canon, kind::HEAD) {
+                Some(head) => {
+                    let shown = if media { Shown::Media } else { Shown::Binary };
+                    return binary_source(state, root, prefs, rel, url_now, shown, &head, (size, mtime), size, "");
+                }
+                None => {
+                    let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
+                    return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, ""), &content);
+                }
+            },
             // Not even its head: nothing past the limit is read whole.
             None => {
                 let content = "<div class=\"bigmsg\"><p>Could not read file.</p></div>".to_string();
@@ -538,17 +664,13 @@ pub fn file_page(
             }
             // A notice and Download, as for a binary file: Raw here would be
             // the packed bytes, which are no text to show.
+            // Its Source is the gzip itself, and the status line says why.
             Some((_, Gunzipped::More)) => {
-                let content = format!(
-                    "{}<div class=\"bigmsg\"><p>File is too large to render once unpacked \
-                     (over {}).</p>{}</div>",
-                    meta_line(size, mtime, "gzip"),
-                    human_size(MAX_HIGHLIGHT_BYTES),
-                    download_link(rel, vfs, "Download")
-                        .map(|dl| format!("<p>{dl}</p>"))
-                        .unwrap_or_default()
-                );
-                return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+                let why = format!(" &middot; too large to render once unpacked (over {})", human_size(MAX_HIGHLIGHT_BYTES));
+                let head = &bytes[..bytes.len().min(kind::HEAD as usize)];
+                let content = format!("{}{}", meta_line(size, mtime, &format!("gzip{why}")), hex_view(head, size, false));
+                let controls = format!("{}{}", verbs(state, rel, vfs, false), view_group(Shown::Binary, rel, Some(View::Source), true));
+                return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content);
             }
             None => (bytes, name, ext, None),
         },
@@ -562,21 +684,14 @@ pub fn file_page(
         })
         .unwrap_or_default();
 
+    // A packed one says what it unpacked to, and a cut-short one that it
+    // stopped at an error, as the text path's line does.
     if looks_binary(&bytes[..bytes.len().min(8192)]) {
-        let content = format!(
-            "{}<div class=\"bigmsg\"><p>Binary file.</p>{}</div>",
-            // A packed one says what it unpacked to, and a cut-short one
-            // that it stopped at an error, as the text path's line does.
-            meta_line(size, mtime, &format!("binary{unpacked}")),
-            download_link(rel, vfs, "Download")
-                .map(|dl| format!("<p>{dl}</p>"))
-                .unwrap_or_default()
-        );
-        return file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &verbs(state, rel, vfs, false)), &content);
+        let shown = if media { Shown::Media } else { Shown::Binary };
+        return binary_source(state, root, prefs, rel, url_now, shown, &bytes, (size, mtime), bytes.len() as u64, &unpacked);
     }
 
     let text = String::from_utf8_lossy(&bytes);
-    let want_source = query_get(query, "src") == Some("1");
 
     // The drawn views below: the verbs, and Preview lit.
     let drawn_controls = || {
@@ -674,6 +789,7 @@ pub fn file_page(
     // too wide to draw or with nothing in it offers no Preview from here.
     let packed = !unpacked.is_empty();
     let shown_as = match laid_out.is_some() || (!JSON_EXTS.contains(&ext.as_str()) && drawn_as(&ext, &text, packed)) {
+        _ if media => Shown::Media,
         true => Shown::Drawn,
         false => Shown::Text,
     };

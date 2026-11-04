@@ -7,6 +7,7 @@ pub mod data;
 pub mod embed;
 pub mod hl;
 pub mod icons;
+mod kind;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]
@@ -2387,6 +2388,59 @@ mod tests {
         );
         assert_eq!(reply.status, 404, "not a route on a server");
         assert!(plain.cfg.root().is_some(), "and it closed nothing");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A PDF, a picture and any other binary file: Preview with no status
+    /// line, and Source their first bytes in hex under the kind they say.
+    #[test]
+    fn binary_files_preview_and_show_their_bytes() {
+        let dir = std::env::temp_dir().join(format!("treeserve-binary-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.pdf"), b"%PDF-1.4\n%\xd3\xeb\n1 0 obj <</A<x&y>>> endobj\n").unwrap();
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x02\0\0\0\x03".to_vec();
+        png.resize(5000, 0);
+        std::fs::write(dir.join("b.png"), &png).unwrap();
+        let mut config = super::Config::new(dir.canonicalize().unwrap());
+        config.app_ui = false;
+        let state = super::state_for(config);
+        let get = |url: &str| {
+            let reply = super::handle(
+                &state,
+                &super::Req {
+                    url: url.to_string(),
+                    headers: vec![("Accept".to_string(), "text/html".to_string())],
+                    is_get: true,
+                },
+            );
+            let csp = reply.headers.iter().find(|(k, _)| k == "Content-Security-Policy").map(|(_, v)| v.clone()).unwrap();
+            match reply.body {
+                super::Body::Text(t) => (t, csp),
+                _ => panic!("a page is text"),
+            }
+        };
+
+        // No viewer: the engine's, alone on the page, and a policy that frames
+        // nothing but this origin.
+        let (pdf, csp) = get("/a.pdf");
+        assert!(pdf.contains("<embed class=\"pdf\"") && !pdf.contains("class=\"filemeta\""), "{pdf}");
+        assert!(csp.contains("frame-src 'self';"), "{csp}");
+
+        // Source: what the head says, then the bytes, escaped, at both widths.
+        let (src, _) = get("/a.pdf?src=1");
+        assert!(src.contains("&middot; PDF 1.4</span>"), "{src}");
+        assert!(src.contains("<span class=\"t\">%PDF-1.4</span>"), "eight to a line: {src}");
+        assert!(src.contains("<span class=\"t\">%PDF-1.4.%...1 0</span>"), "sixteen: {src}");
+        assert!(src.contains("&lt;x&amp;y&gt;") && !src.contains("<x&y>"), "{src}");
+        assert!(src.contains("<p class=\"hexnote\">All of it, "), "{src}");
+
+        // A picture's Source has its size; a long one shows its first 4 KiB.
+        let (png_src, _) = get("/b.png?src=1");
+        assert!(png_src.contains("PNG &middot; 2 &times; 3"), "{png_src}");
+        assert!(png_src.contains("The first 4.0 K of 4.9 K"), "{png_src}");
+        let rows = |class: &str| png_src.split(&format!("<pre class=\"hex {class}\">")).nth(1).unwrap().split("</pre>").next().unwrap().lines().count();
+        assert_eq!((rows("n8"), rows("n16")), (512, 256));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -3599,18 +3599,30 @@ mod tests {
         assert!(rs.contains("<p class=\"filemeta\"><span>") && rs.contains("class=\"lnsw\""), "{rs}");
         assert!(views(&raw("b.rs")).contains("href=\"/b.rs\""), "Source goes back");
 
-        // A picture: no view group, and the verbs group kept.
+        // A picture: Preview, the picture alone with no status line, and
+        // Source, its bytes; no Raw. The verbs group kept.
         let png = page("c.png", &[]);
-        assert!(!png.contains("?raw=1\"") && !png.contains("aria-current"), "{png}");
+        lit(&png, "Preview");
+        assert!(views(&png).contains("href=\"/c.png?src=1\"") && !png.contains("?raw=1\""), "{png}");
+        assert!(!png.contains("class=\"filemeta\"") && png.contains("<img class=\"preview-img\""), "{png}");
         assert!(png.contains("<span class=\"group\"><a href=\"/c.png?dl=1\""), "{png}");
-        lit(&raw("c.png"), "Raw");
+        let png_src = page("c.png", &src);
+        lit(&png_src, "Source");
+        assert!(png_src.contains("class=\"hexwrap\"") && png_src.contains("class=\"filemeta\""), "{png_src}");
+        // Raw's address answers with nothing lit, and the way back.
+        let png_raw = raw("c.png");
+        assert!(!png_raw.contains("aria-current") && views(&png_raw).contains("href=\"/c.png\""), "{png_raw}");
+        assert!(png_raw.contains("Nothing to show as text") && !png_raw.contains("<iframe"), "{png_raw}");
 
-        // Binary: a notice and Download, no view group — no Raw, which has
-        // nothing to show as it is — and its Raw address says the same.
+        // Binary: Source alone, which is its first bytes and the kind they
+        // say — no Raw, which has nothing to show as it is — and its Raw
+        // address says so.
         let bin = page("d.md", &[]);
-        assert!(bin.contains("Binary file.") && !bin.contains("?raw=1\"") && !bin.contains("aria-current"), "{bin}");
+        lit(&bin, "Source");
+        assert!(bin.contains("class=\"hexwrap\"") && !bin.contains("?raw=1\"") && !bin.contains("Preview"), "{bin}");
         let bin_raw = raw("d.md");
         assert!(bin_raw.contains("nothing to show as text") && !bin_raw.contains("<iframe"), "{bin_raw}");
+        assert!(!bin_raw.contains("aria-current") && views(&bin_raw).contains("href=\"/d.md\""), "{bin_raw}");
         // Raw's frame asks for the file as text.
         assert!(raw("b.rs").contains("src=\"/b.rs?raw=1&amp;bare=1&amp;as=text\""), "as text");
 
@@ -3620,12 +3632,13 @@ mod tests {
         lit(&big, "Raw");
         assert!(big.contains("role=\"link\" aria-disabled=\"true\" aria-label=\"Source, too large to highlight\""), "{big}");
 
-        // Too big and not text, or packed: the notice, never a frame that would
-        // fetch the whole file to show nothing.
+        // Too big and not text, or packed: Source, from the head alone, never
+        // a frame that would fetch the whole file to show nothing.
         for name in ["f.bin", "g.tar.gz"] {
             let html = page(name, &[]);
-            assert!(html.contains("File is too large to show here") && !html.contains("<iframe"), "{html}");
-            assert!(!html.contains("aria-current") && !html.contains("Too large to highlight"), "{html}");
+            assert!(html.contains("class=\"hexwrap\"") && !html.contains("<iframe"), "{html}");
+            lit(&html, "Source");
+            assert!(!html.contains("Too large to highlight"), "{html}");
             assert!(!raw(name).contains("Too large to highlight"), "{name} raw");
         }
 
@@ -4189,12 +4202,11 @@ mod tests {
             crate::view::file_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), &[], "/")
         };
 
-        // A local tree on a desktop: a copy is a copy you did not have, and the
-        // anchor is closed — the panel builds a sentence around the link rather
-        // than pasting text either side of it.
+        // A local tree on a desktop: a copy is a copy you did not have, on a
+        // text file and on a binary one, whose Source is its first bytes.
         assert!(page(Arc::clone(&plain.vfs), "a.txt").contains("?dl=1"), "text");
         let binary = page(Arc::clone(&plain.vfs), "b.bin");
-        assert!(binary.contains("<p><a href=\"/b.bin?dl=1\">Download</a></p>"), "{binary}");
+        assert!(binary.contains("<a href=\"/b.bin?dl=1\""), "{binary}");
 
         // A backend with nowhere to copy to draws none of it — not the flag on
         // the row, and not the sentence in the panel either. A page that says
@@ -4289,9 +4301,9 @@ mod tests {
         assert!(html.contains("<div class=\"md\"><h1"), "{html}");
         assert!(html.contains("&middot; gzip, 4 B unpacked</span></p>"), "{html}");
         // A packed picture is an ordinary `.gz`: its element would get the
-        // packed bytes, so it is not opened.
+        // packed bytes, so it is not opened, and its Source is the gzip.
         let html = page("p.png.gz", &[]);
-        assert!(html.contains("Binary file."), "{html}");
+        assert!(html.contains("class=\"hexwrap\"") && html.contains("&middot; gzip</span>"), "{html}");
         assert!(!html.contains("unpacked"), "{html}");
         // One that unpacks past the limit says so instead of reading on.
         let html = page("big.log.gz", &[]);
@@ -4299,20 +4311,20 @@ mod tests {
         // One cut short, as `zcat` reads it: what unpacked before the cut,
         // and the meta line saying where it stopped.
         let html = page("cut.log.gz", &[]);
-        assert!(!html.contains("Binary file.") && html.contains("entry"), "{html}");
+        assert!(!html.contains("hexwrap") && html.contains("entry"), "{html}");
         assert!(html.contains(" lines &middot; gzip, ") && html.contains("unpacked before an error"), "{html}");
         // Binary once unpacked still says it stopped at an error: a whole
         // binary `.gz` and a cut one are not the same file.
         let html = page("cut.bin.gz", &[]);
-        assert!(html.contains("Binary file.") && html.contains("binary &middot; gzip, ") && html.contains("unpacked before an error"), "{html}");
+        assert!(html.contains("class=\"hexwrap\"") && html.contains("binary &middot; gzip, ") && html.contains("unpacked before an error"), "{html}");
 
-        // Raw's group names what the page draws, for a `.gz` too: Source
-        // dimmed where the page is that notice, a link where it is the text.
+        // Raw's group names what the page draws, for a `.gz` too: Source the
+        // bytes where the page is those, the text where it is the text.
         let raw = |name: &str| {
             let rel = vec![name.to_string()];
             crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/")
         };
-        assert!(!raw("big.log.gz").contains("title=\"Highlighted source\""), "big");
+        assert!(raw("big.log.gz").contains("title=\"What the file is made of\""), "big");
         let packed_raw = raw("t.csv.gz");
         assert!(packed_raw.contains("nothing to show as text") && !packed_raw.contains("<iframe"), "{packed_raw}");
         assert!(page("fake.gz", &[]).contains("plain text, not gzip"), "fake page");

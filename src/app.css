@@ -1696,6 +1696,31 @@ main:has(> .fit) { display: flex; flex-direction: column; }
 .fit > embed.pdf { flex: 1; align-self: stretch; height: auto; min-height: 0; }
 main:has(> .fit > embed.pdf) { padding-bottom: 1rem; }
 
+/* A binary file's Source: its first bytes, eight to a line and sixteen, both
+   on the page (`view::hex_view`). The box is the container, so its own width
+   picks one — sixteen take 76 characters of its font — and an engine without
+   container queries keeps the eight, which fit a phone held upright. */
+.hexwrap {
+  container-type: inline-size;
+  max-width: 100rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: .7rem .9rem;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.hexwrap pre { margin: 0; font: inherit; overflow-x: auto; }
+.hexwrap .o { color: var(--muted); user-select: none; }
+.hexwrap .t { color: var(--tip); }
+.hexwrap .n16 { display: none; }
+@container (min-width: 76ch) {
+  .hexwrap .n8 { display: none; }
+  .hexwrap .n16 { display: block; }
+}
+.hexwrap .hexnote {
+  margin: .5rem 0 0; color: var(--muted);
+  font: .8rem/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
 /* A CSV or TSV as a table. It takes the height the meta line leaves, as `.fit`
    does, so it scrolls both ways inside itself: the heading row stays on top
    while the rows go under it, and a wide table scrolls sideways in its own box

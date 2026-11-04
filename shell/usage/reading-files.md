@@ -14,8 +14,10 @@ Select a file to see it beside the tree:
   `.gz`: `syslog.2.gz` as text, `data.csv.gz` as a table. A packed picture,
   recording or PDF is left packed.
 - **Images**, **audio** and **video** — shown and played in place.
-- **PDF** — the platform's viewer.
+- **PDF** — the platform's viewer, or the app's own where it has one.
 - **Anything else that is text** — as text.
+- **Anything else** — what kind of file it is, where its first bytes say
+  (a program, an archive, a database…), and those bytes in hex.
 
 ## Preview, Source, Raw, and Download
 
@@ -23,8 +25,13 @@ The header shows how the file is shown as one set of buttons — **Preview**
 (an eye), **Source** (`</>`) and **Raw** (a sheet) — with the one on screen
 lit. **Preview** is the file as this app draws it, **Source** the highlighted
 text, and **Raw** the file as it is, as text, with the header still shown, so
-you can get back. An HTML file's Raw is the HTML as written. A picture, film,
-PDF, binary or `.gz` file has no Raw.
+you can get back. An HTML file's Raw is the HTML as written.
+
+A picture, film, sound or PDF has **Preview**, the file alone, and **Source**:
+its size, date and kind — a picture's size in pixels, a PDF's version — then
+the first 4 KiB of it in hex, eight bytes to a line on a phone and sixteen on
+a wider window. Any other file that is not text has **Source** alone. None of
+these, nor a `.gz` file, has Raw: there is no showing them as they are.
 
 What can be done with the file — **Print**, **Download**, and any action the
 app adds — is a second set. **Download** saves a copy as stored. A file can
@@ -57,6 +64,6 @@ icon toggles it.
 ## Big files
 
 A text file over 2 MB is too big to highlight: it opens in **Raw**, with
-**Source** dimmed. A big archive or other file that is not text says so, and
-offers a download. Video, audio, and large PDFs play without being read all at
+**Source** dimmed. A big archive or other file that is not text opens in
+**Source**, which reads only its first bytes. Video, audio, and large PDFs play without being read all at
 once.
