@@ -2508,7 +2508,7 @@ mod tests {
             origins: vec!["viewer://x".to_string()],
         }));
         let (pdf, csp) = get("/a.pdf");
-        assert!(pdf.contains("<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin\" src=\"viewer://x/?r="), "{pdf}");
+        assert!(pdf.contains("<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"viewer://x/?r="), "{pdf}");
         assert!(pdf.contains("&amp;p=a.pdf\" title=\"a.pdf\"></iframe>") && !pdf.contains("<embed"), "{pdf}");
         assert!(csp.contains("frame-src 'self' viewer:;"), "{csp}");
         let (_, csp) = get("/a.pdf?src=1");

@@ -493,8 +493,10 @@ fn binary_source(
 /// A PDF's Preview where the embedder has a viewer of its own: the file in its
 /// frame, on a page that is the frame and nothing else, as HTML's Preview is.
 /// The frame keeps scripts and its own origin, which is a different one from
-/// the page's, so it reaches nothing here; and nothing else — no forms, no
-/// popups, no way to move the window it is in.
+/// the page's, so it reaches nothing here; and a link the reader taps may move
+/// the window, which is how a document's link reaches the shell and goes to the
+/// browser, as one in Markdown does. Nothing else — no forms, no popups, and no
+/// moving the window without a tap.
 fn pdf_viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str, viewer: &crate::PdfViewer) -> String {
     let name = rel.last().map(String::as_str).unwrap_or("");
     let controls = format!(
@@ -503,7 +505,7 @@ fn pdf_viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String],
         view_group(Shown::Media, rel, Some(View::Preview), false)
     );
     let frame = format!(
-        "<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin\" src=\"{}\" title=\"{}\"></iframe>",
+        "<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"{}\" title=\"{}\"></iframe>",
         html_escape(&(viewer.src)(&root.id, rel)),
         html_escape(name)
     );
