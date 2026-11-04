@@ -458,6 +458,23 @@ pub struct FileLine {
 /// It runs with no lock of this crate's held, and may read the `Config` back.
 pub type FileLines = Arc<dyn Fn(&str, &[String]) -> Vec<FileLine> + Send + Sync>;
 
+/// An embedder's own viewer for a PDF's Preview, drawn in a frame where this
+/// crate would otherwise hand the file to the engine's (`<embed>`), which some
+/// engines do not have and none draws in the page's colours. See
+/// [`Config::set_pdf_viewer`].
+#[derive(Clone)]
+pub struct PdfViewer {
+    /// The frame's address for the file at `rel` under the root `root_id`.
+    pub src: Arc<dyn Fn(&str, &[String]) -> String + Send + Sync>,
+    /// What a PDF's page adds to its `frame-src` so that address may load —
+    /// sources as a policy writes them (`viewer: http://viewer.localhost`).
+    pub frame_src: String,
+    /// The origins the viewer fetches a PDF's bytes from, as a request's
+    /// `Origin` names them: a PDF's raw bytes say they may be read there, and
+    /// nowhere else, and nothing but a PDF's.
+    pub origins: Vec<String>,
+}
+
 /// One row of a [`PaneSection`].
 #[derive(Clone)]
 pub struct PaneEntry {
@@ -597,6 +614,9 @@ pub struct Config {
     /// for the same reason the others are: the shell builds this `Config` fresh
     /// when it starts, so a hook has to be handed over after that.
     file_lines: RwLock<Option<FileLines>>,
+    /// The embedder's PDF viewer, where it has one. Behind a lock for the
+    /// reason `file_lines` is.
+    pdf_viewer: RwLock<Option<PdfViewer>>,
     /// What the Places and Recent paths turned out to be, for the ones anything
     /// has got round to looking at. Written by the embedder as its answers come
     /// in and read while a page renders, which is the whole point of it being
@@ -690,6 +710,7 @@ impl Config {
             intro_acts: RwLock::new(Arc::new(Vec::new())),
             flags: RwLock::new(Arc::new(Vec::new())),
             file_lines: RwLock::new(None),
+            pdf_viewer: RwLock::new(None),
             status: RwLock::new(HashMap::new()),
             window_roots: RwLock::new(HashMap::new()),
         }
@@ -883,6 +904,17 @@ impl Config {
     /// none. Every file page rendered after this asks it.
     pub fn set_file_lines(&self, lines: Option<FileLines>) {
         *self.file_lines.write().expect("file lines lock") = lines;
+    }
+
+    /// Draws a PDF's Preview in the embedder's viewer, or with `None` hands it
+    /// to the engine's own again.
+    pub fn set_pdf_viewer(&self, viewer: Option<PdfViewer>) {
+        *self.pdf_viewer.write().expect("pdf viewer lock") = viewer;
+    }
+
+    /// The embedder's PDF viewer, out of its lock.
+    pub fn pdf_viewer(&self) -> Option<PdfViewer> {
+        self.pdf_viewer.read().expect("pdf viewer lock").clone()
     }
 
     /// The embedder's lines for the file at `rel` under the root `root_id`;
@@ -1236,6 +1268,16 @@ impl Reply {
         self.headers.push(hdr(k, v));
         self
     }
+
+    /// The page's policy with `sources` added to what it may frame.
+    fn framing(mut self, sources: &str) -> Reply {
+        for (k, v) in &mut self.headers {
+            if k == "Content-Security-Policy" {
+                *v = v.replacen("frame-src 'self'", &format!("frame-src 'self' {sources}"), 1);
+            }
+        }
+        self
+    }
 }
 
 fn html_reply(status: u16, body: String) -> Reply {
@@ -1554,13 +1596,27 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
     }
     if want_raw || want_dl || !wants_html(req) || is_subresource(req) {
         let as_text = query_get(&query, "as") == Some("text");
-        return serve_raw(req, root.vfs.as_ref(), &canon, &name, want_dl, as_text);
+        let reply = serve_raw(req, root.vfs.as_ref(), &canon, &name, want_dl, as_text);
+        // The embedder's viewer reads a PDF from an origin of its own.
+        return match (state.cfg.pdf_viewer(), req.header("Origin")) {
+            (Some(viewer), Some(origin)) if ext_of(&name) == "pdf" && viewer.origins.iter().any(|o| o == origin) => {
+                reply.with("Access-Control-Allow-Origin", origin).with("Vary", "Origin")
+            }
+            _ => reply,
+        };
     }
 
-    html_reply(
+    let page = html_reply(
         200,
         view::file_page(state, &root, prefs, &rel, &canon, &query, &url_now),
-    )
+    );
+    // A PDF's Preview may be the embedder's viewer, from an origin of its own.
+    match state.cfg.pdf_viewer() {
+        Some(viewer) if ext_of(&name) == "pdf" && query_get(&query, "src") != Some("1") => {
+            page.framing(&viewer.frame_src)
+        }
+        _ => page,
+    }
 }
 
 fn cookie_header(k: &str, v: &str) -> (String, String) {
@@ -2393,7 +2449,9 @@ mod tests {
     }
 
     /// A PDF, a picture and any other binary file: Preview with no status
-    /// line, and Source their first bytes in hex under the kind they say.
+    /// line, Source their first bytes in hex under the kind they say, and a
+    /// PDF's Preview in the embedder's viewer where it has one — a frame the
+    /// page's policy then lets load, and only on that page.
     #[test]
     fn binary_files_preview_and_show_their_bytes() {
         let dir = std::env::temp_dir().join(format!("treeserve-binary-{}", std::process::id()));
@@ -2441,6 +2499,34 @@ mod tests {
         assert!(png_src.contains("The first 4.0 K of 4.9 K"), "{png_src}");
         let rows = |class: &str| png_src.split(&format!("<pre class=\"hex {class}\">")).nth(1).unwrap().split("</pre>").next().unwrap().lines().count();
         assert_eq!((rows("n8"), rows("n16")), (512, 256));
+
+        // The embedder's viewer: its frame, on a page that is only the frame,
+        // and its origin in this page's policy and no other.
+        state.cfg.set_pdf_viewer(Some(super::PdfViewer {
+            src: std::sync::Arc::new(|root: &str, rel: &[String]| format!("viewer://x/?r={}&p={}", root.len(), rel.join("/"))),
+            frame_src: "viewer:".to_string(),
+            origins: vec!["viewer://x".to_string()],
+        }));
+        let (pdf, csp) = get("/a.pdf");
+        assert!(pdf.contains("<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin\" src=\"viewer://x/?r="), "{pdf}");
+        assert!(pdf.contains("&amp;p=a.pdf\" title=\"a.pdf\"></iframe>") && !pdf.contains("<embed"), "{pdf}");
+        assert!(csp.contains("frame-src 'self' viewer:;"), "{csp}");
+        let (_, csp) = get("/a.pdf?src=1");
+        assert!(csp.contains("frame-src 'self';"), "not on Source: {csp}");
+        let (_, csp) = get("/b.png");
+        assert!(csp.contains("frame-src 'self';"), "not on a picture: {csp}");
+
+        // Its bytes may be read by the viewer's origin, and by nobody else's.
+        let cors = |url: &str, origin: &str| {
+            let reply = super::handle(
+                &state,
+                &super::Req { url: url.to_string(), headers: vec![("Origin".to_string(), origin.to_string())], is_get: true },
+            );
+            reply.headers.iter().find(|(k, _)| k == "Access-Control-Allow-Origin").map(|(_, v)| v.clone())
+        };
+        assert_eq!(cors("/a.pdf?raw=1&bare=1", "viewer://x").as_deref(), Some("viewer://x"));
+        assert_eq!(cors("/a.pdf?raw=1&bare=1", "http://elsewhere"), None);
+        assert_eq!(cors("/b.png?raw=1&bare=1", "viewer://x"), None, "a PDF's only");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

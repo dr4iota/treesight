@@ -490,6 +490,25 @@ fn binary_source(
     file_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &content)
 }
 
+/// A PDF's Preview where the embedder has a viewer of its own: the file in its
+/// frame, on a page that is the frame and nothing else, as HTML's Preview is.
+/// The frame keeps scripts and its own origin, which is a different one from
+/// the page's, so it reaches nothing here; and nothing else — no forms, no
+/// popups, no way to move the window it is in.
+fn pdf_viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str, viewer: &crate::PdfViewer) -> String {
+    let name = rel.last().map(String::as_str).unwrap_or("");
+    let controls = format!(
+        "{}{}",
+        verbs(state, rel, root.vfs.as_ref(), false),
+        view_group(Shown::Media, rel, Some(View::Preview), false)
+    );
+    let frame = format!(
+        "<iframe class=\"raw pdf\" sandbox=\"allow-scripts allow-same-origin\" src=\"{}\" title=\"{}\"></iframe>",
+        html_escape(&(viewer.src)(&root.id, rel)),
+        html_escape(name)
+    );
+    bare_layout(state, root, prefs, rel, url_now, &with_new_window(state, prefs, rel, &controls), &with_lines(state, root, rel, frame))
+}
 
 /// Whether a file past the highlight limit is text, and so opens in Raw with
 /// Source dimmed, rather than a notice. Never a `.gz`, whose Raw is the packed
@@ -580,6 +599,11 @@ pub fn file_page(
             view_group(Shown::Media, rel, Some(View::Preview), false)
         )
     };
+    if media && !want_source && ext == "pdf" {
+        if let Some(viewer) = state.cfg.pdf_viewer() {
+            return pdf_viewer_page(state, root, prefs, rel, url_now, &viewer);
+        }
+    }
     let element = match ext.as_str() {
         _ if want_source => None,
         e if IMAGE_EXTS.contains(&e) => Some(format!(
