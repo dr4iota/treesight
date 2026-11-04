@@ -12,9 +12,10 @@ Four settings, remembered on this device.
   over the page instead.
 - **Zoom** — how large the file, folder or start page is drawn. `Ctrl+=` and
   `Ctrl+−`, or `Ctrl+wheel`, step the text a pixel at a time below 16px, two
-  below 24px and four above, from 8px to 48px; `Ctrl+0` goes back to 100%. On
-  a touch screen a two-finger pinch moves it smoothly, and a quick tap with two
-  fingers goes back to 100%. The header and the sidebar keep their size.
+  below 24px and four above, from 8px to 48px; `Ctrl+0` or `Ctrl+double-click`
+  goes back to 100%. On a touch screen a two-finger pinch moves it smoothly, and
+  two fingers held still until the note says *Release to reset view* go back to
+  100%. The header and the sidebar keep their size.
 
 A switch that is on is lit; its word does not change. Each button shows its
 mark beside its word. When the header runs out of room the words give way, all

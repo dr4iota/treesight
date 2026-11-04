@@ -582,11 +582,16 @@ addEventListener('keydown', function (e) {
 /// `PINCH`, so spreading them to twice as far apart is +27%, not +100%. Text
 /// wants a few percent at a time, and an undamped pinch overshot every time.
 ///
-/// **A two-finger tap in the pane puts it back to 100%**, a phone's `Ctrl+0`:
-/// up within `TAP` ms of the second finger landing, neither moving more than a
-/// few pixels. The terminal asks for a hold as well, because there two fingers also
-/// pan and a reset by accident costs a view; here nothing else is done with two
-/// fingers that keep still, and a reset by accident costs one pinch.
+/// **Reset is the terminal's** (telechore's `docs/terminal.md` §7, and its
+/// `term-ui/src/hold.js`, whose numbers and words these are — keep them the
+/// same): `Ctrl+0`, `Ctrl+double-click`, and two fingers held still in the
+/// pane, which put it back to 100%. The hold is told as it goes, at the top of
+/// the pane — a hint of what two fingers do at 0.2 s, *Keep holding to reset
+/// view* at 0.45 s, *Release to reset view* at 0.9 s — and happens on the
+/// lift; any travel makes it a pinch. Only for two that landed within 150 ms
+/// of each other. It was a quick two-finger tap until 4 November 2026: one
+/// gesture for every view of the app, which says what it is doing, is worth
+/// the second it costs.
 const ZOOM: &str = r#"
 (function () {
   var MIN = __TS_ZOOM_MIN__, MAX = __TS_ZOOM_MAX__, PINCH = 0.35;
@@ -670,37 +675,85 @@ const ZOOM: &str = r#"
     wheeled = 0;
     save();
   }, { passive: false });
-  var pinch = null, tap = null, TAP = 350;
+  // The reset itself, from any of its three ways in.
+  var reset = function () { want = null; apply(100); save(); };
+  // Ctrl+double-click (Cmd on a Mac): two presses in one place within a
+  // double-click's time. Not on a link, whose Ctrl+click is the link's.
+  var mac = /Mac|iPhone|iPad/.test(navigator.platform || '');
+  var lastClick = null;
+  addEventListener('mousedown', function (e) {
+    var key = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    if (!key || e.button !== 0 || e.altKey || e.shiftKey || !pane() || (e.target.closest && e.target.closest('a'))) { lastClick = null; return; }
+    var again = lastClick && e.timeStamp - lastClick.t < 400 && Math.hypot(e.clientX - lastClick.x, e.clientY - lastClick.y) < 8;
+    lastClick = again ? null : { t: e.timeStamp, x: e.clientX, y: e.clientY };
+    if (again) { e.preventDefault(); reset(); }
+  });
+  // The hold's cue, drawn by this script: at the top of the pane, centred,
+  // over the text, taking no touches so it cannot end the hold it describes.
+  var cueEl = null;
+  var cue = function (text) {
+    var main = pane();
+    if (!main) return;
+    if (!cueEl) {
+      cueEl = document.createElement('div');
+      cueEl.setAttribute('role', 'status');
+      cueEl.style.cssText = 'position:fixed;z-index:40;transform:translateX(-50%);pointer-events:none;' +
+        'padding:.35rem .75rem;border-radius:999px;font-size:.85rem;white-space:nowrap;' +
+        'color:var(--bg);background:color-mix(in srgb,var(--fg) 88%,transparent)';
+      document.body.appendChild(cueEl);
+    }
+    var r = main.getBoundingClientRect();
+    cueEl.textContent = text;
+    cueEl.style.left = (r.left + r.width / 2) + 'px';
+    cueEl.style.top = (Math.max(0, r.top) + 12) + 'px';
+    cueEl.hidden = false;
+  };
+  var HINT_MS = 200, CUE_MS = 450, ARM_MS = 900, TOGETHER_MS = 150, SLOP = 10;
+  var pinch = null, hold = null, firstDown = 0;
   var gap = function (t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); };
+  var stopHold = function () {
+    if (!hold) return;
+    clearTimeout(hold.hint); clearTimeout(hold.keep); clearTimeout(hold.arm);
+    hold = null;
+    if (cueEl) cueEl.hidden = true;
+  };
   addEventListener('touchstart', function (e) {
     var main = pane();
+    if (e.touches.length === 1) firstDown = e.timeStamp;
     pinch = null;
-    tap = null;
+    stopHold();
     if (!main || e.touches.length !== 2) return;
     if (!main.contains(e.touches[0].target) || !main.contains(e.touches[1].target)) return;
     var d = gap(e.touches);
     if (d > 0) pinch = { d: d, z: now() };
-    // Timed from the second finger: the first may have landed in the same
-    // event, or long before as a scroll.
-    tap = { t: e.timeStamp, at: {} };
-    for (var i = 0; i < 2; i++) tap.at[e.touches[i].identifier] = [e.touches[i].clientX, e.touches[i].clientY];
+    var h = { at: {}, armed: false };
+    for (var i = 0; i < 2; i++) h.at[e.touches[i].identifier] = [e.touches[i].clientX, e.touches[i].clientY];
+    // Two that landed apart are a pinch begun with one finger already down:
+    // told what two fingers do, and never a reset.
+    if (e.changedTouches.length < 2 && e.timeStamp - firstDown > TOGETHER_MS) {
+      h.hint = setTimeout(function () { cue('Pinch to zoom'); }, CUE_MS);
+    } else {
+      h.hint = setTimeout(function () { cue('Pinch to zoom \u00b7 Hold to reset'); }, HINT_MS);
+      h.keep = setTimeout(function () { cue('Keep holding to reset view'); }, CUE_MS);
+      h.arm = setTimeout(function () { h.armed = true; cue('Release to reset view'); }, ARM_MS);
+    }
+    hold = h;
   }, { passive: true });
   addEventListener('touchmove', function (e) {
     if (!pinch || e.touches.length !== 2) return;
     e.preventDefault();
     var t = e.touches, i, a;
-    for (i = 0; tap && i < 2; i++) {
-      a = tap.at[t[i].identifier];
-      if (!a || Math.hypot(t[i].clientX - a[0], t[i].clientY - a[1]) > 12) tap = null;
+    for (i = 0; hold && i < 2; i++) {
+      a = hold.at[t[i].identifier];
+      if (!a || Math.abs(t[i].clientX - a[0]) > SLOP || Math.abs(t[i].clientY - a[1]) > SLOP) stopHold();
     }
-    soon(pinch.z * Math.pow(gap(t) / pinch.d, PINCH), (t[0].clientY + t[1].clientY) / 2);
+    if (!hold) soon(pinch.z * Math.pow(gap(t) / pinch.d, PINCH), (t[0].clientY + t[1].clientY) / 2);
   }, { passive: false });
   var lift = function (e) {
-    if (pinch && e.touches.length < 2) { pinch = null; save(); }
-    if (e.touches.length > 0) return;
-    // Not undone by a move of the fingers' still waiting for its frame.
-    if (tap && e.type === 'touchend' && e.timeStamp - tap.t < TAP) { want = null; apply(100); save(); }
-    tap = null;
+    var armed = hold && hold.armed && e.type === 'touchend';
+    if (e.touches.length < 2) stopHold();
+    if (pinch && e.touches.length < 2) { pinch = null; if (!armed) save(); }
+    if (armed) reset();
   };
   addEventListener('touchend', lift);
   addEventListener('touchcancel', lift);
