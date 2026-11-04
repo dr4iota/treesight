@@ -338,7 +338,7 @@ const WAIT: &str = r#"
   // the page, a step through history included; this page's own reload does
   // not count. Where it does not, the keys that go back are watched instead.
   // Not one that stays on this document — the scroll keeper's #ts fragment,
-  // put there by location.replace as the pane and the listing scroll.
+  // put there by history.replaceState as the pane and the listing scroll.
   if (window.navigation && navigation.addEventListener) {
     navigation.addEventListener('navigate', function (e) {
       if (e.navigationType === 'reload' || e.hashChange || e.destination.sameDocument) return;
@@ -419,10 +419,12 @@ const WAIT: &str = r#"
 /// listing's deliberately not.
 ///
 /// **The address is the carrier.** It is the one thing that survives a reload
-/// without asking the platform for anything, and `location.replace` writes it
-/// with no history entry and no navigation — a fragment-only replace is a
-/// same-document change, and a pushed copy of this window's one address is the
-/// thing that must never happen here. Storage was the other way and is not
+/// without asking the platform for anything, and `history.replaceState` writes
+/// it with no history entry and no navigation, keeping the entry's state; a
+/// pushed copy of this window's one address is the thing that must never
+/// happen here. Not `location.replace`, which did the same until full screen
+/// kept an entry's state: a fragment replace is a navigation, which drops the
+/// state and fires `popstate`, and `FULL` took every scroll for Back. Storage was the other way and is not
 /// available: `treesight://localhost` is an opaque origin, which has none to
 /// reach, and the jar upstairs exists for that same reason.
 ///
@@ -463,18 +465,17 @@ const SCROLLERS: &str = r#"
       var b = boxes();
       var t = Math.round((b[0] && b[0].scrollTop) || 0);
       var l = Math.round((b[1] && b[1].scrollTop) || 0);
-      // Always a fragment, even at the top, and `0,0` rather than none: a
-      // replace that *removes* one is a navigation to the bare address, which
-      // is the address we are on, which is a reload. Scrolling back to the top
-      // of a tree reloaded the page under the reader, measured. Fragment to
-      // fragment is always the same document.
+      // Always a fragment, even at the top, and `0,0` rather than none, as
+      // when this was `location.replace`: a replace that removed one was a
+      // navigation to the address we were on, a reload under the reader.
       var want = location.pathname + location.search + '#ts' + t + ',' + l;
-      // And only when it would change anything: a replace to the address you
-      // are already on is that same reload, and one from a scroll handler is a
-      // page that reloads itself for as long as anybody touches it.
+      // And only when it would change anything. Where an engine refuses the
+      // replace, the old way, but only on an entry with no state to lose: on
+      // one of full screen's it would read as Back, and the offset is the
+      // smaller thing to give up.
       if (location.href.slice(-want.length) !== want
           || location.hash !== '#ts' + t + ',' + l) {
-        location.replace(want);
+        try { history.replaceState(history.state, '', want); } catch (e) { if (history.state == null) location.replace(want); }
       }
     }, 200);
   }
@@ -525,6 +526,10 @@ const SCROLLERS: &str = r#"
   // and therefore that height — the order these are injected in is the order
   // they are needed in.
   addEventListener('load', restore);
+  // And on Back after a link to a heading of the same file: the entry it
+  // left has the offset it was at, and only the document's own scroll is
+  // put back by the engine, never this pane's.
+  addEventListener('popstate', restore);
  } catch (e) { /* a window that forgets where it was still works */ }
 })();
 "#;
@@ -696,9 +701,19 @@ const FULL: &str = r#"
     // a traversal begun first could cancel that navigation unseen.
     if (!byBack && history.state && history.state.tsFull) setTimeout(function () { history.back(); }, 150);
   };
+  // A link to a place in the same page — a heading in a Markdown file's
+  // contents — pushes an entry of its own, with no state, and says so with
+  // `popstate`: still in full screen, and the entry made one of ours, so that
+  // Back to where the link was stays in it as well.
+  var jumping = false;
   addEventListener('click', function (e) {
     var a = e.target.closest && e.target.closest('a[href^="/.ts/full"]');
     if (a && tree()) { e.preventDefault(); enter(); return; }
+    var to = held() && e.target.closest && e.target.closest('a[href]');
+    if (to && to.hash && !to.target && to.host === location.host && to.pathname === location.pathname && to.search === location.search) {
+      jumping = true;
+      setTimeout(function () { jumping = false; }, 0);
+    }
     if (!held() || !exitEl) return;
     // A link's, a control's, or a selection's: theirs.
     if (e.target.closest && e.target.closest('a, button, input, select, textarea, summary, label')) return;
@@ -712,7 +727,12 @@ const FULL: &str = r#"
     if (e.key === 'F11') { e.preventDefault(); if (held()) leave(); else enter(); }
     else if (e.key === 'Escape' && held()) { e.preventDefault(); leave(); }
   });
-  addEventListener('popstate', function () { if (held()) leave(true); });
+  // Back from an entry of ours to the one before it, which is not.
+  addEventListener('popstate', function () {
+    if (!held()) return;
+    if (jumping) { jumping = false; history.replaceState({ tsFull: 1 }, ''); return; }
+    if (!(history.state && history.state.tsFull)) leave(true);
+  });
   addEventListener('message', function (e) {
     var f = viewer();
     if (!f || e.source !== f.contentWindow || !e.data) return;

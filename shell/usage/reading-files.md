@@ -43,9 +43,10 @@ from one file to the next, and ends when you open a folder.
 
 A tap shows, for a moment, the way out at the top right and the file's name,
 size and date at the top left, and a tap while they show hides them; a tap on
-a link follows the link. On a computer, moving the
-mouse shows it too. To leave, tap it, or press **Esc** or **F11**, or Back on
-a phone.
+a link follows the link. On a computer, moving the mouse shows it too.
+Scrolling and zooming stay in full screen, and so does a link to a heading in
+the same file: Back then returns to where you were, still in full screen. To
+leave, tap the way out, or press **Esc** or **F11**, or Back on a phone.
 
 What can be done with the file — **Print**, **Download**, and any action the
 app adds — is a second set. **Download** saves a copy as stored. A file can

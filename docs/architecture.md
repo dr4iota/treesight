@@ -149,11 +149,13 @@ every scroller in the page back at the top — the pane and the listing are each
 one of those (measured: an identical document, reloaded, comes back at zero). So
 opening one directory in a long tree threw the reader to the top of it. The
 shell's `SCROLLERS` script keeps both offsets in a fragment of its own
-(`#ts<pane>,<listing>`), written with `location.replace`, which costs no history
-entry and stays a same-document change. The fragment is always written, never
-removed: a replace that takes the fragment *off* is a navigation to the bare
-address, which is the address you are on, which is a reload — scrolling back to
-the top reloaded the page under the reader until that was understood. Storage was
+(`#ts<pane>,<listing>`), written with `history.replaceState`, which costs no
+history entry, no navigation, and keeps the entry's state. It was
+`location.replace`, which is a fragment navigation: it fires `popstate` and
+drops the state, so once full screen kept an entry of its own every scroll of a
+Markdown file there read as Back and left it. The fragment is always written,
+never removed: under `location.replace`, taking it *off* was a navigation to the
+address you are on, a reload under the reader. Storage was
 the other way and there is none here, for the reason the cookie jar exists.
 
 There is **no JavaScript on served pages**. Toggles are links to `/.ts/set`.
