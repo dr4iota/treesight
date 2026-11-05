@@ -665,6 +665,10 @@ pub struct Config {
 pub struct Lone {
     pub document: String,
     pub temporary: bool,
+    /// Whether the file's time is its own: a copy carries the sender's where
+    /// the sender said one, and otherwise only when it was made, which the
+    /// status line does not pass off as the file's.
+    pub dated: bool,
 }
 
 /// A window's own root, and what to call it — the pair [`Config::set_root_vfs`]
@@ -1418,6 +1422,7 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
         window: page::WindowKind::Main,
         lone_main: false,
         lone_way: page::LoneWay::None,
+        facts: None,
     };
     for value in req.named("Cookie") {
         for (k, v) in parse_cookies(value) {
@@ -1607,7 +1612,13 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
     // OpenSSH is lexical and says yes to a path that is not there, so `resolve`
     // succeeded and this was the first call that could tell.
     let is_dir = match root.vfs.metadata(&canon) {
-        Ok(m) => m.is_dir,
+        Ok(m) => {
+            if !m.is_dir {
+                let undated = lone.as_ref().is_some_and(|l| !l.dated);
+                prefs.facts = Some((m.len, m.mtime.filter(|_| !undated)));
+            }
+            m.is_dir
+        }
         Err(e) => {
             let (code, msg) = ResolveError::of(&e).as_reply();
             return html_reply(
@@ -2786,7 +2797,7 @@ mod tests {
             _ => panic!("a page is text"),
         };
 
-        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: true }));
+        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: true, dated: true }));
         let page = text(get("/report.md", None));
         assert!(!page.contains("<nav class=\"tree\">") && !page.contains("Sidebar"), "{page}");
         assert!(page.contains("class=\"up start\"") && !page.contains("/.ts/main"), "{page}");
@@ -2795,13 +2806,24 @@ mod tests {
         assert!(page.contains("report.md<span class=\"tag lone-tag\">Not saved</span>"), "{page}");
         assert!(!page.contains("/.ts/reload") && !page.contains("/.ts/window"), "{page}");
         assert!(page.contains("--lone-lbl: none"), "its own band: {page}");
+        // The file's size and how long ago, at the status line's right end.
+        assert!(page.contains("<span class=\"facts\" title=\"") && page.contains("9 B &middot; "), "{page}");
+        // A copy with no time of its own from the sender says its size alone.
+        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: true, dated: false }));
+        let page = text(get("/report.md", None));
+        assert!(page.contains("<span class=\"facts\">9 B</span>"), "{page}");
+        // A folder's page says nothing there.
+        state.cfg.set_lone(None);
+        let page = text(get("/sub/", None));
+        assert!(!page.contains("class=\"facts\""), "{page}");
+        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: true, dated: true }));
         assert!(!page.contains(&format!("{}</span>", base.display())), "the cache's path is not shown: {page}");
         // Its folder is not on offer.
         let back = get("/sub/", None);
         assert_eq!(back.status, 302);
         assert!(back.headers.iter().any(|(k, v)| k == "Location" && v == "/report.md"), "{:?}", back.headers);
 
-        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: false }));
+        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: false, dated: true }));
         let page = text(get("/report.md", None));
         assert!(page.contains("/.ts/lone-folder") && page.contains(">Show folder</span>"), "{page}");
         assert!(page.contains("/.ts/reload") && !page.contains("Not saved"), "{page}");

@@ -14,8 +14,8 @@ the header.
 
 The tree's heading is the open folder's name, and goes back to its top. It
 carries **Star**, to keep the open folder in Starred, and **Close**, to return
-to the start page. **Open a folder…** is in the status line,
-which stays on screen.
+to the start page. **Open a folder…** is at the foot of the sidebar, after
+Recent.
 
 ## The sidebar
 

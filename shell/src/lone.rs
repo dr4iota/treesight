@@ -29,10 +29,11 @@ const NOTE_MS: u64 = 2500;
 
 /// Shows `file` alone in the main window. `temporary`: a copy made only to show
 /// it, offered Save to Files and deleted when the reader leaves it by Start.
-/// Not added to Recent: a file is not a root anyone chose. `landed` runs once
-/// the file's page is on screen — on Android, where the history behind it is
-/// cleared so that Back goes back to the app that sent it.
-pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, landed: Option<Landed>) {
+/// Not added to Recent: a file is not a root anyone chose. `dated`: its time
+/// is its own, not only when a copy was made. `landed` runs once the file's
+/// page is on screen — on Android, where the history behind it is cleared so
+/// that Back goes back to the app that sent it.
+pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, dated: bool, landed: Option<Landed>) {
     let app = app.clone();
     let open_id = begin_open();
     thread::spawn(move || {
@@ -44,7 +45,7 @@ pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, landed: Option
             }
             match resolved {
                 Some(file) => {
-                    if let Some(url) = serve_lone(&back, &file, temporary) {
+                    if let Some(url) = serve_lone(&back, &file, temporary, dated) {
                         if let Some(landed) = landed {
                             when_landed(&back, WINDOW, url, landed);
                         }
@@ -63,7 +64,7 @@ pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, landed: Option
 /// Re-roots the main window at `file`'s folder, for that file alone, and puts
 /// its page on screen: a step from the start page, a change of scene from
 /// anything else. The page's address, or `None` where nothing was served.
-fn serve_lone(app: &AppHandle, file: &Path, temporary: bool) -> Option<String> {
+fn serve_lone(app: &AppHandle, file: &Path, temporary: bool, dated: bool) -> Option<String> {
     let serving = app.try_state::<Serving>()?;
     let dir = file.parent()?;
     let name = file.file_name()?.to_string_lossy().into_owned();
@@ -75,7 +76,7 @@ fn serve_lone(app: &AppHandle, file: &Path, temporary: bool) -> Option<String> {
     if temporary {
         cfg.set_root_name(Some(name));
     }
-    cfg.set_lone(Some(treeserve::Lone { document: document.clone(), temporary }));
+    cfg.set_lone(Some(treeserve::Lone { document: document.clone(), temporary, dated }));
     let url = format!("{}{}", serving.entry.trim_end_matches('/'), document);
     note_landing(&url);
     match on_the_start_page(app) {

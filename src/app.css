@@ -432,7 +432,7 @@ svg.mark {
   width: var(--mark-size);
   height: var(--mark-size);
 }
-.back, .up, .paneflag, .controls a, .controls span.ctl, .controls button, footer a.pick {
+.back, .up, .paneflag, .controls a, .controls span.ctl, .controls button, nav.tree a.pick {
   display: var(--ctl-display, inline);
   align-items: center;
   justify-content: center;
@@ -1773,19 +1773,19 @@ table.data th {
 table.data tbody tr:nth-child(2n) { background: var(--bg-subtle); }
 table.data td.n { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* The raw view: the header, and under it the file with the rest of the window.
-   No pane, no status line, no border, no padding — a frame with a margin around
+/* The raw view: the header, under it the file with the rest of the window, and
+   the status line under that, which keeps the gesture strip. No pane, no
+   border, no padding — a frame with a margin around
    it would be our margin around a document that has its own, and the engine
    inside knows what the file wants better than we do. `color-scheme` is
    inherited, so the frame does hear one thing from us: which way to paint the
    parts that are its own, the text viewer's page and its scrollbars.
-   The safe areas are the exception, on the three edges the frame reaches: the
-   document inside cannot see them, so its sides and the end of its scroll would
-   stay under a cutout and the gesture strip. */
+   The side safe areas are the exception: the document inside cannot see them,
+   so its sides would stay under a cutout. The bottom's is the status line's. */
 iframe.raw {
   flex: 1; min-height: 0; display: block; border: 0; background: var(--bg);
   width: calc(100% - var(--safe-left) - var(--safe-right));
-  margin: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+  margin: 0 var(--safe-right) 0 var(--safe-left);
 }
 /* The embedder's lines over the frame (`view::with_lines`): the pane's own
    padding at the sides and the top, which the frame under them goes without,
@@ -1866,8 +1866,10 @@ footer .ts-note { flex-shrink: 0; max-width: 50%; }
   footer .ts-note { max-width: none; }
 }
 footer {
-  /* The other end: a gesture strip, or a navigation bar. */
-  padding: .6rem max(1.25rem, var(--safe-right)) max(.6rem, var(--safe-bottom))
+  /* The other end: a gesture strip, or a navigation bar. A line of small type
+     and as little round it as reads as a line: with the picker gone to the
+     pane (4 November 2026) nothing in it is taller than its words. */
+  padding: .35rem max(1.25rem, var(--safe-right)) max(.35rem, var(--safe-bottom))
     max(1.25rem, var(--safe-left));
   color: var(--muted);
   font-size: .75rem;
@@ -1889,6 +1891,9 @@ footer {
    the far end by its own `margin-left: auto`) and makes every percentage under
    this rule mean what it says. */
 footer .where { flex: 1 1 auto; min-width: 0; }
+/* The file's size and how long ago, at the far end: short, and kept whole —
+   the path before it is what gives way. */
+footer .facts { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
 /* The version takes the width of its own text and no more, and gives none of it
    back: `flex-shrink: 0` for the reason the leaf has it — a box that shrinks by
    a fraction of a pixel is a box with an ellipsis in it, and three characters
@@ -1914,23 +1919,27 @@ footer .where .path {
   flex: 1 1 auto;
   min-width: 0;
 }
-/* The status line holds the only picker, at every width. It used to hide above
-   50rem because the Files heading carried one there — but that heading now carries
-   Pin instead, which is an act on the root it names, and dropping the picker from
-   it left a wide window with no way to open a folder except a keystroke. Here it
-   is reachable whatever the width, and the pane going away takes nothing with it
-   that this line does not still have. */
-footer a.pick {
-  margin-left: auto;
-  flex: 0 0 auto;
-  padding: var(--pill-pad, .1rem .6rem);
+/* The picker, the pane's last item: the pane is a column, so a short tree and
+   short lists leave it at the bottom, and a long one has it after Recent. It
+   was the status line's until 4 November 2026, and made that line a 2.5rem
+   button tall on a desktop. Its words stay whatever the header does with its
+   own: the pane has the room. */
+nav.tree { display: flex; flex-direction: column; }
+nav.tree > * { flex-shrink: 0; }
+nav.tree .pick-row { margin-top: auto; padding-top: .75rem; }
+nav.tree a.pick .lbl { display: inline; }
+nav.tree a.pick {
+  /* Its own, not `--pill-pad`, which the header's marks set to nothing. */
+  padding: .15rem .8rem .15rem .6rem;
   border: 1px solid var(--border);
   border-radius: 1rem;
   color: var(--link);
   white-space: nowrap;
+  font-size: .8rem;
 }
 @media (hover: hover) {
-  footer a.pick:hover { border-color: var(--link); background: var(--bg-subtle); text-decoration: none; }
+  nav.tree a.pick:hover { border-color: var(--link); background: var(--bg); text-decoration: none; }
+}
 }
 
 /* The pane narrows before it goes, then goes: past a point the listing needs
@@ -2052,7 +2061,7 @@ nav.tree {
      where it is one row, inside the second row where there are two. */
   body { --drawer-top: calc(max(.5rem, var(--safe-top)) + 2.5rem + .5rem); }
   #ts-drawer ~ .shell nav.tree {
-    display: block;
+    display: flex;
     position: fixed;
     top: var(--drawer-top);
     bottom: 0;
@@ -2210,7 +2219,7 @@ body.nothing .start .row > a.aside { min-height: var(--row-min); }
 .controls a,
 .controls button,
 .controls span.ctl,
-footer a.pick {
+nav.tree a.pick {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2242,7 +2251,7 @@ footer a.pick {
 .controls a svg,
 .controls button svg,
 .controls span.ctl svg,
-footer a.pick svg {
+nav.tree a.pick svg {
     width: 24px;
     height: 24px;
   }

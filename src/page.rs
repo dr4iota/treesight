@@ -94,6 +94,10 @@ pub struct Prefs<'a> {
     pub lone_main: bool,
     /// The way on from a file shown alone, at the left end of its header.
     pub lone_way: LoneWay,
+    /// The file on screen's size and when it changed, for the status line's
+    /// right end: from the stat the router made anyway, so drawing it reads
+    /// nothing. `None` on a folder's page; no time where there is none to say.
+    pub facts: Option<(u64, Option<std::time::SystemTime>)>,
 }
 
 /// The way on from a file shown alone (`docs/tasks/tree-browser.md` in
@@ -1197,17 +1201,19 @@ pub(crate) fn file_lines_html(state: &State, root: &Root, rel: &[String]) -> Str
 /// the config. That is what lets the wait page keep the line while touching no
 /// backend at all — see `waiting_layout`.
 fn status_line(state: &State, root: &Root, prefs: Prefs<'_>) -> String {
-    // Not in a window of its own, which never opens another folder.
-    let pick = if state.cfg.app_ui && state.cfg.picker && prefs.window == WindowKind::Main {
-        flag(
-            "pick",
-            &act(state, "/.ts/open"),
-            &svg_icon(ICON_FOLDER),
-            "Open a folder…",
-            "Open a folder… (Ctrl+O)",
-        )
-    } else {
-        String::new()
+    // A file's size and how long ago it changed, at the line's right end, the
+    // date and time whole on a pointer's hover: every view of a file, Preview
+    // included, says this much about it here (4 November 2026). Worked out as
+    // the page is drawn, as a listing's rows are.
+    let facts = match prefs.facts {
+        Some((len, Some(t))) => format!(
+            "<span class=\"facts\" title=\"{}\">{} &middot; {}</span>",
+            html_escape(&fmt_time(t)),
+            human_size(len),
+            html_escape(&fmt_age_short(t, std::time::SystemTime::now())),
+        ),
+        Some((len, None)) => format!("<span class=\"facts\">{}</span>", human_size(len)),
+        None => String::new(),
     };
     // A copy made only to show a file sits in the app's own cache, whose path
     // means nothing to the reader: the file's name, as the window is titled.
@@ -1215,24 +1221,24 @@ fn status_line(state: &State, root: &Root, prefs: Prefs<'_>) -> String {
         let name = state.cfg.name_of(root).unwrap_or_default();
         return format!(
             "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>\
-             <span class=\"path\">{0}</span></span>",
+             <span class=\"path\">{0}</span></span>{facts}",
             html_escape(&name),
             html_escape(&state.cfg.app_label()),
         );
     }
     format!(
         "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>\
-         <span class=\"path\">{2}</span></span>\
-         {3}",
+         <span class=\"path\">{2}</span></span>{facts}",
         html_escape(&root.id),
         html_escape(&state.cfg.app_label()),
         path_label(&root.id),
-        pick
     )
 }
 
-/// The raw view's page: the line that says which file this is, and under it the
-/// file. Nothing else — no pane, no status line, not a pixel of padding of ours
+/// The raw view's page: the line that says which file this is, under it the
+/// file, and the status line under that, as every file's page has it outside
+/// full screen (4 November 2026; it was left out until then, for the room).
+/// Nothing else — no pane, not a pixel of padding of ours
 /// — because what is under that line is not our document to lay out. Whatever
 /// margins it has are the ones it brought, and the engine showing it is the one
 /// that knows what they should be.
@@ -1246,7 +1252,7 @@ pub fn bare_layout(
     content: &str,
 ) -> String {
     format!(
-        "{chrome}\n{content}\n</body>\n</html>\n",
+        "{chrome}\n{content}\n<footer>{footer}</footer>\n</body>\n</html>\n",
         chrome = head_and_header(
             state,
             root,
@@ -1258,6 +1264,7 @@ pub fn bare_layout(
             "rawview"
         ),
         content = content,
+        footer = status_line(state, root, prefs),
     )
 }
 
@@ -1302,10 +1309,8 @@ fn pane_html(
         };
         acts.push((href.to_string(), icon.to_string(), title.to_string()));
     }
-    // The picker is not here any more: it is in the status line, which is always
-    // on screen, and closing this folder puts the start page in front of you with
-    // every way in on it. Two of the same button on one screen, and this was the
-    // one that could be spared.
+    // The picker is not here: it is at the foot of the pane, and closing this
+    // folder puts the start page in front of you with every way in on it.
     // Not in a window of its own, which keeps its folder for life: closing
     // that window is its own ✕.
     if state.cfg.app_ui && prefs.window == WindowKind::Main {
@@ -1452,6 +1457,23 @@ fn pane_html(
             }),
         );
         out.push_str("</div>");
+    }
+    // The picker, at the foot of the pane (4 November 2026). It was the status
+    // line's, and made that line a button tall on a desktop for one control
+    // the start page also has; here it keeps the pane's last place, in view
+    // however far the lists scroll. The main window's only: a window of its
+    // own never opens another folder.
+    if state.cfg.app_ui && state.cfg.picker && prefs.window == WindowKind::Main {
+        out.push_str(&format!(
+            "<div class=\"pick-row\">{}</div>",
+            flag(
+                "pick",
+                &act(state, "/.ts/open"),
+                &svg_icon(ICON_FOLDER),
+                "Open a folder…",
+                "Open a folder… (Ctrl+O)",
+            )
+        ));
     }
     out.push_str("</nav>");
     out
@@ -2841,6 +2863,7 @@ mod tests {
             window: WindowKind::Main,
             lone_main: false,
             lone_way: LoneWay::None,
+            facts: None,
         }
     }
 
@@ -3406,9 +3429,8 @@ mod tests {
     }
 
     /// What the heading of the open root offers: pinning it, and closing it. The
-    /// way *in* is not here — the picker is in the status line, which survives the
-    /// pane being switched off, and having it in both places was one button too
-    /// many on a narrow window.
+    /// way *in* is not here — the picker is at the foot of the pane, and the
+    /// status line has only what it says.
     #[test]
     fn the_files_heading_offers_a_pin_and_a_way_out() {
         let dir = tmp_dir("files-acts");
@@ -3431,22 +3453,24 @@ mod tests {
         assert!(html.contains("href=\"/.ts/pin?t=tok\""), "and a way to keep it");
         assert!(!html.contains("href=\"/.ts/open?"), "no picker on this platform");
 
-        // With a picker, it is a flag in the status line and not an act on this
-        // heading — the same link, drawn once.
+        // With a picker, it is a button at the foot of the pane, not an act on
+        // this heading and not in the status line — the same link, drawn once.
         state.cfg.picker = true;
         let html = page(&state);
-        assert!(html.contains("class=\"pick\" href=\"/.ts/open?t=tok\""), "{html}");
+        assert!(html.contains("<div class=\"pick-row\"><a class=\"pick\" href=\"/.ts/open?t=tok\""), "{html}");
+        assert!(html.find("class=\"pick-row\"") < html.find("</nav>"), "in the pane: {html}");
+        let footer = &html[html.find("<footer>").expect("a status line")..];
+        assert!(!footer.contains("/.ts/open"), "not in the status line: {footer}");
         assert!(
             !html.contains("class=\"secact\" href=\"/.ts/open?"),
             "the picker left the heading: {html}"
         );
         assert!(html.contains("href=\"/.ts/close?t=tok\""), "{html}");
 
-        // Beside the picker, the two things this line says: what is running, and
-        // which folder is open. The path is in a box of its own so that what the
+        // The two things the status line says: what is running, and which
+        // folder is open. The path is in a box of its own so that what the
         // version leaves is all the room it can measure itself against — without
-        // it a long folder name is capped at the whole line and painted over the
-        // button beside it.
+        // it a long folder name is capped at the whole line.
         assert!(html.contains("<span class=\"app\">"), "the line names the app: {html}");
         assert!(html.contains("<span class=\"path\">"), "and boxes the path: {html}");
 

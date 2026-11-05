@@ -44,8 +44,8 @@ not while the list is on screen.
 
 ## Open a folder…
 
-The system's folder dialog, or `Ctrl+O`. The same control is in the status line
-once a folder is open. What you choose is opened and remembered in Recent.
+The system's folder dialog, or `Ctrl+O`. The same control is at the foot of the
+sidebar once a folder is open. What you choose is opened and remembered in Recent.
 
 ## Once something is open
 
