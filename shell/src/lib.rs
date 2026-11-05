@@ -2065,7 +2065,7 @@ fn opener_for(app: &AppHandle, id: &str) -> Option<Arc<dyn RootOpener>> {
 ///
 /// `remember` for the same reason it is there: a Place is already in the pane
 /// and would only be duplicating itself in Recent.
-fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: bool) {
+fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: bool, at: Option<String>) {
     let app = app.clone();
     let open_id = begin_open();
     thread::spawn(move || {
@@ -2095,7 +2095,7 @@ fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: b
                 return;
             }
             match opened {
-                Some(opened) => serve_opened(&back, opened, remember),
+                Some(opened) => serve_opened(&back, opened, remember, at.as_deref()),
                 // The opener has said whatever needed saying, including nothing.
                 // All that is left is the page that was on screen before.
                 None => open_failed(&back, previous),
@@ -2104,8 +2104,9 @@ fn open_by(app: &AppHandle, opener: Arc<dyn RootOpener>, id: String, remember: b
     });
 }
 
-/// Points the window at a root that is already open. Main thread only.
-fn serve_opened(app: &AppHandle, opened: Opened, remember: bool) {
+/// Points the window at a root that is already open, on its top or on `at`,
+/// a folder's path inside it. Main thread only.
+fn serve_opened(app: &AppHandle, opened: Opened, remember: bool, at: Option<&str>) {
     let Some(serving) = app.try_state::<Serving>() else {
         return;
     };
@@ -2123,10 +2124,31 @@ fn serve_opened(app: &AppHandle, opened: Opened, remember: bool) {
         let id = opened.id.clone();
         off_the_callback(app, move |app| remember_root_id(app, &id));
     }
-    show_tree(app);
+    match at.and_then(|at| landing_at(&serving.entry, at)) {
+        Some(url) => {
+            note_landing(&url);
+            match on_the_start_page(app) {
+                true => push_page(app, &url),
+                false => replace_page(app, &url),
+            }
+        }
+        None => show_tree(app),
+    }
     if let Some(win) = app.get_webview_window(WINDOW) {
         show(&win);
     }
+}
+
+/// The page of `at`, a path inside the served root, as a URL under `entry`:
+/// set as the path, so it is encoded and cannot name another host. `None`
+/// for anything not a path from the top.
+fn landing_at(entry: &str, at: &str) -> Option<String> {
+    let mut url = tauri::Url::parse(entry).ok()?;
+    if !at.starts_with('/') || at.contains('\\') {
+        return None;
+    }
+    url.set_path(at);
+    Some(url.to_string())
 }
 
 /// Why a folder did not open, spelling out what the list abbreviates — a drive
@@ -4044,7 +4066,12 @@ fn shell_action(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
             Some((_, path)) if !treeserve::root_id_is_local(path.trim()) => {
                 let id = path.trim().to_string();
                 match opener_for(app, &id) {
-                    Some(opener) => open_by(app, opener, id, url.path() == "/.ts/root"),
+                    // `at`: the folder to land on inside it, for a link
+                    // that reopens a root and keeps the reader's place.
+                    Some(opener) => {
+                        let at = url.query_pairs().find(|(k, _)| k == "at").map(|(_, v)| v.into_owned());
+                        open_by(app, opener, id, url.path() == "/.ts/root", at)
+                    }
                     None => fail(app, &format!("Nothing here can open {id}."), false),
                 }
             }
@@ -4988,6 +5015,18 @@ fn let_go_of(app: &AppHandle, was: Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A root link's `at` lands on that page of the root, encoded as a path,
+    /// and nothing that is not a path from the top — another host least of all.
+    #[test]
+    fn a_landing_is_a_path_under_the_entry() {
+        let e = "http://treesight.localhost/";
+        assert_eq!(super::landing_at(e, "/docs/").as_deref(), Some("http://treesight.localhost/docs/"));
+        assert_eq!(super::landing_at(e, "/a b.md").as_deref(), Some("http://treesight.localhost/a%20b.md"));
+        assert_eq!(super::landing_at(e, "//evil.example/").as_deref(), Some("http://treesight.localhost//evil.example/"));
+        assert_eq!(super::landing_at(e, "docs/"), None);
+        assert_eq!(super::landing_at(e, "/a\\b"), None);
+    }
 
     /// Open with passes files: the ones that are there, against the folder
     /// the second copy was started in, and not its switches or a folder.
