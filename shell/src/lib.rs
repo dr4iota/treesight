@@ -1910,12 +1910,6 @@ fn app_storage_dir(app: &AppHandle) -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Whether a folder has anything in it.
-#[cfg_attr(desktop, allow(dead_code))]
-fn has_entries(dir: &Path) -> bool {
-    fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some())
-}
-
 /// Serves `dir`, resolving it off the UI thread.
 ///
 /// `canonicalize` is a syscall with no time limit. A drive letter mapped to a host
@@ -4356,12 +4350,13 @@ fn places(app: &AppHandle) -> Vec<(String, PathBuf)> {
     // First on a phone, and on Android the only one: a folder of the app's own is
     // the one a phone has that nobody has to grant.
     //
-    // Only while there is something in it. Nothing in the app puts a file there
-    // now that Download asks where (`ShellExt::save_file`), so an empty row is
-    // a folder that will stay empty; what an older build saved there is still
-    // offered.
+    // Always, now (4 November 2026). It was listed only while something was in
+    // it, nothing in the app having put a file there since Download learned to
+    // ask where; but a file another app hands over to be saved lands there, and
+    // Places is worked out once, so a Files that was empty at launch stayed
+    // unlisted with a file in it until the next one.
     #[cfg(mobile)]
-    if let Some(dir) = app_storage_dir(app).filter(|d| !transfer::has_saver() || has_entries(d)) {
+    if let Some(dir) = app_storage_dir(app) {
         // "Files", not "App storage": what the row opens is a folder for the
         // reader's own things — what they downloaded, what another app sent
         // here — and not a window onto the app's private root, which is where
