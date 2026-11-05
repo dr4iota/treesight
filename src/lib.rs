@@ -2820,7 +2820,7 @@ mod tests {
         assert!(page.contains("<span class=\"lbl lone-lbl\">Save to Files</span>"), "{page}");
         assert!(page.contains("report.md<span class=\"tag lone-tag\">Not saved</span>"), "{page}");
         assert!(!page.contains("/.ts/reload") && !page.contains("/.ts/window"), "{page}");
-        assert!(page.contains("--lone-lbl: none"), "its own band: {page}");
+        assert!(!page.contains("--lone-lbl"), "its words are never dropped: {page}");
         // The file's size and how long ago, at the status line's right end.
         assert!(page.contains("<span class=\"facts\" title=\"") && page.contains("9 B &middot; "), "{page}");
         // A copy with no time of its own from the sender says its size alone.

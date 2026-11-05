@@ -179,15 +179,16 @@ header {
 .paneflag, .drawer-btn { margin-right: calc(.35rem - 1rem); }
 /* A file shown alone has no tree, so no sidebar control: its way on — Save to
    Files, Show folder — takes that place, ahead of Up's (here Start), and keeps
-   its words after the rest of the row has given theirs up. Its own variables,
-   then, which only the band `header_fit` writes for it sets. */
+   its words at every width, the header taking a second row where it must.
+   Its own padding and width, then: the bands that make the row marks do not
+   reach it. */
 .up.lone-way {
   order: -1;
   white-space: nowrap;
-  width: var(--lone-pill, auto);
-  padding: var(--lone-pad, .15rem .55rem);
+  width: auto;
+  padding: .15rem .55rem;
 }
-.lone-way .lone-lbl { display: var(--lone-lbl, inline); }
+.lone-way .lone-lbl { display: inline; }
 /* Not saved, beside the name of a copy made only to show it. */
 .crumbs .lone-tag { margin: 0 0 0 .5rem; vertical-align: .1em; }
 @media (hover: hover) {

@@ -489,8 +489,9 @@ fn text_px(text: &str, px: f32) -> f32 {
 /// so a reader who sets a larger text size gets widths that grew with it.
 ///
 /// `lone` is the word on a file-alone page's way on (*Save to Files*, *Show
-/// folder*), which keeps it through both: it goes only where the first row,
-/// the path gone from it, cannot hold it with its word.
+/// folder*), which it keeps at every width (the user, 4 November 2026): it is
+/// priced with its word, and where the row cannot hold it the header takes
+/// another.
 fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str], controls: &str) -> String {
     // Pixels at a 16px rem. The numbers are `app.css`'s: a pill's word is
     // `.8rem` (12.8px) with `.55rem` of padding a side, a 1px border, the
@@ -559,17 +560,6 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
             + row(&control_words, units.len(), with_words)
     };
     let rem = |px: f32| (px / 16.0 * 4.0).ceil() / 4.0;
-    // A phone's first row, priced as the spill bands below are: close, with no
-    // slack. With it, Save to Files lost its words on a 411px phone whose row
-    // had a third of its width to spare.
-    let lone_band = match lone {
-        Some(_) => format!(
-            "\n@media (max-width: {}rem) {{ body.fitted {{ --lone-lbl: none; --lone-pill: var(--pill); --lone-pad: 0; }} }}",
-            ((PAD + left(false) + lone_px(true) + tag + row(&control_words, units.len(), false)) / 16.0 * 100.0).ceil()
-                / 100.0,
-        ),
-        None => String::new(),
-    };
 
     // Below the second width the path has a row of its own, and the controls
     // that do not fit beside the left end follow it there rather than taking
@@ -639,7 +629,7 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
          @media (max-width: {words}rem) {{ body.fitted {{ --lbl: none; --ctl-display: inline-flex; \
          --pill: 1.7rem; --pill-pad: 0; }} }}\n\
          @media (max-width: {marks}rem) {{ body.fitted {{ --crumbs-order: 3; --crumbs-basis: 100%; \
-         --crumbs-min: 0; --crumbs-size: .85rem; }} }}{spill}{lone_band}\
+         --crumbs-min: 0; --crumbs-size: .85rem; }} }}{spill}\
          </style>",
         words = rem(line(true)),
         marks = rem(line(false)),
@@ -942,8 +932,9 @@ fn head_and_header(
         (false, c) => format!(" class=\"{c} fitted{off}\""),
     };
     // The way on from a file shown alone, where the sidebar's control would
-    // be: there is no tree for one to open. Its words go last (`header_fit`):
-    // it is the page's one action, and its mark the least known on the row.
+    // be: there is no tree for one to open. It keeps its words whatever the
+    // width (`header_fit`): it is the page's one action, and its mark the
+    // least known on the row.
     let (lone_href, lone_icon, lone_word, lone_title) = match prefs.lone_way {
         LoneWay::None => ("", "", "", ""),
         LoneWay::Save => ("/.ts/lone-save", ICON_SAVE_TO_FILES, "Save to Files", "Keep a copy in Files"),
