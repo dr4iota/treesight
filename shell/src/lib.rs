@@ -565,6 +565,25 @@ addEventListener('keydown', function (e) {
 });
 "#;
 
+/// Which of Send's two hand-overs was asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SendHow {
+    /// Open with…: an app that opens the file.
+    View,
+    /// Share…: the system's share sheet.
+    Share,
+}
+
+/// A file to hand to another app (`ShellExt::send_out`): the window that
+/// asked, the backend and path it is at, and its name.
+pub struct SendOut {
+    pub label: String,
+    pub vfs: Arc<dyn treeserve::vfs::Vfs>,
+    pub path: treeserve::VfsPath,
+    pub name: String,
+    pub how: SendHow,
+}
+
 /// The window `label` full screen, or back: the embedder's way where it has
 /// one, the window's own otherwise. Off the navigation callback and onto the
 /// main thread, as a window's own state is changed everywhere else here.
@@ -1226,6 +1245,13 @@ pub struct ShellExt {
     /// embedder's own code can hide them. Called on the main thread.
     #[allow(clippy::type_complexity)]
     pub fullscreen: Option<Box<dyn Fn(&AppHandle, &str, bool) + Send + Sync>>,
+    /// Hands a file to another app — a file's Send menu's Open with… and
+    /// Share… (`/.ts/send`). Where the bytes are is the embedder's to know: a
+    /// path on this device, a granted document, a server's file to fetch
+    /// first. Turns those two items on (`Config::send_out`). Called off the
+    /// main thread, with the file checked and its token good.
+    #[allow(clippy::type_complexity)]
+    pub send_out: Option<Box<dyn Fn(&AppHandle, SendOut) + Send + Sync>>,
     /// Replaces the shell's keyboard-shortcut script wholesale. A downstream
     /// page can need the very keys the default script binds, so the guard
     /// belongs to whoever knows about that page.
@@ -1376,6 +1402,8 @@ struct Ext {
     viewer: Option<treeserve::Viewer>,
     #[allow(clippy::type_complexity)]
     fullscreen: Option<Box<dyn Fn(&AppHandle, &str, bool) + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
+    send_out: Option<Box<dyn Fn(&AppHandle, SendOut) + Send + Sync>>,
     allowed_origins: Vec<String>,
     usage_pages: Vec<(&'static str, &'static [u8])>,
     openers: Vec<Arc<dyn RootOpener>>,
@@ -1542,6 +1570,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         file_lines: ext.file_lines.map(Arc::from),
         viewer: ext.viewer,
         fullscreen: ext.fullscreen,
+        send_out: ext.send_out,
         allowed_origins: ext.allowed_origins,
         usage_pages: ext.usage_pages,
         openers: ext.openers,
@@ -2478,6 +2507,8 @@ fn start(app: &AppHandle) -> Result<(), String> {
     cfg.picker = cfg!(desktop) || ext.picker;
     // A folder or a file in a window of its own: a desktop's (`open_window`).
     cfg.windows = cfg!(desktop);
+    // Open with… and Share…, where the embedder can hand a file on.
+    cfg.send_out = ext.send_out.is_some();
     // Upload where there is a way to pick files: a desktop's own picker, or
     // an embedder's (`ShellExt::pick_files`) where the platform's picker hands
     // back addresses this crate cannot read.
@@ -3889,6 +3920,8 @@ fn shell_action(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
         "/.ts/mkdir" => transfer::mkdir(app, label, url),
         // A row's marks: Delete, and the backend's own verbs on the row.
         "/.ts/remove" => transfer::remove(app, label, url),
+        // Send's Open with… and Share…: to the embedder (`ShellExt::send_out`).
+        "/.ts/send" => transfer::send_out(app, label, url),
         "/.ts/act" => transfer::act(app, label, url),
         "/.ts/upload" => transfer::upload(app, label, url),
         "/.ts/cancel" => transfer::cancel(),

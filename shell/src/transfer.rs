@@ -756,6 +756,37 @@ fn named_row(app: &AppHandle, label: &str, url: &tauri::Url) -> Result<Row, Opti
     Ok(Row { vfs: std::sync::Arc::clone(&root.vfs), path, name, is_dir, link, label: label.to_string() })
 }
 
+/// `/.ts/send?path=&how=view|share`: a file to another app, through the
+/// embedder (`ShellExt::send_out`). The token and the name are checked as
+/// Delete's are; a folder, a link to one, or a link nobody can follow is
+/// refused here, so the embedder is only ever handed a file.
+pub(crate) fn send_out(app: &AppHandle, label: &str, url: &tauri::Url) {
+    let app = app.clone();
+    let label = label.to_string();
+    let url = url.clone();
+    thread::spawn(move || {
+        let _for = crate::WorkingFor::enter(&label);
+        let r = match named_row(&app, &label, &url) {
+            Ok(r) => r,
+            Err(Some(why)) => return fail_in(&app, &label, &why, false),
+            Err(None) => return,
+        };
+        if r.is_dir || r.vfs.metadata(&r.path).map(|m| m.is_dir).unwrap_or(true) {
+            return fail_in(&app, &label, &format!("{} is not a file to send.", r.name), false);
+        }
+        let how = match param(&url, "how").as_deref() {
+            Some("share") => crate::SendHow::Share,
+            _ => crate::SendHow::View,
+        };
+        let Some(ext) = app.try_state::<crate::SharedExt>().map(|e| std::sync::Arc::clone(&e.0)) else {
+            return;
+        };
+        if let Some(hand) = ext.send_out.as_ref() {
+            hand(&app, crate::SendOut { label: r.label, vfs: r.vfs, path: r.path, name: r.name, how });
+        }
+    });
+}
+
 /// A native question with a button that goes ahead and Cancel. True is yes.
 fn ask(app: &AppHandle, label: &str, title: &str, message: &str, ok: &str) -> bool {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};

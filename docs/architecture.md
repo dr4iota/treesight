@@ -626,6 +626,15 @@ brought to the front (`Config::window_showing`). A launch waits for the first
 page to commit (`when_committed`), since the start page's own load closes the
 root. Registering the types is the embedder's packaging, never the app's code.
 
+**Send** (`send_menu`, `view.rs`): a file's verbs group ends in a `<details>`
+menu — Download…, Print…, and where the embedder can hand a file on
+(`Config::send_out`, from `ShellExt::send_out`) Open with… and Share… first,
+each `/.ts/send?path=&how=`. The shell checks the token and the name as
+Delete does and passes the embedder a `SendOut`; `Vfs::shared_uri` is how a
+backend whose files another app serves offers them without a copy. The
+`MENUS` script keeps an open menu on screen and closes it on a tap outside,
+on Esc and on an item.
+
 **New window** (`/.ts/window?path=`, main window only) opens nothing: it wraps
 the main root's backend in `treeserve::Within`, a folder of it as a root of its
 own whose `resolve` refuses what leads above it, so the session, the cache and
