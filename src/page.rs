@@ -3517,7 +3517,7 @@ mod tests {
         assert!(sheet.contains(".ico { display: inline-flex; }"), "{sheet}");
         // The base band, and the two the count reaches for above it.
         for (width, selector) in [
-            (46, "body:not(.fitted)".to_string()),
+            (46, "body:not(.fitted):not(.nothing):not(.worded)".to_string()),
             (56, "body:not(.fitted):has(header .controls > :nth-child(4))".to_string()),
             (68, "body:not(.fitted):has(header .controls > :nth-child(6))".to_string()),
         ] {

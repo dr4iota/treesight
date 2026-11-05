@@ -484,8 +484,11 @@ svg.mark {
      text baseline: `vertical-align` and side padding line up glyphs, and a
      glyph is exactly what these are not. A fixed square makes every pill the
      same circle whatever it contains — including the shell's Back, which as a
-     piece of header chrome keeps its own padding otherwise. */
-  body:not(.fitted) {
+     piece of header chrome keeps its own padding otherwise.
+     Not a page whose header always has room for its words: the start page
+     (`.nothing`), and a page that says so (`.worded`) — Telechore's Servers
+     page — each two buttons and a name (4 November 2026). */
+  body:not(.fitted):not(.nothing):not(.worded) {
     --lbl: none;
     --ctl-display: inline-flex;
     --pill: 1.7rem;
