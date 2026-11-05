@@ -1482,7 +1482,10 @@ const WORDS: &str = r#"
 (function () {
   var HOLD = 900, CUE = 150, SLOP = 10;
   var timer = 0, cue = 0, x = 0, y = 0, pid = null, held = null, fired = false;
-  var root = document.documentElement;
+  // Looked up when used: a document-start script may run before the document
+  // has a root element (WebView2 on Windows does), as VIEWPORT says, and a root
+  // kept from then is null — the hold tinted and never showed the words.
+  function root() { return document.documentElement; }
   function head(e) {
     var h = e.target.closest && e.target.closest('header');
     if (!h) return null;
@@ -1503,13 +1506,13 @@ const WORDS: &str = r#"
     if (!h) return;
     x = e.clientX; y = e.clientY; pid = e.pointerId; held = h;
     cue = setTimeout(function () { cue = 0; h.setAttribute('data-holding', ''); }, CUE);
-    timer = setTimeout(function () { stop(); fired = true; root.toggleAttribute('data-words'); }, HOLD);
+    timer = setTimeout(function () { stop(); fired = true; root().toggleAttribute('data-words'); }, HOLD);
   }, true);
   addEventListener('pointermove', function (e) {
     if (timer && e.pointerId === pid && Math.hypot(e.clientX - x, e.clientY - y) > SLOP) stop();
   }, true);
   addEventListener('pointerup', function (e) {
-    if (timer && e.pointerId === pid && root.hasAttribute('data-words')) { fired = true; root.removeAttribute('data-words'); }
+    if (timer && e.pointerId === pid && root().hasAttribute('data-words')) { fired = true; root().removeAttribute('data-words'); }
     if (e.pointerId === pid) stop();
   }, true);
   addEventListener('pointercancel', function (e) { if (e.pointerId === pid) stop(); }, true);
