@@ -61,6 +61,46 @@ pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, dated: bool, l
     });
 }
 
+/// A file the system handed to the app on a desktop — Open with, or named on
+/// the command line — shown where it is. The main window takes it when
+/// nothing is open there, which is how a launch for a file starts; otherwise
+/// a document window does, and one already showing it comes to the front.
+/// Linux and Windows reach this from the command line and the single-instance
+/// hook, macOS from `RunEvent::Opened`: the one rule for all three.
+#[cfg(desktop)]
+pub(crate) fn open_handed(app: &AppHandle, file: PathBuf) {
+    let Ok(file) = file.canonicalize() else {
+        return fail(app, &format!("{} could not be opened.", treeserve::util::display_path(&file)), false);
+    };
+    let (Some(dir), Some(name)) = (file.parent(), file.file_name()) else {
+        return;
+    };
+    let Some(serving) = app.try_state::<Serving>() else {
+        return;
+    };
+    let cfg = &serving.state().cfg;
+    let document = treeserve::util::href_path(&[name.to_string_lossy().into_owned()]);
+    let id = treeserve::util::display_path(dir);
+    let front = |label: &str| {
+        if let Some(win) = app.get_webview_window(label) {
+            let _ = win.unminimize();
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+    };
+    if cfg.root().is_none() {
+        open_lone(app, file, false, true, None);
+        return front(WINDOW);
+    }
+    if cfg.lone().is_some_and(|l| l.document == document) && cfg.root().is_some_and(|r| r.id == id) {
+        return front(WINDOW);
+    }
+    if let Some(label) = cfg.window_showing(&id, &document) {
+        return front(&label);
+    }
+    super::own_window(app, treeserve::Root::local(dir.to_path_buf()), document, true);
+}
+
 /// Re-roots the main window at `file`'s folder, for that file alone, and puts
 /// its page on screen: a step from the start page, a change of scene from
 /// anything else. The page's address, or `None` where nothing was served.

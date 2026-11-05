@@ -1517,9 +1517,20 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
     // delivers a new intent to the activity that is already running.
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if let Some(dir) = first_dir_arg(argv.into_iter().skip(1)) {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let args: Vec<String> = argv.into_iter().skip(1).collect();
+            if let Some(dir) = first_dir_arg(args.iter().cloned()) {
                 open_root(app, dir, true);
+            } else {
+                // A file — Open with Telechore — goes where `lone` says, which
+                // brings its own window to the front. Named from the second
+                // copy's folder, which may not be ours.
+                let files = file_args(args.into_iter(), Path::new(&cwd));
+                if !files.is_empty() {
+                    let app = app.clone();
+                    thread::spawn(move || files.into_iter().for_each(|f| lone::open_handed(&app, f)));
+                    return;
+                }
             }
             if let Some(w) = app.get_webview_window(WINDOW) {
                 let _ = w.set_focus();
@@ -1596,6 +1607,10 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
                     if let Some(win) = handle.get_webview_window(WINDOW) {
                         show(&win);
                     }
+                    // A file, Open with Telechore on a closed app: shown alone
+                    // in the main window once its first page is there.
+                    #[cfg(desktop)]
+                    when_committed(&handle, file_args(std::env::args().skip(1), Path::new(".")));
                 }
             }
             Ok(())
@@ -1619,9 +1634,45 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
                     });
                 });
             }
+            // macOS hands a file to the app as an event, whether it was
+            // running or launched for it; the same rule as the command line.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                when_committed(app, urls.iter().filter_map(|u| u.to_file_path().ok()).collect());
+            }
             #[cfg(not(target_os = "android"))]
             let _ = (app, event);
         });
+}
+
+/// Hands each of `files` to `lone::open_handed` once the main window's first
+/// page has committed: that page is the start page, and its own load closes
+/// whatever root is open — the reason the Android hand-over waits too.
+#[cfg(desktop)]
+fn when_committed(app: &AppHandle, files: Vec<PathBuf>) {
+    if files.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    thread::spawn(move || {
+        for _ in 0..240 {
+            if committed(&app) {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(250));
+        }
+        files.into_iter().for_each(|f| lone::open_handed(&app, f));
+    });
+}
+
+/// The arguments that name files, against `cwd` where relative: what Open with
+/// passes (`%1` on Windows, `%F` in the Linux desktop entry).
+#[cfg(desktop)]
+fn file_args<I: Iterator<Item = String>>(args: I, cwd: &Path) -> Vec<PathBuf> {
+    args.filter(|a| !a.starts_with('-'))
+        .map(|a| cwd.join(a))
+        .filter(|p| p.is_file())
+        .collect()
 }
 
 /// First argument that names a readable directory.
@@ -2994,6 +3045,17 @@ fn new_window(app: &AppHandle, url: &tauri::Url) {
             id: root.vfs.root_id_at(&base),
             vfs: Arc::new(treeserve::Within::new(Arc::clone(&root.vfs), base)),
         };
+        own_window(app, sub, at, document);
+    });
+}
+
+/// A window of its own on `sub`, at `at` in it: a folder window, or with
+/// `document` a document window for that one file. Placed down and right of
+/// the main window, a step further for each window of its own already open.
+/// New window's, and a file handed to the running app's (`lone`).
+#[cfg(desktop)]
+pub(crate) fn own_window(app: &AppHandle, sub: treeserve::Root, at: String, document: bool) {
+    {
         let Some(main) = app.get_webview_window(WINDOW) else {
             return;
         };
@@ -3023,7 +3085,7 @@ fn new_window(app: &AppHandle, url: &tauri::Url) {
         if let Err(e) = build_claimed(app, &label, &at, size, at_pos) {
             fail(app, &e, false);
         }
-    });
+    }
 }
 
 /// A window of its own has gone: its root, its open folders and any transfer
@@ -4802,6 +4864,19 @@ fn let_go_of(app: &AppHandle, was: Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Open with passes files: the ones that are there, against the folder
+    /// the second copy was started in, and not its switches or a folder.
+    #[cfg(desktop)]
+    #[test]
+    fn file_arguments_are_the_files_named() {
+        let dir = std::env::temp_dir().join(format!("ts-file-args-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.pdf"), b"%PDF").unwrap();
+        let args = ["--flag", "a.pdf", "sub", "gone.md"].into_iter().map(String::from);
+        assert_eq!(super::file_args(args, &dir), vec![dir.join("a.pdf")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A thread works for the main window until told otherwise, and a nested
     /// window gives way to the one before it when its guard goes.

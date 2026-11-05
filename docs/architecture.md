@@ -617,6 +617,15 @@ on keeps its words past the rest of the row (`header_fit`'s `lone` band).
 committed, which is where Telechore clears the WebView's history so Back goes
 back to the app that sent the file.
 
+On a desktop the file arrives as a path — the command line at launch, the
+single-instance hook's argv after (`file_args`), macOS's `RunEvent::Opened` —
+and every one of them goes to `lone::open_handed`: the main window when
+nothing is open there (`open_lone`, in place), otherwise a document window
+(`own_window`, which New window uses too), or the window already showing it
+brought to the front (`Config::window_showing`). A launch waits for the first
+page to commit (`when_committed`), since the start page's own load closes the
+root. Registering the types is the embedder's packaging, never the app's code.
+
 **New window** (`/.ts/window?path=`, main window only) opens nothing: it wraps
 the main root's backend in `treeserve::Within`, a folder of it as a root of its
 own whose `resolve` refuses what leads above it, so the session, the cache and

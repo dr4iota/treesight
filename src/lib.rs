@@ -862,6 +862,16 @@ impl Config {
         }
     }
 
+    /// The window of its own that shows `document` of the root `id`, if one
+    /// does: a file handed over twice comes to the front, not twice.
+    pub fn window_showing(&self, id: &str, document: &str) -> Option<String> {
+        let windows = self.window_roots.read().expect("windows lock");
+        windows
+            .iter()
+            .find(|(_, w)| w.root.id == id && w.document.as_deref() == Some(document))
+            .map(|(label, _)| label.clone())
+    }
+
     pub fn window(&self, label: &str) -> Option<WindowRoot> {
         self.window_roots.read().expect("windows lock").get(label).cloned()
     }
