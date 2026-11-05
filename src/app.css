@@ -177,6 +177,19 @@ header {
    so the pane control gives back the difference. On whichever of its two forms
    is on screen; the hidden one has no box for the margin to ride on. */
 .paneflag, .drawer-btn { margin-right: calc(.35rem - 1rem); }
+/* A file shown alone has no tree, so no sidebar control: its way on — Save to
+   Files, Show folder — takes that place, ahead of Up's (here Start), and keeps
+   its words after the rest of the row has given theirs up. Its own variables,
+   then, which only the band `header_fit` writes for it sets. */
+.up.lone-way {
+  order: -1;
+  white-space: nowrap;
+  width: var(--lone-pill, auto);
+  padding: var(--lone-pad, .15rem .55rem);
+}
+.lone-way .lone-lbl { display: var(--lone-lbl, inline); }
+/* Not saved, beside the name of a copy made only to show it. */
+.crumbs .lone-tag { margin: 0 0 0 .5rem; vertical-align: .1em; }
 @media (hover: hover) {
   .back:hover, .up:hover, .paneflag:hover {
     color: var(--link);
@@ -239,6 +252,7 @@ body.fitted header { justify-content: flex-end; column-gap: .35rem; row-gap: var
 body.fitted header .controls { display: contents; }
 body.fitted header .controls > :first-child { margin-left: auto; }
 body.fitted header .up, body.fitted header .back { margin-right: .65rem; }
+body.fitted header .up.lone-way { margin-right: 0; }
 body.fitted .paneflag, body.fitted .drawer-btn { margin-right: 0; }
 body.fitted header > .tag { margin-right: 1.05rem; }
 body.fitted .crumbs { margin-right: .65rem; }

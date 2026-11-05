@@ -602,6 +602,21 @@ the file's name. A document window's link to a folder is refused in
 the router sends any other folder back to the window's file — not a 204, which
 WebKitGTK draws as an empty page.
 
+**A file alone in the main window** (`Config::lone`, a `Lone`; the shell's
+`lone.rs`): a file another app handed over, served from its folder and drawn as
+a document window draws, with **Start** in Up's slot and, where the sidebar's
+control would be, the way on (`page::LoneWay`) — **Show folder**
+(`/.ts/lone-folder`), which clears the lone state and puts the folder in Recent,
+or for a copy the embedder made only to show it (`temporary`) **Save to Files**
+(`/.ts/lone-save`, a phone's), with *Not saved* beside the name, no Refresh and
+the file's name in the status line. Start deletes such a copy before it closes
+the root. A re-root or a close drops the lone state. In a document window Show
+folder is `Config::window_shows_folder`: the same root, no document. The way
+on keeps its words past the rest of the row (`header_fit`'s `lone` band).
+`open_lone` and `save_and_show` take a `Landed` hook, run once the page has
+committed, which is where Telechore clears the WebView's history so Back goes
+back to the app that sent the file.
+
 **New window** (`/.ts/window?path=`, main window only) opens nothing: it wraps
 the main root's backend in `treeserve::Within`, a folder of it as a root of its
 own whose `resolve` refuses what leads above it, so the session, the cache and

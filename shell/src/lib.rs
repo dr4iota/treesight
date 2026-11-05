@@ -69,8 +69,12 @@ impl Drop for WorkingFor {
 /// How many roots the Recent list keeps.
 const RECENT_MAX: usize = 8;
 
+mod lone;
 mod open;
 mod transfer;
+pub use lone::{open_lone, Landed};
+#[cfg(mobile)]
+pub use lone::save_and_show;
 pub use transfer::{PickedFile, SaveTarget};
 pub use open::{may_open_externally, open_externally};
 
@@ -3757,6 +3761,11 @@ fn shell_action(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
         // there is nothing to confirm; and a session an embedder opened for it is
         // not this server's to close — the row that opened it will open it again.
         "/.ts/close" => close_folder(app),
+        // A file shown alone: its folder's tree, or on a phone a copy of it
+        // kept in Files (`lone`).
+        "/.ts/lone-folder" => lone::show_folder(app, label),
+        #[cfg(mobile)]
+        "/.ts/lone-save" => lone::save(app),
         // The Refresh flag. A link to the page it is on would have done the same
         // work on the server and cost the reader their place in it: a navigation
         // starts at the top of the document and leaves the old page behind in the
@@ -3964,6 +3973,8 @@ fn close_folder(app: &AppHandle) {
     let Some(serving) = app.try_state::<Serving>() else {
         return;
     };
+    // A copy made only to show a file goes with it: Back is not to find it.
+    lone::leaving(app);
     serving.state().cfg.close_root();
     // The start page's address, and the page *replaced* rather than stepped to:
     // this is a control, not a destination. Back should come out of the folder

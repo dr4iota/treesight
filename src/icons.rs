@@ -27,6 +27,10 @@ pub const ICON_UPLOAD: &str =
 /// The folder mark with a plus in it.
 pub const ICON_NEW_FOLDER: &str = "<path d=\"M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 \
      .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z\"/><path d=\"M8 7.4v3.8M6.1 9.3h3.8\"/>";
+/// Save to Files: the folder mark with Download's arrow going into it — a copy
+/// kept in the app's own folder, where Download sends one out of the app.
+pub const ICON_SAVE_TO_FILES: &str = "<path d=\"M1.7 4.5c0-.5.4-.9.9-.9h2.9l1.3 1.7h7c.5 0 .9.4.9.9v6.4c0 \
+     .5-.4.9-.9.9H2.6a.9.9 0 01-.9-.9V4.5z\"/><path d=\"M8 6.8v4.2\"/><path d=\"M6.2 9.3L8 11.1l1.8-1.8\"/>";
 pub const ICON_DOWNLOAD: &str =
     "<path d=\"M8 2.9v6.7\"/><path d=\"M5.2 7l2.8 2.8L10.8 7\"/><path d=\"M3.2 13.1h9.6\"/>";
 /// A bin: Delete.
@@ -199,6 +203,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("raw", ICON_RAW),
     ("upload", ICON_UPLOAD),
     ("new-folder", ICON_NEW_FOLDER),
+    ("save-to-files", ICON_SAVE_TO_FILES),
     ("download", ICON_DOWNLOAD),
     ("delete", ICON_DELETE),
     ("mark", ICON_MARK),

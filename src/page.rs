@@ -89,6 +89,26 @@ pub struct Prefs<'a> {
     /// Which window the page is for. A window of its own keeps its root for
     /// life, so it draws none of the main window's ways to another one.
     pub window: WindowKind,
+    /// A document window that is the main window: a file another app handed
+    /// over (`Config::lone`). Its way out is Start, not Main window.
+    pub lone_main: bool,
+    /// The way on from a file shown alone, at the left end of its header.
+    pub lone_way: LoneWay,
+}
+
+/// The way on from a file shown alone (`docs/tasks/tree-browser.md` in
+/// Telechore, *Opening a file from another app*), in the place the sidebar's
+/// control has on a page with a tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LoneWay {
+    #[default]
+    None,
+    /// A copy made only to show it: *Save to Files* keeps it, and the header
+    /// says it is not saved and has no Refresh, there being nothing to read
+    /// again.
+    Save,
+    /// The file in its own folder: *Show folder* shows that folder's tree.
+    Folder,
 }
 
 /// The window a page is drawn for: the main one, or one with a root of its own
@@ -463,7 +483,11 @@ fn text_px(text: &str, px: f32) -> f32 {
 /// In order: everything with its words, if the line holds it; otherwise the
 /// same with marks only; otherwise marks, and the path under them. Rem, not px,
 /// so a reader who sets a larger text size gets widths that grew with it.
-fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) -> String {
+///
+/// `lone` is the word on a file-alone page's way on (*Save to Files*, *Show
+/// folder*), which keeps it through both: it goes only where the first row,
+/// the path gone from it, cannot hold it with its word.
+fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str], controls: &str) -> String {
     // Pixels at a 16px rem. The numbers are `app.css`'s: a pill's word is
     // `.8rem` (12.8px) with `.55rem` of padding a side, a 1px border, the
     // 24px header mark and a `.3rem` gap; a mark alone is the `2.5rem` box.
@@ -516,10 +540,32 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
                 n => GAP + PANE_GAP * (n - 1) as f32,
             }
     };
+    // Beside Up in the left cluster, a pill and the controls' gap.
+    let lone_px = |with_words: bool| match lone {
+        Some(w) => PILL_GAP + row(&[w.to_string()], 1, with_words),
+        None => 0.0,
+    };
     let line = |with_words: bool| {
-        PAD + SLACK + left(with_words) + tag + path + GAP + row(&control_words, units.len(), with_words)
+        PAD + SLACK
+            + left(with_words)
+            + lone_px(true)
+            + tag
+            + path
+            + GAP
+            + row(&control_words, units.len(), with_words)
     };
     let rem = |px: f32| (px / 16.0 * 4.0).ceil() / 4.0;
+    // A phone's first row, priced as the spill bands below are: close, with no
+    // slack. With it, Save to Files lost its words on a 411px phone whose row
+    // had a third of its width to spare.
+    let lone_band = match lone {
+        Some(_) => format!(
+            "\n@media (max-width: {}rem) {{ body.fitted {{ --lone-lbl: none; --lone-pill: var(--pill); --lone-pad: 0; }} }}",
+            ((PAD + left(false) + lone_px(true) + tag + row(&control_words, units.len(), false)) / 16.0 * 100.0).ceil()
+                / 100.0,
+        ),
+        None => String::new(),
+    };
 
     // Below the second width the path has a row of its own, and the controls
     // that do not fit beside the left end follow it there rather than taking
@@ -546,7 +592,7 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
         units.iter().map(|&n| n as f32 * PILL_MARK).sum::<f32>()
             + PILL_GAP * units.len().saturating_sub(1) as f32
     };
-    let first = PAD + left(false) + tag;
+    let first = PAD + left(false) + lone_px(false) + tag;
     let two_lines = (path * (13.6 / CRUMB_TEXT) * 0.55).max(CRUMBS_MIN);
     let close = |px: f32| (px / 16.0 * 100.0).ceil() / 100.0;
     let back = |rem: f32| {
@@ -589,7 +635,7 @@ fn header_fit(left: &str, tag: Option<&str>, crumbs: &[&str], controls: &str) ->
          @media (max-width: {words}rem) {{ body.fitted {{ --lbl: none; --ctl-display: inline-flex; \
          --pill: 1.7rem; --pill-pad: 0; }} }}\n\
          @media (max-width: {marks}rem) {{ body.fitted {{ --crumbs-order: 3; --crumbs-basis: 100%; \
-         --crumbs-min: 0; --crumbs-size: .85rem; }} }}{spill}\
+         --crumbs-min: 0; --crumbs-size: .85rem; }} }}{spill}{lone_band}\
          </style>",
         words = rem(line(true)),
         marks = rem(line(false)),
@@ -618,8 +664,11 @@ fn head_and_header(
     // the crumbs, the machine in the tag beside them, neither of which a window
     // title has room for.
     let named = state.cfg.name_of(root).unwrap_or_else(|| site_title.clone());
+    // A copy made only to show a file has no folder worth naming: its name.
     let title = if rel.is_empty() {
         named
+    } else if prefs.lone_way == LoneWay::Save {
+        rel.join("/")
     } else {
         format!("{} — {}", rel.join("/"), named)
     };
@@ -664,6 +713,12 @@ fn head_and_header(
         true => crumbs.push_str(&html_escape(rel.last().map(String::as_str).unwrap_or(&site_title))),
         false => crumbs.push_str(&format!("<a href=\"/\">{}</a>", html_escape(&site_title))),
     }
+    // A copy made only to show it says so beside its name: it goes when the
+    // reader leaves, unless Save to Files keeps it. *Not saved*, not "not
+    // kept": kept is Keep offline's word.
+    if lone && prefs.lone_way == LoneWay::Save {
+        crumbs.push_str("<span class=\"tag lone-tag\">Not saved</span>");
+    }
     let mut acc: Vec<String> = Vec::new();
     for (i, seg) in rel.iter().enumerate().filter(|_| !lone) {
         acc.push(seg.clone());
@@ -695,7 +750,8 @@ fn head_and_header(
     // Each title spells out both the state and what a click does, because from
     // the width where the words go it is the only thing left that can.
     let mut controls = String::new();
-    if state.cfg.app_ui {
+    // Not for a copy made only to show it: there is nothing to read again.
+    if state.cfg.app_ui && prefs.lone_way != LoneWay::Save {
         controls.push_str(&flag(
             "",
             "/.ts/reload",
@@ -788,7 +844,20 @@ fn head_and_header(
             "Bring the main window to the front",
         )
     );
+    // The main window showing one file alone has nothing above it either, and
+    // its way out is the start page, as at any root.
+    let start = format!(
+        "\n  {}",
+        flag(
+            "up start",
+            &act(state, "/.ts/close"),
+            &svg_icon(ICON_START),
+            "Start",
+            "Back to the start page",
+        )
+    );
     let up = match rel.split_last() {
+        _ if prefs.window == WindowKind::Document && prefs.lone_main => start,
         _ if prefs.window == WindowKind::Document => main_window,
         None if prefs.window == WindowKind::Folder => main_window,
         Some((_, parent)) => {
@@ -811,16 +880,7 @@ fn head_and_header(
         // screen is the pane's own affair — it is a drawer at the width where
         // this matters most, and a header button is what a phone can reach
         // without opening one.
-        None if state.cfg.app_ui => format!(
-            "\n  {}",
-            flag(
-                "up start",
-                &act(state, "/.ts/close"),
-                &svg_icon(ICON_START),
-                "Start",
-                "Back to the start page",
-            )
-        ),
+        None if state.cfg.app_ui => start,
         // The top of what is served, with no shell around it: nothing above and
         // nothing to close — `/.ts/close` is the embedder's route and this
         // server does not answer it. Dimmed and inert rather than gone, and not
@@ -877,10 +937,30 @@ fn head_and_header(
         (false, "") => format!(" class=\"fitted{off}\""),
         (false, c) => format!(" class=\"{c} fitted{off}\""),
     };
+    // The way on from a file shown alone, where the sidebar's control would
+    // be: there is no tree for one to open. Its words go last (`header_fit`):
+    // it is the page's one action, and its mark the least known on the row.
+    let (lone_href, lone_icon, lone_word, lone_title) = match prefs.lone_way {
+        LoneWay::None => ("", "", "", ""),
+        LoneWay::Save => ("/.ts/lone-save", ICON_SAVE_TO_FILES, "Save to Files", "Keep a copy in Files"),
+        LoneWay::Folder => ("/.ts/lone-folder", ICON_FOLDER, "Show folder", "Show the folder this file is in"),
+    };
+    let lone_btn = match prefs.lone_way {
+        LoneWay::None => String::new(),
+        _ => format!(
+            "\n  <a class=\"up lone-way\" href=\"{}\" title=\"{}\"><span class=\"ico\">{}</span>\
+             <span class=\"lbl lone-lbl\">{}</span></a>",
+            html_escape(&act(state, lone_href)),
+            html_escape(lone_title),
+            svg_icon(lone_icon),
+            html_escape(lone_word),
+        ),
+    };
     let mut path: Vec<&str> = vec![site_title.as_str()];
     path.extend(rel.iter().map(String::as_str));
     let fit = header_fit(
         &format!("{up}{pane_flag}"),
+        (!lone_word.is_empty()).then_some(lone_word),
         crate::root_id_bookmark(&root.id),
         &path,
         &controls,
@@ -900,7 +980,7 @@ fn head_and_header(
 {fit}
 </head>
 <body{classes}>
-{drawer_toggle}<header>{up}{drawer_btn}{pane_flag}{tag}
+{drawer_toggle}<header>{up}{drawer_btn}{pane_flag}{lone_btn}{tag}
   <div class="crumbs">{crumbs}</div>
   <div class="controls">{controls}</div>
 </header>"#,
@@ -915,6 +995,7 @@ fn head_and_header(
         up = up,
         drawer_btn = drawer_btn,
         pane_flag = pane_flag,
+        lone_btn = lone_btn,
         tag = tag,
         crumbs = crumbs,
         controls = controls,
@@ -1128,6 +1209,17 @@ fn status_line(state: &State, root: &Root, prefs: Prefs<'_>) -> String {
     } else {
         String::new()
     };
+    // A copy made only to show a file sits in the app's own cache, whose path
+    // means nothing to the reader: the file's name, as the window is titled.
+    if prefs.lone_way == LoneWay::Save {
+        let name = state.cfg.name_of(root).unwrap_or_default();
+        return format!(
+            "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>\
+             <span class=\"path\">{0}</span></span>",
+            html_escape(&name),
+            html_escape(&state.cfg.app_label()),
+        );
+    }
     format!(
         "<span class=\"where\" title=\"{0}\"><span class=\"app\">{1} &middot;</span>\
          <span class=\"path\">{2}</span></span>\
@@ -2747,6 +2839,8 @@ mod tests {
             zoom: 100,
             open: &[],
             window: WindowKind::Main,
+            lone_main: false,
+            lone_way: LoneWay::None,
         }
     }
 
@@ -3444,9 +3538,10 @@ mod tests {
             flag("", "#", "", "Download", "")
         );
         let up = flag("up", "#", "", "Up", "");
-        let short = widths(&header_fit(&up, None, &["src"], &controls));
+        let short = widths(&header_fit(&up, None, None, &["src"], &controls));
         let long = widths(&header_fit(
             &up,
+            None,
             Some("prod"),
             &["telechore", "vendor", "treesight", "src", "a-rather-long-file-name.rs"],
             &controls,
@@ -3454,7 +3549,7 @@ mod tests {
         assert!(short.0 > short.1, "words go before the path moves: {short:?}");
         assert!(long.0 > short.0 && long.1 > short.1, "{short:?} {long:?}");
         // The words of *Download* cost what the mark does not.
-        let more = widths(&header_fit(&up, None, &["src"], &format!("{controls}{controls}")));
+        let more = widths(&header_fit(&up, None, None, &["src"], &format!("{controls}{controls}")));
         assert!(more.0 - short.0 > more.1 - short.1, "{short:?} {more:?}");
 
         // Measured on a 640x360 phone held sideways (8 Oct 2026): Up and the
@@ -3465,6 +3560,7 @@ mod tests {
         // near it.
         let phone = header_fit(
             &format!("{up}{}", flag("paneflag", "#", "", "Sidebar", "")),
+            None,
             Some("lab"),
             &["pi", "telechore-emu-test"],
             &["Refresh", "Terminal", "As root", "Upload", "New folder", "Auto"]
@@ -3510,7 +3606,7 @@ mod tests {
             words(&["Auto"])
         );
         assert_eq!(pill_units(&controls), [1, 1, 3, 3, 1]);
-        let fit = |crumbs: &[&str]| bands(&header_fit(&up, Some("thor"), crumbs, &controls));
+        let fit = |crumbs: &[&str]| bands(&header_fit(&up, None, Some("thor"), crumbs, &controls));
 
         let short = fit(&["weather-station", "README.md"]);
         let at = |bands: &[(f32, String)], rule: &str| {

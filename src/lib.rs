@@ -651,6 +651,20 @@ pub struct Config {
     /// its root ([`handle_in`]); everything else here — the lists, the pins,
     /// the preferences, the status — is shared with the main window.
     window_roots: RwLock<HashMap<String, WindowRoot>>,
+    /// The main window showing one file alone: a file another app handed over
+    /// (`Lone`). Goes with the root it is in: a re-root or a close drops it.
+    lone: RwLock<Option<Lone>>,
+}
+
+/// The main window's root is there for one file, shown alone as a document
+/// window shows its file: a file handed over by another app. `document` is its
+/// address in the root (`/report.pdf`); `temporary`, a copy the app made only
+/// to show it, which is offered *Save to Files* and goes when it is left —
+/// otherwise the file in its own folder, which is offered *Show folder*.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lone {
+    pub document: String,
+    pub temporary: bool,
 }
 
 /// A window's own root, and what to call it — the pair [`Config::set_root_vfs`]
@@ -737,6 +751,7 @@ impl Config {
             viewer: RwLock::new(None),
             status: RwLock::new(HashMap::new()),
             window_roots: RwLock::new(HashMap::new()),
+            lone: RwLock::new(None),
         }
     }
 
@@ -763,12 +778,25 @@ impl Config {
     /// page is for. The root's name goes with the root, as on any re-root.
     pub fn close_root(&self) {
         self.set_root_name(None);
+        self.set_lone(None);
         *self.root.write().expect("root lock") = None;
     }
 
     pub fn set_root_vfs(&self, root: Root) {
         self.set_root_name(None);
+        self.set_lone(None);
         *self.root.write().expect("root lock") = Some(Arc::new(root));
+    }
+
+    /// What the main window's root is there for, if it is one file alone.
+    pub fn lone(&self) -> Option<Lone> {
+        self.lone.read().expect("lone lock").clone()
+    }
+
+    /// Says the main window's root is there for one file, or no longer is.
+    /// After the re-root, which clears it.
+    pub fn set_lone(&self, lone: Option<Lone>) {
+        *self.lone.write().expect("lone lock") = lone;
     }
 
     /// Gives the window `label` a root of its own, which it keeps until
@@ -821,6 +849,15 @@ impl Config {
     }
 
     /// The root of the window `label`, if it has one of its own.
+    /// The document window `label` becomes a folder window of the same root:
+    /// Show folder. Its root does not change, so it keeps the folder it was
+    /// made with.
+    pub fn window_shows_folder(&self, label: &str) {
+        if let Some(w) = self.window_roots.write().expect("windows lock").get_mut(label) {
+            w.document = None;
+        }
+    }
+
     pub fn window(&self, label: &str) -> Option<WindowRoot> {
         self.window_roots.read().expect("windows lock").get(label).cloned()
     }
@@ -1379,6 +1416,8 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
         zoom: 100,
         open,
         window: page::WindowKind::Main,
+        lone_main: false,
+        lone_way: page::LoneWay::None,
     };
     for value in req.named("Cookie") {
         for (k, v) in parse_cookies(value) {
@@ -1447,10 +1486,30 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
     // Owned here so `Prefs` can borrow it and stay `Copy` for every renderer.
     let open = open_from(req, &open_name);
     let mut prefs = prefs_from(state, req, &open);
+    // The main window may be there for one file alone (`Lone`): drawn as a
+    // document window is, with the way on that the file's kind has.
+    let lone = match &own {
+        None => state.cfg.lone(),
+        Some(_) => None,
+    };
     prefs.window = match &own {
+        None if lone.is_some() => page::WindowKind::Document,
         None => page::WindowKind::Main,
         Some((_, w)) if w.document.is_some() => page::WindowKind::Document,
         Some(_) => page::WindowKind::Folder,
+    };
+    prefs.lone_main = lone.is_some();
+    prefs.lone_way = match (&own, &lone) {
+        (None, Some(l)) if l.temporary => page::LoneWay::Save,
+        (None, Some(_)) => page::LoneWay::Folder,
+        // A document window can become a folder window of the same folder:
+        // its root does not change, only what it shows of it.
+        (Some((_, w)), _) if w.document.is_some() && state.cfg.app_ui && state.cfg.windows => page::LoneWay::Folder,
+        _ => page::LoneWay::None,
+    };
+    let document = match (&own, &lone) {
+        (Some((_, w)), _) => w.document.clone(),
+        (None, l) => l.as_ref().map(|l| l.document.clone()),
     };
     // One snapshot of the served root for the whole request, so a re-root
     // mid-request cannot hand half a page one tree and half another.
@@ -1561,10 +1620,7 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
     // folder lands back on that file. The shell stops a link written as a
     // folder (`sub/`) before it starts; this is the one written as a file. Not
     // a 204, which WebKitGTK draws as an empty page rather than staying put.
-    if is_dir
-        && let Some((_, w)) = &own
-        && let Some(file) = &w.document
-    {
+    if is_dir && let Some(file) = &document {
         return Reply::empty(302).with("Location", file);
     }
     if is_dir {
@@ -2699,6 +2755,67 @@ mod tests {
         let back = get("/sub/", Some("files-2"));
         assert_eq!(back.status, 302);
         assert!(back.headers.iter().any(|(k, v)| k == "Location" && v == "/note.md"), "{:?}", back.headers);
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// The main window there for one file another app handed over: drawn as
+    /// a document window, with Start in Up's place and the way on at the left
+    /// end — Save to Files and *Not saved* for a copy made only to show it,
+    /// with no Refresh; Show folder for the file in its own folder. A re-root
+    /// drops it. A document window offers Show folder too.
+    #[test]
+    fn a_file_alone_in_the_main_window_has_its_way_on() {
+        let base = std::env::temp_dir().join(format!("treeserve-lone-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("sub")).unwrap();
+        std::fs::write(base.join("report.md"), "# Report\n").unwrap();
+        let mut cfg = super::Config::new(base.clone());
+        cfg.app_ui = true;
+        cfg.windows = true;
+        let state = super::state_for(cfg);
+        let get = |url: &str, window: Option<&str>| {
+            let req = super::Req {
+                url: url.to_string(),
+                headers: vec![("Accept".to_string(), "text/html".to_string())],
+                is_get: true,
+            };
+            super::handle_in(&state, &req, window)
+        };
+        let text = |r: super::Reply| match r.body {
+            super::Body::Text(t) => t,
+            _ => panic!("a page is text"),
+        };
+
+        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: true }));
+        let page = text(get("/report.md", None));
+        assert!(!page.contains("<nav class=\"tree\">") && !page.contains("Sidebar"), "{page}");
+        assert!(page.contains("class=\"up start\"") && !page.contains("/.ts/main"), "{page}");
+        assert!(page.contains("class=\"up lone-way\"") && page.contains("/.ts/lone-save"), "{page}");
+        assert!(page.contains("<span class=\"lbl lone-lbl\">Save to Files</span>"), "{page}");
+        assert!(page.contains("report.md<span class=\"tag lone-tag\">Not saved</span>"), "{page}");
+        assert!(!page.contains("/.ts/reload") && !page.contains("/.ts/window"), "{page}");
+        assert!(page.contains("--lone-lbl: none"), "its own band: {page}");
+        assert!(!page.contains(&format!("{}</span>", base.display())), "the cache's path is not shown: {page}");
+        // Its folder is not on offer.
+        let back = get("/sub/", None);
+        assert_eq!(back.status, 302);
+        assert!(back.headers.iter().any(|(k, v)| k == "Location" && v == "/report.md"), "{:?}", back.headers);
+
+        state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: false }));
+        let page = text(get("/report.md", None));
+        assert!(page.contains("/.ts/lone-folder") && page.contains(">Show folder</span>"), "{page}");
+        assert!(page.contains("/.ts/reload") && !page.contains("Not saved"), "{page}");
+
+        // A re-root is the end of it: the tree is back.
+        state.cfg.set_root(base.clone());
+        assert_eq!(state.cfg.lone(), None);
+        let page = text(get("/report.md", None));
+        assert!(!page.contains("lone-way") && page.contains("/.ts/window"), "{page}");
+
+        // A document window: Show folder, and Main window as before.
+        state.cfg.open_window("files-1", super::Root::local(base.clone()), None, Some("/report.md".into()));
+        let doc = text(get("/report.md", Some("files-1")));
+        assert!(doc.contains("/.ts/lone-folder") && doc.contains("/.ts/main"), "{doc}");
 
         std::fs::remove_dir_all(&base).unwrap();
     }
