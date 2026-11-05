@@ -19,6 +19,17 @@ use super::{
     push_page, remember_root_id, replace_page, replace_page_in, show, Serving, WINDOW,
 };
 
+/// The main window is being given a file handed over on a desktop: from the
+/// moment it is promised one until its root is set, it counts as open, so a
+/// second file arriving meanwhile — the rest of a Linux `%F` or a macOS
+/// `Opened` set, or a quick second Open with — gets a window of its own
+/// instead of cancelling the first.
+///
+/// The file it was claimed for, so that the same file again brings the main
+/// window forward rather than opening a second window beside it.
+#[cfg(desktop)]
+static MAIN_CLAIMED: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
 /// Run once the page is on screen, for what can only be done to the page that
 /// is: the history behind it, a note in it.
 pub type Landed = Box<dyn FnOnce(&AppHandle) + Send + 'static>;
@@ -41,21 +52,32 @@ pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, dated: bool, l
         let back = app.clone();
         let _ = app.run_on_main_thread(move || {
             if open_superseded(open_id) {
+                #[cfg(desktop)]
+                release_main();
                 return;
             }
             match resolved {
                 Some(file) => {
-                    if let Some(url) = serve_lone(&back, &file, temporary, dated) {
+                    let served = serve_lone(&back, &file, temporary, dated);
+                    // The root is set: from here the main window is open to
+                    // anything that asks, and the claim has done its work.
+                    #[cfg(desktop)]
+                    release_main();
+                    if let Some(url) = served {
                         if let Some(landed) = landed {
                             when_landed(&back, WINDOW, url, landed);
                         }
                     }
                 }
-                None => fail(
-                    &back,
-                    &format!("{} could not be opened.", treeserve::util::display_path(&file)),
-                    false,
-                ),
+                None => {
+                    #[cfg(desktop)]
+                    release_main();
+                    fail(
+                        &back,
+                        &format!("{} could not be opened.", treeserve::util::display_path(&file)),
+                        false,
+                    )
+                }
             }
         });
     });
@@ -88,9 +110,20 @@ pub(crate) fn open_handed(app: &AppHandle, file: PathBuf) {
             let _ = win.set_focus();
         }
     };
-    if cfg.root().is_none() {
-        open_lone(app, file, false, true, None);
-        return front(WINDOW);
+    {
+        let mut claimed = MAIN_CLAIMED.lock().unwrap_or_else(|e| e.into_inner());
+        match claimed.as_ref() {
+            // On its way to the main window already.
+            Some(f) if *f == file => return front(WINDOW),
+            Some(_) => {}
+            None if cfg.root().is_none() => {
+                *claimed = Some(file.clone());
+                drop(claimed);
+                open_lone(app, file, false, true, None);
+                return front(WINDOW);
+            }
+            None => {}
+        }
     }
     if cfg.lone().is_some_and(|l| l.document == document) && cfg.root().is_some_and(|r| r.id == id) {
         return front(WINDOW);
@@ -99,6 +132,13 @@ pub(crate) fn open_handed(app: &AppHandle, file: PathBuf) {
         return front(&label);
     }
     super::own_window(app, treeserve::Root::local(dir.to_path_buf()), document, true);
+}
+
+/// Lets [`MAIN_CLAIMED`] go: called once the main window's root is set, or
+/// once the open it was claimed for has come to nothing.
+#[cfg(desktop)]
+fn release_main() {
+    *MAIN_CLAIMED.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Re-roots the main window at `file`'s folder, for that file alone, and puts
@@ -146,7 +186,11 @@ pub(crate) fn leaving(app: &AppHandle) {
     if let Some((file, lone)) = lone_file(app)
         && lone.temporary
     {
-        let _ = std::fs::remove_file(file);
+        let _ = std::fs::remove_file(&file);
+        // Its folder was its own (`Handed.kt`), and is empty now.
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::remove_dir(dir);
+        }
     }
 }
 
@@ -212,6 +256,13 @@ pub fn save_and_show(app: &AppHandle, file: PathBuf, landed: Option<Landed>) {
             .ok_or_else(|| std::io::Error::other("this device gave the app no storage"))
             .and_then(|files| files.canonicalize())
             .and_then(|files| keep_in(&files, &file));
+        // The copy's folder was its own (`Handed.kt`), and is empty now that the
+        // copy has moved, or been found already there.
+        if saved.is_ok()
+            && let Some(dir) = file.parent()
+        {
+            let _ = std::fs::remove_dir(dir);
+        }
         let back = app.clone();
         let _ = app.run_on_main_thread(move || {
             if open_superseded(open_id) {
@@ -292,14 +343,31 @@ pub(crate) fn keep_in(files: &Path, file: &Path) -> std::io::Result<PathBuf> {
     Err(std::io::Error::other("Files has too many copies by that name"))
 }
 
-/// Whether two files hold the same bytes: the sizes first, then the bytes.
+/// Whether two files hold the same bytes: the sizes first, then the bytes, a
+/// block at a time — a large PDF saved twice is not held twice in memory.
 #[cfg_attr(desktop, allow(dead_code))]
 fn same_bytes(a: &Path, b: &Path) -> bool {
+    use std::io::Read;
     match (std::fs::metadata(a), std::fs::metadata(b)) {
         (Ok(x), Ok(y)) if x.len() == y.len() => {}
         _ => return false,
     }
-    matches!((std::fs::read(a), std::fs::read(b)), (Ok(x), Ok(y)) if x == y)
+    let (Ok(mut x), Ok(mut y)) = (std::fs::File::open(a), std::fs::File::open(b)) else {
+        return false;
+    };
+    let (mut bx, mut by) = (vec![0u8; 64 * 1024], vec![0u8; 64 * 1024]);
+    loop {
+        let n = match x.read(&mut bx) {
+            Ok(n) => n,
+            Err(_) => return false,
+        };
+        if n == 0 {
+            return y.read(&mut by[..1]).is_ok_and(|m| m == 0);
+        }
+        if y.read_exact(&mut by[..n]).is_err() || bx[..n] != by[..n] {
+            return false;
+        }
+    }
 }
 
 /// A note in the status line of the window `label` that goes by itself.
@@ -359,6 +427,20 @@ mod tests {
         assert_eq!(keep_in(&files, &hand("three")).unwrap(), files.join("report (3).pdf"));
         assert_eq!(keep_in(&files, &hand("two")).unwrap(), files.join("report (2).pdf"));
         assert_eq!(std::fs::read_to_string(files.join("report (3).pdf")).unwrap(), "three");
+
+        // Past one block, compared a block at a time: the same bytes are the
+        // copy already there, one byte changed at the end is another file.
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let hand_big = |bytes: &[u8]| {
+            let f = handed.join("big.bin");
+            std::fs::write(&f, bytes).unwrap();
+            f
+        };
+        assert_eq!(keep_in(&files, &hand_big(&big)).unwrap(), files.join("big.bin"));
+        assert_eq!(keep_in(&files, &hand_big(&big)).unwrap(), files.join("big.bin"));
+        let mut other = big.clone();
+        *other.last_mut().unwrap() ^= 1;
+        assert_eq!(keep_in(&files, &hand_big(&other)).unwrap(), files.join("big (2).bin"));
 
         std::fs::remove_dir_all(&base).unwrap();
     }

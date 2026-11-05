@@ -1525,11 +1525,12 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
                 // A file — Open with Telechore — goes where `lone` says, which
                 // brings its own window to the front. Named from the second
                 // copy's folder, which may not be ours.
+                // After the first page, as at launch: a second copy started a
+                // moment after the first arrives before that page has, and
+                // the start page's own load closed what it had been given.
                 let files = file_args(args.into_iter(), Path::new(&cwd));
                 if !files.is_empty() {
-                    let app = app.clone();
-                    thread::spawn(move || files.into_iter().for_each(|f| lone::open_handed(&app, f)));
-                    return;
+                    return when_committed(app, files);
                 }
             }
             if let Some(w) = app.get_webview_window(WINDOW) {
