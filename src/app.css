@@ -994,6 +994,13 @@ nav.tree .chooser .name {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* And on the start page it wraps where it must, too: a name that is one word —
+   96 characters may be — ran on under the row's word (*invalid*), with nowhere
+   to break (the 0.5.2 run). */
+body.nothing .start .name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 /* A shortcut whose check came back badly. The lists are drawn before anything is
    checked — a check can block for as long as a dead network drive takes to admit
    it — so this is what an answer looks like when it arrives: the entry dimmed to
