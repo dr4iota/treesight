@@ -786,11 +786,12 @@ impl Vfs for LocalFs {
         true
     }
 
-    /// On a desktop, where Delete goes to the Trash. Not on a phone: the only
-    /// local roots there are the app's own folders, and a granted folder is
-    /// not this backend.
+    /// On a desktop, where Delete goes to the Trash; and on a phone, where the
+    /// only local root is the app's own Files — and what other apps hand over
+    /// to be saved lands there, so it needs a way out (asked first, and for
+    /// good, there being no Trash). A granted folder is not this backend.
     fn deletable(&self) -> bool {
-        Self::copies_are_worth_making()
+        true
     }
 
     /// New folder and Upload on a desktop's own folders, as on a server's —
@@ -1072,7 +1073,7 @@ mod tests {
         fs::write(dir.join("full").join("b"), b"y").unwrap();
         let v = LocalFs::new(dir.canonicalize().unwrap());
         let p = |n: &str| VfsPath::root().join(n);
-        assert_eq!(v.deletable(), !cfg!(target_os = "android"));
+        assert!(v.deletable());
         assert!(v.local_path(&p("a.txt")).unwrap().ends_with("a.txt"));
         v.remove(&p("a.txt")).unwrap();
         v.remove(&p("empty")).unwrap();
