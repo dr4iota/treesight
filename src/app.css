@@ -2455,3 +2455,10 @@ body.nothing .start .row > a.aside {
 }
 :root[data-words] header { flex-wrap: wrap !important; }
 header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* The hold under way: from a beat in, the header fills with the pressed tint
+   until the words come, then lets go of it at once — as it does on a lift too
+   soon. Only the way in is timed, so the way out is the rule's absence. */
+header[data-holding] {
+  background-color: color-mix(in srgb, var(--link) var(--on-tint), var(--bg-subtle));
+  transition: background-color .75s linear;
+}

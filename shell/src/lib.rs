@@ -1466,15 +1466,22 @@ const MENUS: &str = r#"
 /// **Every word in the header** (Telechore's docs/tasks/tree-browser.md, *The
 /// header in full words*): a hold of 0.9 s on a header's background — not a
 /// link, a button or a menu — shows every button's word, `data-words` on
-/// `<html>` and `app.css` the rest; a second hold, or a tap on the name (a tree
-/// page's path outside its links, or what a page marks `data-words-off`), puts
-/// the marks back. The words come as the hold is reached; the click its lift
-/// makes is swallowed, so it neither presses what is under it nor turns them
-/// off. A tree page's header (`body.fitted`) and any marked
+/// `<html>` and `app.css` the rest. Then any press on the same background,
+/// short or long, puts the marks back: a short one as it lifts, a long one
+/// the moment it reaches the hold, not waiting for the lift. Buttons and links
+/// stay buttons and links throughout. From a beat into a hold the
+/// header wears `data-holding`, which `app.css` fills in as it goes, so a hold
+/// that counts is seen to — and one on a button, which does not, is not.
+/// The words come as the hold is reached; the click its lift makes is
+/// swallowed, so it neither presses what is under it nor turns them off.
+/// The press that puts them back is taken at its lift, not its click: Android
+/// makes a press past half a second a long press, which has no click, and a
+/// slow tap did nothing. A tree page's header (`body.fitted`) and any marked
 /// `data-hold-words` — the terminal's — and never one floating over a page.
 const WORDS: &str = r#"
 (function () {
-  var HOLD = 900, SLOP = 10, timer = 0, x = 0, y = 0, pid = null, fired = false;
+  var HOLD = 900, CUE = 150, SLOP = 10;
+  var timer = 0, cue = 0, x = 0, y = 0, pid = null, held = null, fired = false;
   var root = document.documentElement;
   function head(e) {
     var h = e.target.closest && e.target.closest('header');
@@ -1484,22 +1491,30 @@ const WORDS: &str = r#"
     if (e.target.closest('a[href], button, summary, input, select, textarea, label, .menu')) return null;
     return h;
   }
-  function stop() { clearTimeout(timer); timer = 0; pid = null; }
+  function stop() {
+    clearTimeout(timer); clearTimeout(cue); timer = cue = 0; pid = null;
+    if (held) held.removeAttribute('data-holding');
+    held = null;
+  }
   addEventListener('pointerdown', function (e) {
     fired = false;
-    if (e.button > 0 || !head(e)) return;
-    x = e.clientX; y = e.clientY; pid = e.pointerId;
-    timer = setTimeout(function () { timer = 0; fired = true; root.toggleAttribute('data-words'); }, HOLD);
+    if (timer) stop();
+    var h = e.button > 0 ? null : head(e);
+    if (!h) return;
+    x = e.clientX; y = e.clientY; pid = e.pointerId; held = h;
+    cue = setTimeout(function () { cue = 0; h.setAttribute('data-holding', ''); }, CUE);
+    timer = setTimeout(function () { stop(); fired = true; root.toggleAttribute('data-words'); }, HOLD);
   }, true);
   addEventListener('pointermove', function (e) {
     if (timer && e.pointerId === pid && Math.hypot(e.clientX - x, e.clientY - y) > SLOP) stop();
   }, true);
-  addEventListener('pointerup', stop, true);
-  addEventListener('pointercancel', stop, true);
+  addEventListener('pointerup', function (e) {
+    if (timer && e.pointerId === pid && root.hasAttribute('data-words')) { fired = true; root.removeAttribute('data-words'); }
+    if (e.pointerId === pid) stop();
+  }, true);
+  addEventListener('pointercancel', function (e) { if (e.pointerId === pid) stop(); }, true);
   addEventListener('click', function (e) {
-    if (fired) { fired = false; e.preventDefault(); e.stopPropagation(); return; }
-    if (!root.hasAttribute('data-words') || !e.target.closest) return;
-    if (e.target.closest('header .crumbs, header [data-words-off]') && !e.target.closest('a[href]')) root.removeAttribute('data-words');
+    if (fired) { fired = false; e.preventDefault(); e.stopPropagation(); }
   }, true);
   addEventListener('contextmenu', function (e) { if (head(e)) e.preventDefault(); }, true);
 })();
