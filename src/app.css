@@ -2440,3 +2440,18 @@ body.nothing .start .row > a.aside {
 @media (hover: hover) {
   .controls details.send > .menu a:hover { background: var(--bg-subtle); color: var(--link); }
 }
+
+/* **Every word**: a hold on the header's background turns on `data-words`
+   (the shell's `WORDS` script) and every button says its word, however narrow
+   the window, on as many rows as that takes — over the bands that turn words
+   to marks, the page's own and the stylesheet's, hence `!important`. The page
+   below gives way as for a resize. And the header is not a place to select
+   text or open the platform's long-press menu, so a hold is only ever this. */
+:root[data-words] body {
+  --lbl: inline !important;
+  --ctl-display: inline-flex !important;
+  --pill: auto !important;
+  --pill-pad: .15rem .55rem !important;
+}
+:root[data-words] header { flex-wrap: wrap !important; }
+header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }

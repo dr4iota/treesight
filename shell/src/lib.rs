@@ -1463,6 +1463,48 @@ const MENUS: &str = r#"
 })();
 "#;
 
+/// **Every word in the header** (Telechore's docs/tasks/tree-browser.md, *The
+/// header in full words*): a hold of 0.9 s on a header's background — not a
+/// link, a button or a menu — shows every button's word, `data-words` on
+/// `<html>` and `app.css` the rest; a second hold, or a tap on the name (a tree
+/// page's path outside its links, or what a page marks `data-words-off`), puts
+/// the marks back. The words come as the hold is reached; the click its lift
+/// makes is swallowed, so it neither presses what is under it nor turns them
+/// off. A tree page's header (`body.fitted`) and any marked
+/// `data-hold-words` — the terminal's — and never one floating over a page.
+const WORDS: &str = r#"
+(function () {
+  var HOLD = 900, SLOP = 10, timer = 0, x = 0, y = 0, pid = null, fired = false;
+  var root = document.documentElement;
+  function head(e) {
+    var h = e.target.closest && e.target.closest('header');
+    if (!h) return null;
+    if (!h.hasAttribute('data-hold-words') && !(document.body && document.body.classList.contains('fitted'))) return null;
+    if (getComputedStyle(h).position === 'absolute') return null;
+    if (e.target.closest('a[href], button, summary, input, select, textarea, label, .menu')) return null;
+    return h;
+  }
+  function stop() { clearTimeout(timer); timer = 0; pid = null; }
+  addEventListener('pointerdown', function (e) {
+    fired = false;
+    if (e.button > 0 || !head(e)) return;
+    x = e.clientX; y = e.clientY; pid = e.pointerId;
+    timer = setTimeout(function () { timer = 0; fired = true; root.toggleAttribute('data-words'); }, HOLD);
+  }, true);
+  addEventListener('pointermove', function (e) {
+    if (timer && e.pointerId === pid && Math.hypot(e.clientX - x, e.clientY - y) > SLOP) stop();
+  }, true);
+  addEventListener('pointerup', stop, true);
+  addEventListener('pointercancel', stop, true);
+  addEventListener('click', function (e) {
+    if (fired) { fired = false; e.preventDefault(); e.stopPropagation(); return; }
+    if (!root.hasAttribute('data-words') || !e.target.closest) return;
+    if (e.target.closest('header .crumbs, header [data-words-off]') && !e.target.closest('a[href]')) root.removeAttribute('data-words');
+  }, true);
+  addEventListener('contextmenu', function (e) { if (head(e)) e.preventDefault(); }, true);
+})();
+"#;
+
 const PROGRESS: &str = r#"
 window.__tsProgress = function (text, frac) {
   var f = document.querySelector('footer');
@@ -1516,7 +1558,7 @@ addEventListener('DOMContentLoaded', function () {
 fn window_script(custom: Option<String>, ours: &[String]) -> String {
     let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{MENUS}\n{ZOOM}\n{FULL}\n{}",
+        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{MENUS}\n{WORDS}\n{ZOOM}\n{FULL}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
