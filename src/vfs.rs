@@ -595,6 +595,14 @@ pub trait Vfs: Send + Sync {
         self.writable()
     }
 
+    /// An address another app on this device can be granted to read `path`
+    /// by — a document provider's `content:` URI — for a backend whose files
+    /// are another app's to serve. Send's Open with… and Share… hand that on
+    /// rather than a copy. None by default.
+    fn shared_uri(&self, _path: &VfsPath) -> Option<String> {
+        None
+    }
+
     /// Where `path` is on this machine's disk, for a backend that is this
     /// machine's disk. The shell moves a deleted file there to the system's
     /// Trash rather than asking [`Self::remove`], which is permanent.
@@ -721,6 +729,9 @@ impl Vfs for Within {
     }
     fn deletable(&self) -> bool {
         self.inner.deletable()
+    }
+    fn shared_uri(&self, path: &VfsPath) -> Option<String> {
+        self.inner.shared_uri(&self.full(path))
     }
     fn local_path(&self, path: &VfsPath) -> Option<PathBuf> {
         self.inner.local_path(&self.full(path))
