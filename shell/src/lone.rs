@@ -194,10 +194,28 @@ pub(crate) fn leaving(app: &AppHandle) {
     }
 }
 
+/// Where Show folder lands for `document`, a path under the folder's root as
+/// the window's address spells it: the file's own page, now with its folder's
+/// tree — or, where its Preview is a bare page with no tree (a PDF or a picture
+/// in the embedder's viewer, an HTML page), the folder's listing with the
+/// file's row lit (`made`). On a PDF the window re-rooted and nothing on screen
+/// changed but an Up (the pass of 5 November 2026).
+fn folder_landing(document: &str, viewer: bool) -> String {
+    let (dir, name) = document.rsplit_once('/').unwrap_or(("", document));
+    let name = treeserve::util::percent_decode(name);
+    let ext = treeserve::util::ext_of(&name);
+    let bare = (viewer && treeserve::Viewed::of(&name).is_some()) || matches!(ext.as_str(), "html" | "htm");
+    match bare {
+        true => format!("{dir}/?made={}", treeserve::util::percent_encode(&name)),
+        false => document.to_string(),
+    }
+}
+
 /// Show folder: the file stays on screen, now with its folder's tree. In the
 /// main window the folder becomes a root like any other, in Recent; in a
 /// document window it becomes a folder window of the same folder, its root
-/// unchanged.
+/// unchanged. A file shown on a page with no tree gives way to its folder's
+/// listing (`folder_landing`).
 pub(crate) fn show_folder(app: &AppHandle, label: &str) {
     let Some(serving) = app.try_state::<Serving>() else {
         return;
@@ -224,7 +242,8 @@ pub(crate) fn show_folder(app: &AppHandle, label: &str) {
             document
         }
     };
-    let url = format!("{}{}", serving.entry.trim_end_matches('/'), document);
+    let landing = folder_landing(&document, cfg.viewer().is_some());
+    let url = format!("{}{}", serving.entry.trim_end_matches('/'), landing);
     replace_page_in(app, label, &url);
 }
 
@@ -402,7 +421,19 @@ fn when_landed(app: &AppHandle, label: &str, url: String, f: Landed) {
 
 #[cfg(test)]
 mod tests {
-    use super::keep_in;
+    use super::{folder_landing, keep_in};
+
+    /// Show folder keeps a file's page where that page has its folder's tree,
+    /// and goes to the folder's listing, the file's row lit, where it has none.
+    #[test]
+    fn show_folder_lands_where_the_tree_is() {
+        assert_eq!(folder_landing("/docs/notes.md", true), "/docs/notes.md");
+        assert_eq!(folder_landing("/docs/report.pdf", true), "/docs/?made=report.pdf");
+        assert_eq!(folder_landing("/a%20b/photo.png", true), "/a%20b/?made=photo.png");
+        assert_eq!(folder_landing("/my%20page.html", false), "/?made=my%20page.html");
+        // No viewer: a PDF's Preview is the browser's, on a page with a tree.
+        assert_eq!(folder_landing("/docs/report.pdf", false), "/docs/report.pdf");
+    }
 
     /// Files keeps one copy of the same file under its name, and a second
     /// file of that name beside it, numbered.
