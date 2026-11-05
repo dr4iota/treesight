@@ -545,15 +545,17 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
                 n => GAP + PANE_GAP * (n - 1) as f32,
             }
     };
-    // Beside Up in the left cluster, a pill and the controls' gap.
-    let lone_px = |with_words: bool| match lone {
-        Some(w) => PILL_GAP + row(&[w.to_string()], 1, with_words),
+    // Beside Up in the left cluster, a pill and the controls' gap — in its
+    // words at every width, as `app.css` draws the way on, so priced so in
+    // the spill below as well as here.
+    let lone_px = match lone {
+        Some(w) => PILL_GAP + row(&[w.to_string()], 1, true),
         None => 0.0,
     };
     let line = |with_words: bool| {
         PAD + SLACK
             + left(with_words)
-            + lone_px(true)
+            + lone_px
             + tag
             + path
             + GAP
@@ -586,7 +588,7 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
         units.iter().map(|&n| n as f32 * PILL_MARK).sum::<f32>()
             + PILL_GAP * units.len().saturating_sub(1) as f32
     };
-    let first = PAD + left(false) + lone_px(false) + tag;
+    let first = PAD + left(false) + lone_px + tag;
     let two_lines = (path * (13.6 / CRUMB_TEXT) * 0.55).max(CRUMBS_MIN);
     let close = |px: f32| (px / 16.0 * 100.0).ceil() / 100.0;
     let back = |rem: f32| {
@@ -3640,6 +3642,11 @@ mod tests {
 
         let long = fit(&["weather-station", "projects", "a-rather-longer-folder", "docs", "README.md"]);
         assert!(at(&long, "order: 0") > back, "{short:?} {long:?}");
+
+        // A lone file's way on keeps its words at every width, so the first
+        // row is that much fuller where the controls spill, not a mark's worth.
+        let lone = bands(&header_fit(&up, Some("Save to Files"), Some("thor"), &["weather-station", "README.md"], &controls));
+        assert!((at(&lone, "-n+1)") - one) * 16.0 > 80.0, "{short:?} {lone:?}");
     }
 
     /// A file's views are one group with the one on screen lit and no link,
