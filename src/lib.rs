@@ -554,6 +554,10 @@ pub struct Config {
     /// start page offers what it can already reach instead of a button that does
     /// nothing when pressed.
     pub picker: bool,
+    /// Whether a file can be handed to another app — Open with… and Share… in
+    /// a file's Send menu (`/.ts/send`). The shell's, where an embedder says it
+    /// can (`ShellExt::send_out`): a phone's. Off elsewhere.
+    pub send_out: bool,
     /// Whether a folder or a file can be opened in a window of its own — a
     /// desktop's shell. Draws **New window**, and greys As root at the root so
     /// the pair is whole. Off on a phone and over a network.
@@ -732,6 +736,7 @@ impl Config {
             syn_dark: EmbeddedThemeName::OneHalfDark,
             app_ui: false,
             picker: false,
+            send_out: false,
             windows: false,
             app_name: None,
             app_version: None,
@@ -2848,6 +2853,57 @@ mod tests {
         state.cfg.open_window("files-1", super::Root::local(base.clone()), None, Some("/report.md".into()));
         let doc = text(get("/report.md", Some("files-1")));
         assert!(doc.contains("/.ts/lone-folder") && doc.contains("/.ts/main"), "{doc}");
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// Send: the verbs group's last item, a menu. Download… and Print… on any
+    /// shell; Open with… and Share… first, set off by a rule, where the
+    /// embedder can hand a file on; no Send at all with nothing to offer.
+    #[test]
+    fn send_is_a_menu_of_what_a_file_can_go_to() {
+        let base = std::env::temp_dir().join(format!("treeserve-send-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("notes.md"), "# Notes\n").unwrap();
+        let get = |state: &super::State| {
+            let req = super::Req {
+                url: "/notes.md".to_string(),
+                headers: vec![("Accept".to_string(), "text/html".to_string())],
+                is_get: true,
+            };
+            match super::handle_in(state, &req, None).body {
+                super::Body::Text(t) => t,
+                _ => panic!("a page is text"),
+            }
+        };
+        let mut cfg = super::Config::new(base.clone());
+        cfg.app_ui = true;
+        let page = get(&super::state_for(cfg));
+        let menu = &page[page.find("<details class=\"send\">").expect(&page)..];
+        let menu = &menu[..menu.find("</details>").unwrap()];
+        assert!(menu.contains("<span class=\"lbl\">Send</span>"), "{menu}");
+        assert!(menu.contains(">Download…</a>") && menu.contains("/notes.md?dl=1"), "{menu}");
+        assert!(menu.contains("Print…<span class=\"key\">Ctrl+P</span>") && menu.contains("/.ts/print"), "{menu}");
+        assert!(!menu.contains("Open with") && !menu.contains("<hr>"), "{menu}");
+        // Only the summary's word counts for the header's fitting.
+        assert_eq!(menu.matches("class=\"lbl\"").count(), 1, "{menu}");
+
+        let mut cfg = super::Config::new(base.clone());
+        cfg.app_ui = true;
+        cfg.send_out = true;
+        let page = get(&super::state_for(cfg));
+        let open = page.find(">Open with…</a>").expect(&page);
+        let share = page.find(">Share…</a>").expect(&page);
+        let rule = page.find("<hr>").expect(&page);
+        let dl = page.find(">Download…</a>").expect(&page);
+        assert!(open < share && share < rule && rule < dl, "{page}");
+        assert!(page.contains("/.ts/send?path=%2Fnotes.md&amp;how=view&amp;t="), "{page}");
+        assert!(page.contains("/.ts/send?path=%2Fnotes.md&amp;how=share&amp;t="), "{page}");
+
+        // A tree served to a browser: Download alone, as it always had; the
+        // browser has Print, and the menu opens with no script there too.
+        let page = get(&super::state_for(super::Config::new(base.clone())));
+        assert!(page.contains(">Download…</a>") && !page.contains("Print…") && !page.contains("Open with"), "{page}");
 
         std::fs::remove_dir_all(&base).unwrap();
     }

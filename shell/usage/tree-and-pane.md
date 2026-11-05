@@ -38,7 +38,8 @@ The path, as links, and the controls for the window:
   files, asks once before replacing any that are already there, and shows how
   far it has got in the status line, with **Cancel**.
 - **Theme**, **line numbers** and **Sidebar** are in [Preferences](preferences.md).
-- **Print** is on a rendered file or a source view, and prints that view.
+- **Print…**, in a file's **Send** menu, is on a rendered file or a source
+  view, and prints that view.
 
 There is no Back button. `Alt+Left`, and the phone's gesture, go back one step.
 Forward is `Alt+Right`.

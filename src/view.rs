@@ -1,7 +1,9 @@
 use crate::data::{delimiter_for, gunzip, parse_delimited, Gunzipped, reformat_json, render_table, MAX_TABLE_ROWS};
 use crate::md::{render_markdown, render_mermaid_figure, RawHtml};
 use crate::vfs::Vfs;
-use crate::icons::{svg_icon, ICON_DOWNLOAD, ICON_FULLSCREEN, ICON_PREVIEW, ICON_PRINT, ICON_RAW, ICON_SOURCE};
+use crate::icons::{
+    svg_icon, ICON_CARET, ICON_DOWNLOAD, ICON_FULLSCREEN, ICON_OPEN_WITH, ICON_PREVIEW, ICON_PRINT, ICON_RAW, ICON_SEND, ICON_SOURCE,
+};
 use crate::page::{
     bare_layout, current_flag, dimmed_flag, file_lines_html, flag, group, layout, ln_switch, with_new_window, Prefs,
 };
@@ -26,28 +28,6 @@ fn raw_text_href(rel: &[String]) -> String {
     format!("{}?raw=1&bare=1&as=text", href_path(rel))
 }
 
-/// Print, on the views that are documents: a rendered page and a listing of
-/// lines both go to paper as what they are, where a picture, a film and a file
-/// in a frame are either the engine's business or nothing anyone prints.
-///
-/// Shell only, for two reasons that agree. A browser prints on Ctrl+P and from
-/// its own menu, and the shell's window has neither. And a link cannot print
-/// anything by itself: the shell reads this one and prints, the same way it
-/// reads Back and Refresh, where on the web it would take the first line of
-/// JavaScript this app has ever needed.
-fn print_flag(state: &State) -> String {
-    if state.cfg.app_ui {
-        flag(
-            "",
-            &crate::page::act(state, "/.ts/print"),
-            &svg_icon(ICON_PRINT),
-            "Print",
-            "Print (Ctrl+P)",
-        )
-    } else {
-        String::new()
-    }
-}
 
 /// Full screen, on a file's default view — its Preview, or its Source where
 /// that is its only view — and on no other: the file alone, the header, the
@@ -83,19 +63,73 @@ fn full_flag(state: &State, rel: &[String], vfs: &dyn Vfs) -> String {
     )
 }
 
-/// The verbs group: what can be done with the file — Print where the view is a
-/// document, Download, and the backend's own (Keep offline). None of them is a
-/// view, so none is lit but a verb that is a switch and is on.
+/// The verbs group: what can be done with the file — the backend's own (Keep
+/// offline), then **Send**, a menu of the rest: Open with… and Share… where an
+/// embedder can hand a file to another app, Download…, and Print… where the
+/// view is a document. None of them is a view, so none is lit but a verb that
+/// is a switch and is on (`docs/mockups/send-menu.html` in Telechore).
 fn verbs(state: &State, rel: &[String], vfs: &dyn Vfs, print: bool) -> String {
-    let print = match print {
-        true => print_flag(state),
-        false => String::new(),
+    group(&format!("{}{}", file_actions(state, rel, vfs), send_menu(state, rel, vfs, print)))
+}
+
+/// Send and its menu: a `<details>` so that it opens with no script of the
+/// page's own; the shell's keeps it on screen and closes it on a tap outside
+/// (`MENUS`). Each item opens a box of its own, so each ends in an ellipsis,
+/// where the header's buttons keep their words short. Nothing to offer, no
+/// button. Served to a browser it holds Download alone, which `?dl=1` does
+/// there too, and opens as any `<details>` does.
+fn send_menu(state: &State, rel: &[String], vfs: &dyn Vfs, print: bool) -> String {
+    let href = href_path(rel);
+    let mut items = String::new();
+    let mut item = |icon: &str, words: &str, link: &str| {
+        items.push_str(&format!(
+            "<a role=\"menuitem\" href=\"{}\"><span class=\"mico\">{}</span>{}</a>",
+            html_escape(link),
+            svg_icon(icon),
+            html_escape(words)
+        ));
     };
-    group(&format!(
-        "{print}{}{}",
-        download_flag(&href_path(rel), vfs),
-        file_actions(state, rel, vfs)
-    ))
+    if state.cfg.app_ui && state.cfg.send_out {
+        let send = |how: &str| {
+            format!(
+                "/.ts/send?path={}&how={how}&t={}",
+                crate::util::percent_encode(&href),
+                state.cfg.action_token
+            )
+        };
+        item(ICON_OPEN_WITH, "Open with…", &send("view"));
+        item(ICON_SEND, "Share…", &send("share"));
+    }
+    let handed = !items.is_empty();
+    let mut rest = String::new();
+    if vfs.downloadable() {
+        rest.push_str(&format!(
+            "<a role=\"menuitem\" href=\"{}\"><span class=\"mico\">{}</span>Download…</a>",
+            html_escape(&format!("{href}?dl=1")),
+            svg_icon(ICON_DOWNLOAD)
+        ));
+    }
+    if print && state.cfg.app_ui {
+        rest.push_str(&format!(
+            "<a role=\"menuitem\" href=\"{}\"><span class=\"mico\">{}</span>Print…<span class=\"key\">Ctrl+P</span></a>",
+            html_escape(&crate::page::act(state, "/.ts/print")),
+            svg_icon(ICON_PRINT)
+        ));
+    }
+    if handed && !rest.is_empty() {
+        items.push_str("<hr>");
+    }
+    items.push_str(&rest);
+    if items.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<details class=\"send\"><summary title=\"Send: open with, share, download or print\">\
+         <span class=\"ico\">{}</span><span class=\"lbl\">Send</span><span class=\"caret\">{}</span></summary>\
+         <div class=\"menu\" role=\"menu\">{items}</div></details>",
+        svg_icon(ICON_SEND),
+        svg_icon(ICON_CARET),
+    )
 }
 
 /// What a file's page is, as far as its views go: which of Preview, Source
@@ -219,19 +253,6 @@ fn download_link(rel: &[String], vfs: &dyn Vfs, words: &str) -> Option<String> {
     })
 }
 
-/// Download, where a copy is a thing worth having. See [`Vfs::downloadable`].
-fn download_flag(base: &str, vfs: &dyn Vfs) -> String {
-    match vfs.downloadable() {
-        true => flag(
-            "",
-            &format!("{base}?dl=1"),
-            &svg_icon(ICON_DOWNLOAD),
-            "Download",
-            "Save a copy",
-        ),
-        false => String::new(),
-    }
-}
 
 fn meta_line(size: u64, mtime: Option<std::time::SystemTime>, extra: &str) -> String {
     meta_line_ending(size, mtime, extra, "")

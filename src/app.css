@@ -278,7 +278,7 @@ body.fitted .crumbs { margin-right: .65rem; }
    so this list was written for those — and every page that had a *button* in its
    header reinvented the pill instead, each one slightly differently and each one
    smaller than the real thing. A pill is a shape, not an element. */
-.controls a, .controls span.ctl, .controls button {
+.controls a, .controls span.ctl, .controls button, .controls summary {
   /* A pill has no ground of its own. Only a `button` brings one — the UA gives
      it a grey — so clearing it belongs with the shape rather than in each page
      that happens to use one. */
@@ -291,7 +291,7 @@ body.fitted .crumbs { margin-right: .65rem; }
   white-space: nowrap;
 }
 @media (hover: hover) {
-  .controls a:hover, .controls button:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
+  .controls a:hover, .controls button:hover, .controls summary:hover { color: var(--link); border-color: var(--link); text-decoration: none; }
 }
 /* A switch that is on says so by its paint, the same at every width, and its
    word is only its name: *Sidebar*, not *Sidebar: on*. The word comes and goes with the
@@ -299,7 +299,7 @@ body.fitted .crumbs { margin-right: .65rem; }
    its own. A link says it with `.on`, a button with `aria-pressed`. The tint is
    there so it does not rest on hue alone, beside an action pill in the same
    colours; `--bg-subtle` first for an engine without `color-mix()`. */
-.controls .on, .paneflag.on, .controls button[aria-pressed="true"] {
+.controls .on, .paneflag.on, .controls button[aria-pressed="true"], .controls details[open] > summary {
   color: var(--link);
   border-color: var(--link);
   background: var(--bg-subtle);
@@ -314,6 +314,8 @@ body.fitted .crumbs { margin-right: .65rem; }
 .controls .group > a:first-child { border-radius: 1rem 0 0 1rem; margin-left: 0; }
 .controls .group > a:last-child { border-radius: 0 1rem 1rem 0; }
 .controls .group > a:only-child { border-radius: 1rem; }
+.controls .group > details > summary { border-radius: 0 1rem 1rem 0; margin-left: -1px; }
+.controls .group > details:only-child > summary { border-radius: 1rem; margin-left: 0; }
 .controls .group > .on, .controls .group > a:hover, .controls .group > a:focus-visible { position: relative; z-index: 1; }
 .controls .group > a[aria-current] { cursor: default; }
 /* A dimmed segment dims what is in it, not its border: the ring stays whole. */
@@ -432,7 +434,7 @@ svg.mark {
   width: var(--mark-size);
   height: var(--mark-size);
 }
-.back, .up, .paneflag, .controls a, .controls span.ctl, .controls button, nav.tree a.pick {
+.back, .up, .paneflag, .controls a, .controls span.ctl, .controls button, .controls summary, nav.tree a.pick {
   display: var(--ctl-display, inline);
   align-items: center;
   justify-content: center;
@@ -2219,6 +2221,7 @@ body.nothing .start .row > a.aside { min-height: var(--row-min); }
 .controls a,
 .controls button,
 .controls span.ctl,
+.controls summary,
 nav.tree a.pick {
     display: inline-flex;
     align-items: center;
@@ -2251,6 +2254,7 @@ nav.tree a.pick {
 .controls a svg,
 .controls button svg,
 .controls span.ctl svg,
+.controls summary .ico svg,
 nav.tree a.pick svg {
     width: 24px;
     height: 24px;
@@ -2374,3 +2378,61 @@ body.nothing .start .row > a.aside {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .ts-full-info .facts { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 @media print { .ts-full-exit, .ts-full-info { display: none; } }
+
+/* Send and its menu (`send_menu` in `view.rs`; Telechore's
+   docs/mockups/send-menu.html). The summary is a pill of the row, a little
+   wider than a mark for its caret, and lit while open as a pressed button is.
+   The menu drops from under it, over the page, from its right edge leftward;
+   the shell's script moves it back on screen where that would leave it
+   (`MENUS`). Its items are rows, not pills: the `.controls a` rules are reset
+   here, by a selector they cannot outrank. */
+.controls details.send { position: relative; display: inline-flex; }
+.controls details.send > summary {
+  list-style: none;
+  cursor: pointer;
+  gap: .25rem;
+  width: auto;
+  padding-inline: .45rem;
+}
+.controls details.send > summary::-webkit-details-marker { display: none; }
+.controls details.send > summary .caret { display: inline-flex; }
+.controls details.send > summary .caret svg { width: 12px; height: 12px; }
+.controls details.send > .menu {
+  position: absolute;
+  top: calc(100% + .35rem);
+  right: 0;
+  z-index: 20;
+  min-width: 12rem;
+  display: flex;
+  flex-direction: column;
+  padding: .35rem 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: .75rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+}
+.controls details.send > .menu a {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: .75rem;
+  min-width: 0;
+  min-height: var(--row-min);
+  width: auto;
+  height: auto;
+  padding: .4rem 1rem;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  font-size: .9rem;
+  color: var(--fg);
+  background: none;
+  white-space: nowrap;
+}
+.controls details.send > .menu a .mico { display: inline-flex; color: var(--muted); }
+.controls details.send > .menu a .mico svg { width: 18px; height: 18px; }
+.controls details.send > .menu .key { margin-left: auto; padding-left: 1.5rem; font-size: .8rem; color: var(--muted); }
+.controls details.send > .menu hr { border: 0; border-top: 1px solid var(--border); margin: .35rem 0; }
+@media (hover: hover) {
+  .controls details.send > .menu a:hover { background: var(--bg-subtle); color: var(--link); }
+}

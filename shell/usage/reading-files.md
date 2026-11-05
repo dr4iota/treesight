@@ -48,9 +48,11 @@ Scrolling and zooming stay in full screen, and so does a link to a heading in
 the same file: Back then returns to where you were, still in full screen. To
 leave, tap the way out, or press **Esc** or **F11**, or Back on a phone.
 
-What can be done with the file — **Print**, **Download**, and any action the
-app adds — is a second set. **Download** saves a copy as stored. A file can
-also be saved without opening it, from its row in the folder: see below.
+What can be done with the file is a second set: any action the app adds, then
+**Send**, a menu. Send holds **Download…**, which saves a copy as stored, and
+**Print…** on a rendered file or a source view; where the app can hand a file
+to another, **Open with…** and **Share…** come first. A file can also be saved
+without opening it, from its row in the folder: see below.
 
 While a copy is saved, the status line at the bottom says how far it has got,
 with **Cancel**.

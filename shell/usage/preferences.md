@@ -23,7 +23,7 @@ of them at once, and the marks stay; then the path moves to a line of its own.
 
 ## Printing
 
-**Print** in the header of a rendered file or a source view, or `Ctrl+P`. The
+**Print…** in the **Send** menu of a rendered file or a source view, or `Ctrl+P`. The
 printed page drops the header, the sidebar and the status line, and uses the light
 theme.
 

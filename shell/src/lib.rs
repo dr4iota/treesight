@@ -1397,6 +1397,44 @@ struct SharedExt(Arc<Ext>);
 /// **Cancel**, which is a link the shell claims like any other of its own.
 /// `null` takes it away. Any page without a footer — an embedder's own — is
 /// left alone. And the row a transfer just made, brought into view.
+/// A header's menu — Send's (`send_menu` in treesight's `view.rs`) — is a
+/// `<details>`, which opens with no script; this keeps it on screen, reaching
+/// left, right or both from under its button as there is room, lets one be open
+/// at a time, and closes it on a tap outside, on Esc, and on an item, whose
+/// navigation the shell claims and cancels, so no new page would close it.
+const MENUS: &str = r#"
+(function () {
+  function place(d) {
+    var m = d.querySelector('.menu');
+    if (!m) return;
+    m.style.right = '';
+    var r = m.getBoundingClientRect(), pad = 8, w = document.documentElement.clientWidth, shift = 0;
+    if (r.left < pad) shift = pad - r.left;
+    else if (r.right > w - pad) shift = w - pad - r.right;
+    if (shift) m.style.right = -shift + 'px';
+  }
+  function closeAll(except) {
+    document.querySelectorAll('details.send[open]').forEach(function (d) { if (d !== except) d.open = false; });
+  }
+  document.addEventListener('toggle', function (e) {
+    var d = e.target;
+    if (!(d instanceof HTMLDetailsElement) || !d.classList.contains('send')) return;
+    if (d.open) { closeAll(d); place(d); }
+  }, true);
+  document.addEventListener('pointerdown', function (e) {
+    if (!e.target.closest || !e.target.closest('details.send')) closeAll(null);
+  });
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('details.send .menu a');
+    if (a) setTimeout(function () { closeAll(null); }, 0);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && document.querySelector('details.send[open]')) { closeAll(null); e.preventDefault(); }
+  });
+  addEventListener('resize', function () { document.querySelectorAll('details.send[open]').forEach(place); });
+})();
+"#;
+
 const PROGRESS: &str = r#"
 window.__tsProgress = function (text, frac) {
   var f = document.querySelector('footer');
@@ -1450,7 +1488,7 @@ addEventListener('DOMContentLoaded', function () {
 fn window_script(custom: Option<String>, ours: &[String]) -> String {
     let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{ZOOM}\n{FULL}\n{}",
+        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{MENUS}\n{ZOOM}\n{FULL}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)

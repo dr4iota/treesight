@@ -3768,7 +3768,7 @@ mod tests {
         lit(&png, "Preview");
         assert!(views(&png).contains("href=\"/c.png?src=1\"") && !png.contains("?raw=1\""), "{png}");
         assert!(!png.contains("class=\"filemeta\"") && png.contains("<img class=\"preview-img\""), "{png}");
-        assert!(png.contains("<span class=\"group\"><a href=\"/c.png?dl=1\""), "{png}");
+        assert!(png.contains("<span class=\"group\"><details class=\"send\">") && png.contains("\"/c.png?dl=1\""), "{png}");
         let png_src = page("c.png", &src);
         lit(&png_src, "Source");
         assert!(png_src.contains("class=\"hexwrap\"") && png_src.contains("class=\"filemeta\""), "{png_src}");
@@ -4174,10 +4174,11 @@ mod tests {
         let rel = vec!["kept.txt".to_string()];
         let page = crate::view::file_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), &[], "/");
         assert!(page.contains("class=\"notice warn\""), "{page}");
+        // The backend's verb first in the group, lit, then Send with Download.
         let dl = page.find("?dl=1").expect(&page);
         let pill = page.find("/.ts/act?path=%2Fkept.txt&amp;a=keep").expect(&page);
-        assert!(dl < pill, "{page}");
-        assert!(page[..pill].rfind("class=\"on\"").is_some_and(|i| i > dl), "{page}");
+        assert!(pill < dl && page[pill..dl].contains("<details class=\"send\">"), "{page}");
+        assert!(page[..pill].rfind("class=\"on\"").is_some(), "{page}");
 
         // Not in a plain web server's page: nothing there claims the links.
         state.cfg.app_ui = false;
@@ -4369,7 +4370,7 @@ mod tests {
         // text file and on a binary one, whose Source is its first bytes.
         assert!(page(Arc::clone(&plain.vfs), "a.txt").contains("?dl=1"), "text");
         let binary = page(Arc::clone(&plain.vfs), "b.bin");
-        assert!(binary.contains("<a href=\"/b.bin?dl=1\""), "{binary}");
+        assert!(binary.contains("<a role=\"menuitem\" href=\"/b.bin?dl=1\""), "{binary}");
 
         // A backend with nowhere to copy to draws none of it — not the flag on
         // the row, and not the sentence in the panel either. A page that says
@@ -4764,7 +4765,7 @@ mod tests {
             assert!(html.contains("<span class=\"lbl\">Light</span>"), "{html}");
             assert!(!html.contains(": on<") && !html.contains(": off<"), "{html}");
         }
-        assert!(crate::app_css().contains(".controls .on, .paneflag.on, .controls button[aria-pressed=\"true\"] {"));
+        assert!(crate::app_css().contains(".controls .on, .paneflag.on, .controls button[aria-pressed=\"true\"], .controls details[open] > summary {"));
 
         fs::remove_dir_all(&dir).unwrap();
     }
