@@ -4631,6 +4631,32 @@ pub(crate) fn dialog_parent(app: &AppHandle, label: &str) -> Option<tauri::Webvi
     app.get_webview_window(label).or_else(|| app.get_webview_window(WINDOW))
 }
 
+/// The one-box rule (`docs/tasks/tree-browser.md`, *Refusal boxes stack*). A
+/// message box cannot be updated once it is up, and this shell cannot close one,
+/// so a non-fatal error that arrives while one is open is logged and not shown:
+/// it is not queued either, since the box already on screen carries the news.
+/// Fatal errors never wait for it, and they exit on OK in any case.
+struct BoxGate(AtomicBool);
+
+impl BoxGate {
+    const fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    /// Takes the box if none is open. False means one is, and nothing is shown.
+    fn take(&self) -> bool {
+        self.0.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
+
+    /// The box has closed, or it could not be shown after all.
+    fn release(&self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// The non-fatal box that may be open, for the whole process.
+static NON_FATAL_BOX: BoxGate = BoxGate::new();
+
 /// Every dialog this shell raises: on the thread that may raise one, and
 /// parented to the window it is about.
 ///
@@ -4641,10 +4667,14 @@ pub(crate) fn dialog_parent(app: &AppHandle, label: &str) -> Option<tauri::Webvi
 /// a finished download reports from `on_download` — so the hop belongs here
 /// rather than at each call site, which is where it kept being forgotten.
 fn raise(app: &AppHandle, label: &str, msg: &str, kind: MessageDialogKind, fatal: bool) {
+    if !fatal && !NON_FATAL_BOX.take() {
+        eprintln!("treesight: not shown, a box is open already: {msg}");
+        return;
+    }
     let app = app.clone();
     let label = label.to_string();
     let msg = msg.to_string();
-    let _ = app.clone().run_on_main_thread(move || {
+    let queued = app.clone().run_on_main_thread(move || {
         // Titled by the program the reader is running, which is the
         // embedder's on a downstream app — "treesight" over a Telechore
         // window named a program they have never heard of. The build's own
@@ -4669,9 +4699,14 @@ fn raise(app: &AppHandle, label: &str, msg: &str, kind: MessageDialogKind, fatal
         dialog.show(move |_| {
             if fatal {
                 back.exit(1);
+            } else {
+                NON_FATAL_BOX.release();
             }
         });
     });
+    if queued.is_err() && !fatal {
+        NON_FATAL_BOX.release();
+    }
 }
 
 fn recent_file(app: &AppHandle) -> Option<PathBuf> {
@@ -5018,6 +5053,17 @@ fn let_go_of(app: &AppHandle, was: Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// The one-box rule: a non-fatal box is taken while none is open, refused
+    /// while one is, and taken again once the first has closed.
+    #[test]
+    fn one_non_fatal_box_at_a_time() {
+        let gate = super::BoxGate::new();
+        assert!(gate.take(), "the first box opens");
+        assert!(!gate.take(), "a second, while the first is open, is not shown");
+        gate.release();
+        assert!(gate.take(), "the next box opens once the first has closed");
+    }
 
     /// A root link's `at` lands on that page of the root, encoded as a path,
     /// and nothing that is not a path from the top — another host least of all.
