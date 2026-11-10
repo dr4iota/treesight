@@ -38,8 +38,10 @@ pub const ICON_SEND: &str = "<path d=\"M5.6 6.2H4a.8.8 0 00-.8.8v5.8c0 .4.4.8.8.
 /// Open with: a frame with an arrow out of its corner, to another app.
 pub const ICON_OPEN_WITH: &str = "<path d=\"M12.4 9v3.6c0 .4-.4.8-.8.8H3.4a.8.8 0 01-.8-.8V4.4c0-.4.4-.8.8-.8H7\"/>\
      <path d=\"M9.4 2.6h4v4\"/><path d=\"M13.2 2.8L7.6 8.4\"/>";
-/// The small chevron down a button wears when it opens a menu.
-pub const ICON_CARET: &str = "<path d=\"M4.5 6.2L8 9.7l3.5-3.5\"/>";
+/// The solid triangle down a button wears when a tap opens a menu, as a
+/// desktop toolbar's dropdown does. A *long press* for a menu is a corner
+/// triangle instead (Telechore's terminal page), so neither sign means both.
+pub const ICON_CARET: &str = "<path d=\"M4.6 6.4h6.8L8 10.2z\" fill=\"currentColor\"/>";
 pub const ICON_DOWNLOAD: &str =
     "<path d=\"M8 2.9v6.7\"/><path d=\"M5.2 7l2.8 2.8L10.8 7\"/><path d=\"M3.2 13.1h9.6\"/>";
 /// A bin: Delete.
