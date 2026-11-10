@@ -433,7 +433,7 @@ fn pill_units(html: &str) -> Vec<usize> {
                     units.push(words);
                 }
             }
-        } else if !tag.ends_with("/>") {
+        } else if !tag.ends_with("/>") && !is_void(tag) {
             if depth == 0 {
                 start = i;
             }
@@ -441,6 +441,16 @@ fn pill_units(html: &str) -> Vec<usize> {
         }
     }
     units
+}
+
+/// An element HTML never closes, written without the `/>` that would say so:
+/// Android's Send menu has an `<hr>` between its two halves, which counted as
+/// an open tag and hid every control after Send from `pill_units`.
+fn is_void(tag: &str) -> bool {
+    let name = tag[1..].split(|c: char| c.is_ascii_whitespace() || c == '>').next().unwrap_or("");
+    ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]
+        .iter()
+        .any(|v| name.eq_ignore_ascii_case(v))
 }
 
 /// What `html_escape` wrote, read back: a word's width is its characters',
@@ -3637,6 +3647,12 @@ mod tests {
             words(&["Auto"])
         );
         assert_eq!(pill_units(&controls), [1, 1, 3, 3, 1]);
+        // A menu with a rule between its halves, as Send's is on Android, is
+        // one segment, and what follows it still counts.
+        let send = "<details class=\"send\"><summary><span class=\"lbl\">Send</span></summary>\
+                    <div class=\"menu\"><a>Share…</a><hr><a>Download…</a></div></details>";
+        let ruled = format!("{}{}", group(&format!("{}{send}", words(&["Keep offline"]))), words(&["Auto"]));
+        assert_eq!(pill_units(&ruled), [2, 1]);
         let fit = |crumbs: &[&str]| bands(&header_fit(&up, None, Some("thor"), crumbs, &controls));
 
         let short = fit(&["weather-station", "README.md"]);
