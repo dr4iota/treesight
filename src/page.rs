@@ -730,7 +730,10 @@ fn head_and_header(
     // since every crumb before it is a folder that window does not go to.
     let lone = prefs.window == WindowKind::Document;
     match lone {
-        true => crumbs.push_str(&html_escape(rel.last().map(String::as_str).unwrap_or(&site_title))),
+        true => crumbs.push_str(&format!(
+            "<span class=\"name\">{}</span>",
+            html_escape(rel.last().map(String::as_str).unwrap_or(&site_title))
+        )),
         false => crumbs.push_str(&format!("<a href=\"/\">{}</a>", html_escape(&site_title))),
     }
     // A copy made only to show it says so beside its name: it goes when the
@@ -744,7 +747,7 @@ fn head_and_header(
         acc.push(seg.clone());
         crumbs.push_str("<span class=\"sep\">/</span>");
         if i + 1 == rel.len() {
-            crumbs.push_str(&html_escape(seg));
+            crumbs.push_str(&format!("<span class=\"name\">{}</span>", html_escape(seg)));
         } else {
             crumbs.push_str(&format!(
                 "<a href=\"{}/\">{}</a>",

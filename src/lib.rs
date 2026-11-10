@@ -2933,7 +2933,7 @@ mod tests {
         assert!(!doc.contains("<nav class=\"tree\">") && !doc.contains("Sidebar"), "{doc}");
         assert!(doc.contains("/.ts/main") && !doc.contains("Up to "), "{doc}");
         assert!(!doc.contains("/.ts/term") && !doc.contains("/.ts/window"), "{doc}");
-        assert!(doc.contains("<div class=\"crumbs\">note.md</div>"), "{doc}");
+        assert!(doc.contains("<div class=\"crumbs\"><span class=\"name\">note.md</span></div>"), "{doc}");
         let back = get("/sub/", Some("files-2"));
         assert_eq!(back.status, 302);
         assert!(back.headers.iter().any(|(k, v)| k == "Location" && v == "/note.md"), "{:?}", back.headers);
@@ -2974,7 +2974,7 @@ mod tests {
         assert!(page.contains("class=\"up start\"") && !page.contains("/.ts/main"), "{page}");
         assert!(page.contains("class=\"up lone-way\"") && page.contains("/.ts/lone-save"), "{page}");
         assert!(page.contains("<span class=\"lbl lone-lbl\">Save to Files</span>"), "{page}");
-        assert!(page.contains("report.md<span class=\"tag lone-tag\">Not saved</span>"), "{page}");
+        assert!(page.contains("<span class=\"name\">report.md</span><span class=\"tag lone-tag\">Not saved</span>"), "{page}");
         assert!(!page.contains("/.ts/reload") && !page.contains("/.ts/window"), "{page}");
         assert!(!page.contains("--lone-lbl"), "its words are never dropped: {page}");
         // The file's size and how long ago, at the status line's right end.

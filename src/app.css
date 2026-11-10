@@ -208,8 +208,7 @@ header {
    Below, the row starts with the path, and the controls that spilled off the
    first row follow it there at the right (`header_fit` again, which moves
    them after it). The path wraps rather than scrolls: a path longer than its
-   room takes two lines — the same `overflow-wrap: anywhere` the pane uses to
-   keep a long name inside itself. And should the estimate come out short
+   room takes two lines, broken between names (`.crumbs > .name` below). And should the estimate come out short
    anyway, the header wraps (`flex-wrap`), so the worst it does is take a line
    it did not plan. */
 .crumbs {
@@ -218,7 +217,6 @@ header {
   min-width: var(--crumbs-min, 8rem);
   font-size: var(--crumbs-size, 1em);
   font-weight: 500;
-  overflow-wrap: anywhere;
 }
 /* What starts that row while controls follow the path onto it: a flex line
    cannot be broken before an item, so an empty item a whole line wide sits
@@ -274,6 +272,17 @@ body.fitted .crumbs { margin-right: .65rem; }
   white-space: nowrap;
 }
 .crumbs .sep { color: var(--muted); margin: 0 .15rem; }
+/* Each name whole: a path that takes two lines breaks at a separator, never
+   inside a name, and a name longer than the whole row ends in an ellipsis
+   (the user, 10 November 2026). The window's title has it in full. */
+.crumbs > a, .crumbs > .name {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
 .controls { display: flex; gap: .35rem; flex-wrap: wrap; }
 /* `button` is one of these too. The shell's own controls are anchors and spans,
    so this list was written for those — and every page that had a *button* in its
