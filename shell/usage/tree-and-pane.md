@@ -1,20 +1,20 @@
 # Tree and sidebar
 
-Two halves. The tree on the left is the folder you opened. The rest of the
-window is the file you selected.
+The window has two halves. The tree on the left is the folder you opened. The
+rest of the window is the file you selected.
 
 ## The tree
 
-Directories first, then names, ignoring case. A directory has an arrow that
-opens it in place, and which ones you left open is remembered. Files starting
-with a dot are not listed.
+Directories come first, then other names, ignoring case. A directory has an
+arrow that opens it in place, and the app remembers which of those you left
+open. Files starting with a dot are not listed.
 
-To start the tree at a folder further down, open it and press **As root** in
+To start the tree at a folder further down, open it and press “As root” in
 the header.
 
 The tree's heading is the open folder's name, and goes back to its top. It
-carries **Star**, to keep the open folder in Starred, and **Close**, to return
-to the start page. **Open a folder…** is at the foot of the sidebar, after
+carries “Star”, to keep the open folder in Starred, and “Close”, to return
+to the start page. “Open a folder…” is at the foot of the sidebar, after
 Recent.
 
 ## The sidebar
@@ -27,18 +27,18 @@ under it.
 
 The path, as links, and the controls for the window:
 
-- **Refresh** re-reads the folder or file and keeps your place. `F5` and `Ctrl+R` do the
+- “Refresh” re-reads the folder or file and keeps your place. `F5` and `Ctrl+R` do the
   same.
-- **Up** goes to the parent folder. At the top of the open folder the button is
-  **Start** and returns to the start page.
-- **As root**, in a folder below the top, starts the tree at that folder.
-- **New folder** and **Upload**, in a folder the app can write to — on a
+- “Up” goes to the parent folder. At the top of the open folder the button is
+  “Start” and returns to the start page.
+- “As root”, in a folder below the top, starts the tree at that folder.
+- “New folder” and “Upload”, in a folder the app can write to — on a
   computer, any of its own — add to it.
   New folder opens a row at the top of the table for the name. Upload asks for
   files, asks once before replacing any that are already there, and shows how
-  far it has got in the status line, with **Cancel**.
-- **Theme**, **line numbers** and **Sidebar** are in [Preferences](preferences.md).
-- **Print…**, in a file's **Send** menu, is on a rendered file or a source
+  far it has got in the status line, with “Cancel”.
+- **Theme**, **line numbers** and “Sidebar” are in [Preferences](preferences.md).
+- “Print…”, in a file's “Send” menu, is on a rendered file or a source
   view, and prints that view.
 
 Where the window is narrow the buttons show their marks only. **Hold the
