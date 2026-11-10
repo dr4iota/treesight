@@ -497,6 +497,72 @@ pub struct Viewer {
     /// `Origin` names them: a PDF's raw bytes say they may be read there, and
     /// nowhere else, and nothing but a PDF's.
     pub origins: Vec<String>,
+    /// Handed a PDF's bytes, whole, as they finish going out to one of those
+    /// origins: the root's id, the file's path in it, and the bytes. So an
+    /// embedder that works on the file too (Telechore cuts a paper's pages
+    /// into blocks) reads it once, with the viewer's own read, and not again
+    /// over a remote root. Not called for a range, a 304 or a read that
+    /// failed part-way: only for the whole file, after its last byte. The
+    /// shell reads a reply whole before it answers the webview, so the hook
+    /// has run before the viewer has the bytes: the viewer may ask the
+    /// embedder about the file as soon as its fetch resolves.
+    #[allow(clippy::type_complexity)]
+    pub read: Option<Arc<dyn Fn(&str, &[String], Arc<Vec<u8>>) + Send + Sync>>,
+}
+
+/// A body that keeps a copy of what it streams, and hands the whole of it to
+/// `done` once its last byte is read ([`Viewer::read`]). A file that turns out
+/// longer or shorter than it said, or a read that fails, hands over nothing.
+struct Copied {
+    inner: Box<dyn Read + Send>,
+    copy: Vec<u8>,
+    len: u64,
+    done: Option<Box<dyn FnOnce(Vec<u8>) + Send>>,
+}
+
+impl Read for Copied {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = match self.inner.read(buf) {
+            Ok(n) => n,
+            Err(e) => {
+                self.done = None;
+                return Err(e);
+            }
+        };
+        if self.done.is_some() {
+            self.copy.extend_from_slice(&buf[..n]);
+            let have = self.copy.len() as u64;
+            if have > self.len {
+                self.done = None;
+            } else if n == 0 || have == self.len {
+                let copy = std::mem::take(&mut self.copy);
+                if let Some(done) = self.done.take() {
+                    if copy.len() as u64 == self.len {
+                        done(copy);
+                    }
+                }
+            }
+        }
+        Ok(n)
+    }
+}
+
+/// `reply` with its body copied out to `hook` as it goes, where it is the
+/// whole file: a 200 that streams.
+fn copied_out(reply: Reply, hook: Arc<dyn Fn(&str, &[String], Arc<Vec<u8>>) + Send + Sync>, root: &str, rel: &[String]) -> Reply {
+    match reply {
+        Reply { status: 200, headers, body: Body::Stream { reader, len } } => {
+            let (root, rel) = (root.to_string(), rel.to_vec());
+            let copied = Copied {
+                inner: reader,
+                copy: Vec::with_capacity(usize::try_from(len).unwrap_or(0).min(1 << 28)),
+                len,
+                done: Some(Box::new(move |bytes| hook(&root, &rel, Arc::new(bytes)))),
+            };
+            Reply { status: 200, headers, body: Body::Stream { reader: Box::new(copied), len } }
+        }
+        other => other,
+    }
 }
 
 /// One row of a [`PaneSection`].
@@ -1707,6 +1773,10 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
         // The embedder's viewer reads a PDF from an origin of its own.
         return match (state.cfg.viewer(), req.header("Origin")) {
             (Some(viewer), Some(origin)) if ext_of(&name) == "pdf" && viewer.origins.iter().any(|o| o == origin) => {
+                let reply = match viewer.read {
+                    Some(hook) if req.header("Range").is_none() => copied_out(reply, hook, &root.id, &rel),
+                    _ => reply,
+                };
                 reply.with("Access-Control-Allow-Origin", origin).with("Vary", "Origin")
             }
             _ => reply,
@@ -2614,6 +2684,7 @@ mod tests {
             }),
             frame_src: "viewer:".to_string(),
             origins: vec!["viewer://x".to_string()],
+            read: None,
         }));
         let (pdf, csp) = get("/a.pdf");
         assert!(pdf.contains("<iframe class=\"raw viewer\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"viewer://x/?r="), "{pdf}");
@@ -2636,12 +2707,45 @@ mod tests {
         assert_eq!(cors("/a.pdf?raw=1&bare=1", "http://elsewhere"), None);
         assert_eq!(cors("/b.png?raw=1&bare=1", "viewer://x"), None, "a PDF's only");
 
+        // A viewer that reads the file too is handed it whole, once its frame
+        // has had the last byte; never for a range or another origin's fetch.
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>, usize)>>> = Default::default();
+        let mut viewer = state.cfg.viewer().unwrap();
+        let log = seen.clone();
+        viewer.read = Some(std::sync::Arc::new(move |root: &str, rel: &[String], bytes: std::sync::Arc<Vec<u8>>| {
+            log.lock().unwrap().push((root.to_string(), rel.to_vec(), bytes.len()));
+        }));
+        state.cfg.set_viewer(Some(viewer));
+        let fetch = |url: &str, headers: Vec<(&str, &str)>| {
+            let reply = super::handle(
+                &state,
+                &super::Req { url: url.to_string(), headers: headers.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), is_get: true },
+            );
+            match reply.body {
+                super::Body::Stream { mut reader, .. } => {
+                    let mut out = Vec::new();
+                    std::io::Read::read_to_end(&mut reader, &mut out).unwrap();
+                    out.len()
+                }
+                _ => 0,
+            }
+        };
+        let whole = std::fs::metadata(dir.join("a.pdf")).unwrap().len() as usize;
+        assert_eq!(fetch("/a.pdf?raw=1&bare=1", vec![("Origin", "viewer://x")]), whole);
+        assert_eq!(fetch("/a.pdf?raw=1&bare=1", vec![("Origin", "viewer://x"), ("Range", "bytes=0-3")]), 4);
+        assert_eq!(fetch("/a.pdf?raw=1&bare=1", vec![("Origin", "http://elsewhere")]), whole);
+        assert_eq!(fetch("/a.pdf?raw=1&bare=1", vec![]), whole);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "the viewer's whole fetch only: {seen:?}");
+        assert_eq!((seen[0].1.clone(), seen[0].2), (vec!["a.pdf".to_string()], whole));
+
         // A viewer that draws pictures too: a picture's Preview is its frame,
         // and its page's policy frames it; its Source is still ours.
         state.cfg.set_viewer(Some(super::Viewer {
             src: std::sync::Arc::new(|kind: super::Viewed, _: &str, rel: &[String]| Some(format!("viewer://x/{kind:?}?p={}", rel.join("/")))),
             frame_src: "viewer:".to_string(),
             origins: vec!["viewer://x".to_string()],
+            read: None,
         }));
         let (png, csp) = get("/b.png");
         assert!(png.contains("src=\"viewer://x/Image?p=b.png\"") && !png.contains("<img class=\"preview-img\""), "{png}");
