@@ -312,6 +312,15 @@ pub(crate) fn named_flag(
     )
 }
 
+/// A flag that opens a menu, as Send's summary does: a caret after its word,
+/// which `app.css` puts under the mark, at the button's foot, where the
+/// header shows marks only — so the button is no wider than a mark.
+pub(crate) fn menu_flag(class: &str, href: &str, icon: &str, label: &str, title: &str) -> String {
+    let a = flag(class, href, icon, label, title);
+    let body = a.strip_suffix("</a>").unwrap_or(&a);
+    format!("{body}<span class=\"caret\">{}</span></a>", crate::icons::svg_icon(crate::icons::ICON_CARET))
+}
+
 /// Flags joined into one pill cut into segments: a file's verbs, a folder's,
 /// the views of a file. One header item, so it wraps whole, and one unit to
 /// `header_fit`, which prices no gap inside it. Nothing at all for no flags,
@@ -500,6 +509,9 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
     const PILL_WORD: f32 = 17.6 + 2.0 + 24.0 + 4.8;
     const PILL_MARK: f32 = 40.0;
     const PILL_GAP: f32 = 5.6; // `.controls` gap, `.35rem`
+    // A menu's caret beside its word: 12px and the pill's own gap. Under the
+    // mark it costs nothing.
+    const CARET: f32 = 12.0 + 4.8;
     const GAP: f32 = 16.0; // the header's own, `1rem`
     const PAD: f32 = 32.0; // `1rem` a side
     const SLACK: f32 = 12.0; // insets and rounding
@@ -528,6 +540,7 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
     let left_words = pill_words(left);
     let control_words = pill_words(controls);
     let units = pill_units(controls);
+    let carets = controls.matches("<span class=\"caret\">").count() as f32;
     let text: f32 = crumbs.iter().map(|c| text_px(c, CRUMB_TEXT)).sum();
     let path = (text + crumbs.len().saturating_sub(1) as f32 * SEP).max(CRUMBS_MIN);
     let tag = tag.map_or(0.0, |t| t.chars().count() as f32 * TAG_CHAR + TAG_BOX + GAP);
@@ -560,6 +573,7 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
             + path
             + GAP
             + row(&control_words, units.len(), with_words)
+            + if with_words { CARET * carets } else { 0.0 }
     };
     let rem = |px: f32| (px / 16.0 * 4.0).ceil() / 4.0;
 
@@ -629,7 +643,7 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
     format!(
         "<style>\
          @media (max-width: {words}rem) {{ body.fitted {{ --lbl: none; --ctl-display: inline-flex; \
-         --pill: 1.7rem; --pill-pad: 0; }} }}\n\
+         --pill: 1.7rem; --pill-pad: 0; --caret-pos: absolute; --caret-shift: -50% 0; }} }}\n\
          @media (max-width: {marks}rem) {{ body.fitted {{ --crumbs-order: 3; --crumbs-basis: 100%; \
          --crumbs-min: 0; --crumbs-size: .85rem; }} }}{spill}\
          </style>",

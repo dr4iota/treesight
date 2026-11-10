@@ -467,6 +467,8 @@ svg.mark {
     --ctl-display: inline-flex;
     --pill: 1.7rem;
     --pill-pad: 0;
+    --caret-pos: absolute;
+    --caret-shift: -50% 0;
   }
 }
 @media (max-width: 68rem) {
@@ -475,6 +477,8 @@ svg.mark {
     --ctl-display: inline-flex;
     --pill: 1.7rem;
     --pill-pad: 0;
+    --caret-pos: absolute;
+    --caret-shift: -50% 0;
   }
 }
 
@@ -493,6 +497,8 @@ svg.mark {
     --ctl-display: inline-flex;
     --pill: 1.7rem;
     --pill-pad: 0;
+    --caret-pos: absolute;
+    --caret-shift: -50% 0;
   }
   /* The status line is down to one line's worth of room, and the served folder
      is worth more of it than our own version number — so from here down the
@@ -2402,12 +2408,22 @@ body.nothing .start .row > a.aside {
   list-style: none;
   cursor: pointer;
   gap: .25rem;
-  width: auto;
-  padding-inline: .45rem;
 }
 .controls details.send > summary::-webkit-details-marker { display: none; }
-.controls details.send > summary .caret { display: inline-flex; }
-.controls details.send > summary .caret svg { width: 12px; height: 12px; }
+/* A menu's button, Send's or a viewer's own (`menu_flag` in `page.rs`): a
+   caret after its word while the header shows words; under the mark, at the
+   button's foot, while it shows marks, so the button is a mark's width like
+   every other. The bands that turn words to marks set `--caret-pos` and
+   `--caret-shift` with `--lbl`. */
+.controls details.send > summary, .controls a.viewer-menu { position: relative; }
+.controls .caret {
+  display: inline-flex;
+  position: var(--caret-pos, static);
+  left: 50%;
+  bottom: -1px;
+  translate: var(--caret-shift, none);
+}
+.controls .caret svg { width: 12px; height: 12px; }
 .controls details.send > .menu {
   position: absolute;
   top: calc(100% + .35rem);
@@ -2459,6 +2475,8 @@ body.nothing .start .row > a.aside {
   --ctl-display: inline-flex !important;
   --pill: auto !important;
   --pill-pad: .15rem .55rem !important;
+  --caret-pos: static !important;
+  --caret-shift: none !important;
 }
 :root[data-words] header { flex-wrap: wrap !important; }
 header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }

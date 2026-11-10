@@ -556,11 +556,24 @@ fn binary_source(
 /// the window, which is how a document's link reaches the shell and goes to the
 /// browser, as one in Markdown does. Nothing else — no forms, no popups, and no
 /// moving the window without a tap.
+///
+/// The viewer's own menu button, where it asks for one for this kind
+/// (`Viewer::menu`), goes after Full screen and before Send, the two menus
+/// side by side: a link to nowhere that the
+/// shell's script turns into a word to the frame.
 fn viewer_page(state: &State, root: &Root, prefs: Prefs<'_>, rel: &[String], url_now: &str, src: &str) -> String {
     let name = rel.last().map(String::as_str).unwrap_or("");
+    let menu = state
+        .cfg
+        .viewer()
+        .and_then(|v| v.menu)
+        .filter(|m| state.cfg.app_ui && Some(m.kind) == crate::Viewed::of(name))
+        .map(|m| crate::page::menu_flag("viewer-menu", "#ts-view-menu", &svg_icon(&m.icon), &m.label, &m.title))
+        .unwrap_or_default();
     let controls = format!(
-        "{}{}",
-        full_flag(state, rel, root.vfs.as_ref()) + &verbs(state, rel, root.vfs.as_ref(), false),
+        "{}{menu}{}{}",
+        full_flag(state, rel, root.vfs.as_ref()),
+        verbs(state, rel, root.vfs.as_ref(), false),
         view_group(Shown::Media, rel, Some(View::Preview), false)
     );
     let frame = format!(

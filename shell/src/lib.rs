@@ -629,7 +629,11 @@ fn full_screen(app: &AppHandle, label: &str, on: bool) {
 /// own controls: it is told the state, the safe area's insets and the file's
 /// name and facts (shown at the top left, where the header was), and asks
 /// for the way out with a message, which is taken only from that frame and
-/// only for this.
+/// only for this. The viewer's own menu button (`Viewer::menu`, a link of
+/// class `viewer-menu`) is told to the frame the same way, as `ts-view-menu`,
+/// with where the button stands across the frame, and again on a resize while
+/// the menu is open (`ts-view-menu-at`); the frame says when its menu opens
+/// and shuts (`ts-view-menu-open`), and the button is lit meanwhile.
 const FULL: &str = r#"
 (function () {
   if (window.top !== window) return;
@@ -732,6 +736,13 @@ const FULL: &str = r#"
   addEventListener('click', function (e) {
     var a = e.target.closest && e.target.closest('a[href^="/.ts/full"]');
     if (a && tree()) { e.preventDefault(); enter(); return; }
+    var menu = e.target.closest && e.target.closest('a.viewer-menu');
+    if (menu) {
+      e.preventDefault();
+      var v = viewer();
+      if (v && v.contentWindow) v.contentWindow.postMessage({ type: 'ts-view-menu', at: menuAt(menu, v) }, '*');
+      return;
+    }
     var to = held() && e.target.closest && e.target.closest('a[href]');
     if (to && to.hash && !to.target && to.host === location.host && to.pathname === location.pathname && to.search === location.search) {
       jumping = true;
@@ -762,7 +773,32 @@ const FULL: &str = r#"
     if (e.data.type === 'ts-full-exit') leave();
     else if (e.data.type === 'ts-full-toggle') { if (held()) leave(); else enter(); }
     else if (e.data.type === 'ts-full-ready') told();
+    // The frame's menu open or shut: its button lit while open, as an open
+    // Send is (`.controls .on`, app.css).
+    else if (e.data.type === 'ts-view-menu-open') lightMenu(!!e.data.open);
   });
+  // Where the menu's button stands across the frame, so the menu drops from
+  // under it, as Send's does; sent again on a resize while the menu is open,
+  // since the button moves with the header.
+  function menuAt(a, v) {
+    var b = a.getBoundingClientRect(), fr = v.getBoundingClientRect();
+    return { left: b.left - fr.left, right: b.right - fr.left };
+  }
+  var menuOpen = false;
+  addEventListener('resize', function () {
+    var v = viewer(), all = document.querySelectorAll('a.viewer-menu'), a = null;
+    for (var i = 0; i < all.length && !a; i++) if (all[i].offsetParent) a = all[i];
+    if (menuOpen && v && v.contentWindow && a) v.contentWindow.postMessage({ type: 'ts-view-menu-at', at: menuAt(a, v) }, '*');
+  });
+  function lightMenu(on) {
+    menuOpen = on;
+    if (on) document.querySelectorAll('details.send[open]').forEach(function (d) { d.open = false; });
+    var all = document.querySelectorAll('a.viewer-menu');
+    for (var i = 0; i < all.length; i++) {
+      all[i].classList.toggle('on', on);
+      all[i].setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+  }
   addEventListener('resize', function () { if (held()) told(); });
   addEventListener('DOMContentLoaded', function () {
     if (!tree() || !held()) return;
@@ -1429,7 +1465,10 @@ struct SharedExt(Arc<Ext>);
 /// `<details>`, which opens with no script; this keeps it on screen, reaching
 /// left, right or both from under its button as there is room, lets one be open
 /// at a time, and closes it on a tap outside, on Esc, and on an item, whose
-/// navigation the shell claims and cancels, so no new page would close it.
+/// navigation the shell claims and cancels, so no new page would close it. A
+/// tap in a viewer's frame is outside too, though this document never sees
+/// it: the window losing focus to the frame says so. And Send and the
+/// viewer's own menu are never open together (`ts-view-menu-close`).
 const MENUS: &str = r#"
 (function () {
   function place(d) {
@@ -1447,8 +1486,14 @@ const MENUS: &str = r#"
   document.addEventListener('toggle', function (e) {
     var d = e.target;
     if (!(d instanceof HTMLDetailsElement) || !d.classList.contains('send')) return;
-    if (d.open) { closeAll(d); place(d); }
+    if (d.open) {
+      closeAll(d);
+      place(d);
+      var v = document.querySelector('iframe.viewer');
+      if (v && v.contentWindow) v.contentWindow.postMessage({ type: 'ts-view-menu-close' }, '*');
+    }
   }, true);
+  addEventListener('blur', function () { closeAll(null); });
   document.addEventListener('pointerdown', function (e) {
     if (!e.target.closest || !e.target.closest('details.send')) closeAll(null);
   });

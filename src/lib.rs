@@ -508,6 +508,21 @@ pub struct Viewer {
     /// embedder about the file as soon as its fetch resolves.
     #[allow(clippy::type_complexity)]
     pub read: Option<Arc<dyn Fn(&str, &[String], Arc<Vec<u8>>) + Send + Sync>>,
+    /// A header button of the viewer's own on its frame's page, for one kind:
+    /// its menu, which the frame draws. The button only tells the frame
+    /// (`ts-view-menu`, the shell's `FULL` script); what the menu holds is
+    /// the viewer's.
+    pub menu: Option<ViewerMenu>,
+}
+
+/// The header button [`Viewer::menu`] asks for: the kind whose Preview has it,
+/// its mark (path data, as [`HeaderFlag::icon`]), its word and its tooltip.
+#[derive(Clone)]
+pub struct ViewerMenu {
+    pub kind: Viewed,
+    pub icon: String,
+    pub label: String,
+    pub title: String,
 }
 
 /// A body that keeps a copy of what it streams, and hands the whole of it to
@@ -2628,6 +2643,41 @@ mod tests {
     /// line, Source their first bytes in hex under the kind they say, and a
     /// PDF's Preview in the embedder's viewer where it has one — a frame the
     /// page's policy then lets load, and only on that page.
+    /// A viewer's own menu button: on the Preview of the kind it asked for,
+    /// in the app and not on a served tree, and on no other kind.
+    #[test]
+    fn a_viewer_asks_for_its_menu_button() {
+        let dir = std::env::temp_dir().join(format!("treeserve-viewer-menu-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.pdf"), b"%PDF-1.4\n").unwrap();
+        std::fs::write(dir.join("b.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        let page = |app_ui: bool, url: &str| {
+            let mut config = super::Config::new(dir.canonicalize().unwrap());
+            config.app_ui = app_ui;
+            let state = super::state_for(config);
+            state.cfg.set_viewer(Some(super::Viewer {
+                src: std::sync::Arc::new(|kind: super::Viewed, _: &str, rel: &[String]| Some(format!("viewer://x/{kind:?}?p={}", rel.join("/")))),
+                frame_src: "viewer:".to_string(),
+                origins: vec!["viewer://x".to_string()],
+                read: None,
+                menu: Some(super::ViewerMenu { kind: super::Viewed::Pdf, icon: "<path d=\"M1 1h1\"/>".into(), label: "View".into(), title: "PDF view".into() }),
+            }));
+            let reply = super::handle(&state, &super::Req { url: url.to_string(), headers: vec![("Accept".to_string(), "text/html".to_string())], is_get: true });
+            match reply.body {
+                super::Body::Text(t) => t,
+                _ => panic!("a page is text"),
+            }
+        };
+        let pdf = page(true, "/a.pdf");
+        assert!(pdf.contains("href=\"#ts-view-menu\"") && pdf.contains("PDF view"), "{pdf}");
+        assert!(pdf.find("#ts-view-menu").unwrap() > pdf.find("/.ts/full").unwrap(), "after Full screen");
+        assert!(pdf.find("#ts-view-menu").unwrap() < pdf.find("details class=\"send\"").unwrap_or(usize::MAX), "before Send");
+        assert!(!page(true, "/b.png").contains("#ts-view-menu"), "another kind");
+        assert!(!page(true, "/a.pdf?src=1").contains("#ts-view-menu"), "not on Source");
+        assert!(!page(false, "/a.pdf").contains("#ts-view-menu"), "not on a served tree");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn binary_files_preview_and_show_their_bytes() {
         let dir = std::env::temp_dir().join(format!("treeserve-binary-{}", std::process::id()));
@@ -2685,6 +2735,7 @@ mod tests {
             frame_src: "viewer:".to_string(),
             origins: vec!["viewer://x".to_string()],
             read: None,
+            menu: None,
         }));
         let (pdf, csp) = get("/a.pdf");
         assert!(pdf.contains("<iframe class=\"raw viewer\" sandbox=\"allow-scripts allow-same-origin allow-top-navigation-by-user-activation\" src=\"viewer://x/?r="), "{pdf}");
@@ -2746,6 +2797,7 @@ mod tests {
             frame_src: "viewer:".to_string(),
             origins: vec!["viewer://x".to_string()],
             read: None,
+            menu: None,
         }));
         let (png, csp) = get("/b.png");
         assert!(png.contains("src=\"viewer://x/Image?p=b.png\"") && !png.contains("<img class=\"preview-img\""), "{png}");
