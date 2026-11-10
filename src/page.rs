@@ -553,6 +553,9 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
     let carets = controls.matches("<span class=\"caret\">").count() as f32;
     let text: f32 = crumbs.iter().map(|c| text_px(c, CRUMB_TEXT)).sum();
     let path = (text + crumbs.len().saturating_sub(1) as f32 * SEP).max(CRUMBS_MIN);
+    // Once the path has a row of its own the tag keeps `.35rem` after it
+    // (`--tag-gap`), and the controls' gap: priced so for the spill below.
+    let tag_alone = tag.map_or(0.0, |t| t.chars().count() as f32 * TAG_CHAR + 12.8 + 2.0 + 5.6 + PILL_GAP);
     let tag = tag.map_or(0.0, |t| t.chars().count() as f32 * TAG_CHAR + TAG_BOX + GAP);
     // Up is followed by the header's gap; the sidebar's control beside it by
     // its own closer one. The path is followed by the gap too, and the
@@ -612,7 +615,7 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
         units.iter().map(|&n| n as f32 * PILL_MARK).sum::<f32>()
             + PILL_GAP * units.len().saturating_sub(1) as f32
     };
-    let first = PAD + left(false) + lone_px + tag;
+    let first = PAD + left(false) + lone_px + tag_alone;
     let two_lines = (path * (13.6 / CRUMB_TEXT) * 0.55).max(CRUMBS_MIN);
     let close = |px: f32| (px / 16.0 * 100.0).ceil() / 100.0;
     let back = |rem: f32| {
@@ -655,7 +658,7 @@ fn header_fit(left: &str, lone: Option<&str>, tag: Option<&str>, crumbs: &[&str]
          @media (max-width: {words}rem) {{ body.fitted {{ --lbl: none; --ctl-display: inline-flex; \
          --pill: 1.7rem; --pill-pad: 0; --caret-pos: absolute; --caret-shift: -50% 0; }} }}\n\
          @media (max-width: {marks}rem) {{ body.fitted {{ --crumbs-order: 3; --crumbs-basis: 100%; \
-         --crumbs-min: 0; --crumbs-size: .85rem; }} }}{spill}\
+         --crumbs-min: 0; --crumbs-size: .85rem; --tag-gap: .35rem; }} }}{spill}\
          </style>",
         words = rem(line(true)),
         marks = rem(line(false)),

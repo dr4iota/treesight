@@ -253,7 +253,12 @@ body.fitted header .controls > :first-child { margin-left: auto; }
 body.fitted header .up, body.fitted header .back { margin-right: .65rem; }
 body.fitted header .up.lone-way { margin-right: 0; }
 body.fitted .paneflag, body.fitted .drawer-btn { margin-right: 0; }
-body.fitted header > .tag { margin-right: 1.05rem; }
+/* The tag's own share of the gap before the path; once the path has a row of
+   its own the controls follow the tag, pushed right by their `auto` margin, so
+   the band that moves the path sets `--tag-gap: .35rem`: with the controls' gap,
+   twice theirs, where the full gap cost a phone the room for a group on the
+   first row (the user, 10 November 2026). `header_fit` prices it so. */
+body.fitted header > .tag { margin-right: var(--tag-gap, 1.05rem); }
 body.fitted .crumbs { margin-right: .65rem; }
 /* A token in a bag: an id, a name a machine is filed under. Small, monospaced and
    fenced off, so it never reads as the first word of the path beside it. Here
