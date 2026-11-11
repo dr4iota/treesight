@@ -4740,6 +4740,16 @@ fn raise(app: &AppHandle, label: &str, msg: &str, kind: MessageDialogKind, fatal
         // one activity and has nothing to get lost behind.
         #[cfg(desktop)]
         if let Some(win) = dialog_parent(&app, &label) {
+            // **Seen, not only shown.** A box over a minimised window, or
+            // behind another window, waited unseen until the window came back
+            // (DLG-6 in Telechore's docs/tasks/tree-browser.md, *Refusal boxes
+            // stack*), while it held the window. The window comes back first
+            // and to the front; where the app is not in front, the system
+            // flashes it rather than taking the focus from another program.
+            if win.is_minimized().unwrap_or(false) {
+                let _ = win.unminimize();
+            }
+            let _ = win.set_focus();
             dialog = dialog.parent(&win);
         }
         #[cfg(mobile)]
