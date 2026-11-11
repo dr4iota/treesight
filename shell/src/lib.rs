@@ -741,6 +741,10 @@ const FULL: &str = r#"
       e.preventDefault();
       var v = viewer();
       if (v && v.contentWindow) v.contentWindow.postMessage({ type: 'ts-view-menu', at: menuAt(menu, v) }, '*');
+      // The keys to the frame, open or shut: its menu's Esc and the view's
+      // Ctrl+0 are the frame's, and with the focus left on this button they
+      // reached the page's own zoom instead (the 0.6.0 release pass).
+      if (v) v.focus({ preventScroll: true });
       return;
     }
     var to = held() && e.target.closest && e.target.closest('a[href]');
