@@ -56,9 +56,16 @@ fn full_flag(state: &State, rel: &[String], vfs: &dyn Vfs) -> String {
             None => human_size(m.len),
         })
         .unwrap_or_default();
+    // And the viewer's line while the file is a copy (`Vfs::viewer_notice`),
+    // which the card says under them in full screen, where the line is gone.
+    let note = vfs
+        .viewer_notice(&VfsPath::new(rel.to_vec()))
+        .filter(|n| n.warn && !n.wait)
+        .map(|n| format!("data-ts-note=\"{}\" ", html_escape(&n.text)))
+        .unwrap_or_default();
     link.replacen(
         "<a ",
-        &format!("<a data-ts-name=\"{}\" data-ts-facts=\"{}\" ", html_escape(name), html_escape(&facts)),
+        &format!("<a data-ts-name=\"{}\" data-ts-facts=\"{}\" {note}", html_escape(name), html_escape(&facts)),
         1,
     )
 }

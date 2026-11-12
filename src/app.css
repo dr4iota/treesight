@@ -1464,6 +1464,24 @@ a.icon.badge:not(.on):active .pin path { fill: color-mix(in srgb, var(--link) 40
   background: color-mix(in srgb, var(--warning) 12%, var(--bg));
 }
 .notice a.again { margin-left: auto; }
+/* A viewer's line: the same look on one line under the header, edge to edge,
+   so the file keeps its room. The words end in … where the line is narrow;
+   the link never does. */
+.notice.slim {
+  flex-wrap: nowrap;
+  align-items: center;
+  max-width: none;
+  margin: 0;
+  /* The sides clear what the header clears: a landscape phone's cutout or
+     rounded corner, where Try again would otherwise sit (review, 11
+     November 2026). */
+  padding: .3rem max(.75rem, var(--safe-right)) .3rem max(.75rem, var(--safe-left));
+  border-width: 0 0 1px;
+  border-radius: 0;
+  line-height: 1.3;
+}
+.notice.slim > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.notice.slim a.again { flex: none; }
 /* Drawn icons, so they take a colour: muted for a file, link-coloured for a
    directory, which is the same distinction the names already make. */
 .icon { display: inline-block; width: 1.4rem; color: var(--muted); }
@@ -2375,7 +2393,8 @@ body.nothing .start .row > a.aside {
 :root[data-ts-full] body > footer,
 :root[data-ts-full] nav.tree,
 :root[data-ts-full] .drawer-scrim,
-:root[data-ts-full] .lines { display: none !important; }
+:root[data-ts-full] .lines,
+:root[data-ts-full] .notice.slim { display: none !important; }
 :root[data-ts-full] main {
   padding: max(1rem, var(--safe-top)) max(1.25rem, var(--safe-right))
     max(3rem, var(--safe-bottom)) max(1.25rem, var(--safe-left));
@@ -2408,6 +2427,9 @@ body.nothing .start .row > a.aside {
 .ts-full-info .nm { font-weight: 600; font-size: .9rem; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .ts-full-info .facts { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* A copy's line under the facts, in the warning's colour; it wraps rather
+   than widening the card. */
+.ts-full-info .note { color: var(--warning); overflow-wrap: anywhere; }
 @media print { .ts-full-exit, .ts-full-info { display: none; } }
 
 /* Send and its menu (`send_menu` in `view.rs`; Telechore's

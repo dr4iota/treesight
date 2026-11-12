@@ -651,7 +651,8 @@ const FULL: &str = r#"
   // The file's name and facts, which the page put on its Full screen link.
   var info = function () {
     var a = link();
-    return { name: (a && a.getAttribute('data-ts-name')) || '', facts: (a && a.getAttribute('data-ts-facts')) || '' };
+    return { name: (a && a.getAttribute('data-ts-name')) || '', facts: (a && a.getAttribute('data-ts-facts')) || '',
+      note: (a && a.getAttribute('data-ts-note')) || '' };
   };
   var viewer = function () { return document.querySelector('iframe.viewer'); };
   // The safe area as the stylesheet resolves it, in pixels.
@@ -684,6 +685,13 @@ const FULL: &str = r#"
     facts.textContent = i.facts;
     infoEl.appendChild(name);
     infoEl.appendChild(facts);
+    // A copy, said while the line under the header is gone (`data-ts-note`).
+    if (i.note) {
+      var note = document.createElement('div');
+      note.className = 'facts note';
+      note.textContent = i.note;
+      infoEl.appendChild(note);
+    }
     document.body.appendChild(infoEl);
     exitEl = document.createElement('a');
     exitEl.className = 'ts-full-exit';

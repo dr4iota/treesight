@@ -1154,6 +1154,21 @@ fn notice_html(state: &State, root: &Root, rel: &[String]) -> String {
     notice_line(if n.warn { "notice warn" } else { "notice" }, n.wait, &n.text, link)
 }
 
+/// The viewer's line ([`crate::vfs::Vfs::viewer_notice`]): the notice's look on
+/// one line under the header (`.notice.slim`), a warning only and never one that
+/// waits, since a viewer page drawn again loses its place in the file.
+fn viewer_notice_html(state: &State, root: &Root, rel: &[String]) -> String {
+    let Some(n) = root.vfs.viewer_notice(&VfsPath::new(rel.to_vec())).filter(|n| n.warn && !n.wait) else {
+        return String::new();
+    };
+    let verb = n
+        .verb
+        .filter(|_| state.cfg.app_ui)
+        .map(|(words, id)| (words, act_href(state, &href_path(rel), &id)));
+    let link = n.link.map(|(words, href)| (words, act(state, &href))).or(verb);
+    notice_line("notice warn slim", false, &n.text, link)
+}
+
 /// One line in the notice's look: its words, and a link at its end that is
 /// already the page's to draw — tokenised where it is an action.
 fn notice_line(class: &str, wait: bool, text: &str, link: Option<(String, String)>) -> String {
@@ -1275,7 +1290,8 @@ pub fn bare_layout(
     content: &str,
 ) -> String {
     format!(
-        "{chrome}\n{content}\n<footer>{footer}</footer>\n</body>\n</html>\n",
+        "{chrome}\n{notice}{content}\n<footer>{footer}</footer>\n</body>\n</html>\n",
+        notice = viewer_notice_html(state, root, rel),
         chrome = head_and_header(
             state,
             root,
@@ -4221,6 +4237,68 @@ mod tests {
         assert!(!html.contains("/.ts/remove"), "{html}");
         assert!(html.contains("/kept.txt?dl=1"), "{html}");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// **A viewer's page says it is a copy**, on one line under the header
+    /// (`Vfs::viewer_notice`, `.notice.slim`), and full screen's card is told
+    /// the same words (`data-ts-note`). Only a warning, and never one that
+    /// waits: a viewer page drawn again would lose its place in the file.
+    #[test]
+    fn a_viewer_page_says_it_is_a_copy_on_one_line() {
+        use crate::vfs::Notice;
+        use std::sync::Arc;
+        struct Copy(Arc<dyn Vfs>, bool);
+        impl Vfs for Copy {
+            fn resolve(&self, p: &VfsPath) -> Result<VfsPath, crate::vfs::ResolveError> {
+                self.0.resolve(p)
+            }
+            fn metadata(&self, p: &VfsPath) -> std::io::Result<crate::vfs::Meta> {
+                self.0.metadata(p)
+            }
+            fn read_dir(&self, p: &VfsPath) -> std::io::Result<Vec<crate::vfs::Entry>> {
+                self.0.read_dir(p)
+            }
+            fn read(&self, p: &VfsPath) -> std::io::Result<Vec<u8>> {
+                self.0.read(p)
+            }
+            fn open(&self, p: &VfsPath) -> std::io::Result<Box<dyn crate::vfs::ReadSeek>> {
+                self.0.open(p)
+            }
+            fn root_id_at(&self, p: &VfsPath) -> String {
+                self.0.root_id_at(p)
+            }
+            fn viewer_notice(&self, _: &VfsPath) -> Option<Notice> {
+                Some(Notice {
+                    warn: true,
+                    text: "Thor cannot be reached · copy from 18:55".into(),
+                    link: Some(("Try again".into(), "/.ts/root?path=x".into())),
+                    verb: None,
+                    wait: self.1,
+                })
+            }
+        }
+        let dir = tmp_dir("viewer-line");
+        fs::write(dir.join("c.png"), [0u8; 4]).unwrap();
+        let mut state = state_at(dir.clone());
+        state.cfg.app_ui = true;
+        let plain = state.cfg.root().expect("these tests always serve one");
+        let page = |waits: bool| {
+            let root = Root { id: "ssh:thor:/home/me".into(), vfs: Arc::new(Copy(Arc::clone(&plain.vfs), waits)) };
+            let rel = vec!["c.png".to_string()];
+            let file = crate::view::file_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), &[], "/");
+            let raw = crate::view::raw_page(&state, &root, prefs(), &rel, &VfsPath::new(rel.clone()), "/");
+            (file, raw)
+        };
+        // The full-screen link is on the file's page; the line is on a page in
+        // the viewer's layout, as the raw view is and as the app's PDF and
+        // picture viewers are.
+        let (file, html) = page(false);
+        assert!(file.contains("data-ts-note=\"Thor cannot be reached \u{b7} copy from 18:55\""), "{file}");
+        assert!(html.contains("class=\"notice warn slim\""), "{html}");
+        assert!(html.contains("<span>Thor cannot be reached \u{b7} copy from 18:55</span>"), "{html}");
+        assert!(html.contains(">Try again</a>"), "{html}");
+        let (file, html) = page(true);
+        assert!(!html.contains("notice warn slim") && !file.contains("data-ts-note"), "a waiting notice is not drawn: {html}");
     }
 
     /// The embedder's lines on a file's page: under the backend's notice and

@@ -555,6 +555,16 @@ pub trait Vfs: Send + Sync {
         None
     }
 
+    /// The line a viewer's page carries (a PDF, a picture, a raw view), where
+    /// [`Self::notice`]'s would take the file's room: one short line, said only
+    /// while the page is not what it seems — a copy served while its source
+    /// does not answer. Only a warning is drawn, and never one that waits:
+    /// the page would draw itself again when it went, and the file lose its
+    /// place. Full screen's card says the same words. None by default.
+    fn viewer_notice(&self, _path: &VfsPath) -> Option<Notice> {
+        None
+    }
+
     /// Readies the verb `id` on `path` before it is asked about, for a verb
     /// whose question depends on what only reading tells — keeping a folder
     /// says how much it holds, and refuses one too big. Called by the shell
@@ -717,6 +727,9 @@ impl Vfs for Within {
     }
     fn notice(&self, path: &VfsPath) -> Option<Notice> {
         self.inner.notice(&self.full(path))
+    }
+    fn viewer_notice(&self, path: &VfsPath) -> Option<Notice> {
+        self.inner.viewer_notice(&self.full(path))
     }
     fn prepare(&self, path: &VfsPath, id: &str, progress: &mut dyn FnMut(&str)) -> io::Result<Prepared> {
         self.inner.prepare(&self.full(path), id, progress)
