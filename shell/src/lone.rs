@@ -6,7 +6,9 @@
 //! The window's root is the file's folder and the page is drawn as a document
 //! window draws its file — no tree, no Up, Start in Up's place — with the way
 //! on at the left end: **Save to Files** for a copy the app made only to show
-//! the file (a phone), **Show folder** for the file where it is (a desktop).
+//! the file (a phone), **Show folder** for the file where it is. A desktop
+//! hands a file to a document window of its own instead ([`open_handed`]), and
+//! a document window's Show folder is answered here too.
 
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -18,17 +20,6 @@ use super::{
     begin_open, committed_in, fail, note_in, note_landing, off_the_callback, on_the_start_page, open_superseded,
     push_page, remember_root_id, replace_page, replace_page_in, show, Serving, WINDOW,
 };
-
-/// The main window is being given a file handed over on a desktop: from the
-/// moment it is promised one until its root is set, it counts as open, so a
-/// second file arriving meanwhile — the rest of a Linux `%F` or a macOS
-/// `Opened` set, or a quick second Open with — gets a window of its own
-/// instead of cancelling the first.
-///
-/// The file it was claimed for, so that the same file again brings the main
-/// window forward rather than opening a second window beside it.
-#[cfg(desktop)]
-static MAIN_CLAIMED: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 /// Run once the page is on screen, for what can only be done to the page that
 /// is: the history behind it, a note in it.
@@ -52,17 +43,11 @@ pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, dated: bool, l
         let back = app.clone();
         let _ = app.run_on_main_thread(move || {
             if open_superseded(open_id) {
-                #[cfg(desktop)]
-                release_main();
                 return;
             }
             match resolved {
                 Some(file) => {
                     let served = serve_lone(&back, &file, temporary, dated);
-                    // The root is set: from here the main window is open to
-                    // anything that asks, and the claim has done its work.
-                    #[cfg(desktop)]
-                    release_main();
                     if let Some(url) = served {
                         if let Some(landed) = landed {
                             when_landed(&back, WINDOW, url, landed);
@@ -70,8 +55,6 @@ pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, dated: bool, l
                     }
                 }
                 None => {
-                    #[cfg(desktop)]
-                    release_main();
                     fail(
                         &back,
                         &format!("{} could not be opened.", treeserve::util::display_path(&file)),
@@ -84,11 +67,12 @@ pub fn open_lone(app: &AppHandle, file: PathBuf, temporary: bool, dated: bool, l
 }
 
 /// A file the system handed to the app on a desktop — Open with, or named on
-/// the command line — shown where it is. The main window takes it when
-/// nothing is open there, which is how a launch for a file starts; otherwise
-/// a document window does, and one already showing it comes to the front.
+/// the command line — shown where it is, in a document window of its own;
+/// one already showing it comes to the front instead. Never the main window:
+/// a launch for a file has none, and a running app's is the reader's.
 /// Linux and Windows reach this from the command line and the single-instance
-/// hook, macOS from `RunEvent::Opened`: the one rule for all three.
+/// hook, macOS from `RunEvent::Opened`: the one rule for all three. Off the
+/// main thread: it builds a window.
 #[cfg(desktop)]
 pub(crate) fn open_handed(app: &AppHandle, file: PathBuf) {
     let Ok(file) = file.canonicalize() else {
@@ -110,35 +94,10 @@ pub(crate) fn open_handed(app: &AppHandle, file: PathBuf) {
             let _ = win.set_focus();
         }
     };
-    {
-        let mut claimed = MAIN_CLAIMED.lock().unwrap_or_else(|e| e.into_inner());
-        match claimed.as_ref() {
-            // On its way to the main window already.
-            Some(f) if *f == file => return front(WINDOW),
-            Some(_) => {}
-            None if cfg.root().is_none() => {
-                *claimed = Some(file.clone());
-                drop(claimed);
-                open_lone(app, file, false, true, None);
-                return front(WINDOW);
-            }
-            None => {}
-        }
-    }
-    if cfg.lone().is_some_and(|l| l.document == document) && cfg.root().is_some_and(|r| r.id == id) {
-        return front(WINDOW);
-    }
     if let Some(label) = cfg.window_showing(&id, &document) {
         return front(&label);
     }
     super::own_window(app, treeserve::Root::local(dir.to_path_buf()), document, true);
-}
-
-/// Lets [`MAIN_CLAIMED`] go: called once the main window's root is set, or
-/// once the open it was claimed for has come to nothing.
-#[cfg(desktop)]
-fn release_main() {
-    *MAIN_CLAIMED.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Re-roots the main window at `file`'s folder, for that file alone, and puts

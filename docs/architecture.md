@@ -619,12 +619,40 @@ back to the app that sent the file.
 
 On a desktop the file arrives as a path — the command line at launch, the
 single-instance hook's argv after (`file_args`), macOS's `RunEvent::Opened` —
-and every one of them goes to `lone::open_handed`: the main window when
-nothing is open there (`open_lone`, in place), otherwise a document window
-(`own_window`, which New window uses too), or the window already showing it
-brought to the front (`Config::window_showing`). A launch waits for the first
-page to commit (`when_committed`), since the start page's own load closes the
-root. Registering the types is the embedder's packaging, never the app's code.
+and every one of them goes to `lone::open_handed` (through `hand_over`, off
+the main thread): always a document window (`own_window`, which New window
+uses too), or the window already showing it brought to the front
+(`Config::window_showing`); never the main window, so the lone state is a
+phone's. **A launch for a file builds no main window**: `start` brings up the
+server alone and the document window is the run's only one. macOS names no
+file in argv, so there `setup` decides after the events already queued
+(`HANDED`). Where none of the files opened and no window is left,
+`hand_over` builds the main window, so the run has something to close.
+Registering the types is the embedder's packaging, never the app's code.
+
+**The main window can be missing on a desktop.** `front_main` brings it
+forward or, where there is none, builds it on the start page (`build_main`,
+one build at a time). It is what `/.ts/main`, a page window whose `home` and
+main window have both gone, a plain second launch and macOS's `Reopen` with
+no window on screen all call. A folder named to a running app
+(`root_in_main`, read against the second copy's folder) goes to the main
+window while that is on the start page, built first where there is none and
+once its page has committed; otherwise to a folder window (`own_window`), so
+that what the main window shows is not taken from under the reader. macOS's
+`Opened` sends a folder there too, and files to `hand_over`. Generic over
+the runtime for a plugin's command, it builds through `BUILD_MAIN`, set in
+`setup` with the concrete handle. `main_then` is the same for a link that
+must land there — an embedder's page, or an action (`/.ts/…`) from a page
+window whose `home` and main window have both gone: built first, its start
+page committed, then handed over. A tree path from such a window is not: its
+root closed with its window, so it only brings up the start page
+(`front_main`). When the main window goes, `main_gone`
+closes its root, drops an open on its way and stops its transfer; the other
+windows stay. Whether they go too, and quitting with the last window, is the
+embedder's question (Telechore's `shells::on_event`). `any_window` is the
+parent for a box whose window has gone: that one, the main one, any. A phone
+keeps the old rule — its main window gone takes the others — since it has no
+others.
 
 **Send** (`send_menu`, `view.rs`): a file's verbs group ends in a `<details>`
 menu — Download…, Print…, and where the embedder can hand a file on
@@ -644,7 +672,9 @@ double click gets two windows rather than one label twice; `open_window`
 refuses a label in use, and a failed build undoes only what it did. A document
 window is titled after the file on screen, which a link can change; each opens at the main window's size, 32 points further down and
 right per window already open (under WSLg's Wayland the size read back
-counts the frame, so the copy is larger; X11 is exact). The main window's `Destroyed` destroys them.
+counts the frame, so the copy is larger; X11 is exact); with no main window,
+32 points from another of the app's windows, or where the system puts it.
+They outlive the main window on a desktop.
 
 ### Back
 

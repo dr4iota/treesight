@@ -1703,23 +1703,19 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let args: Vec<String> = argv.into_iter().skip(1).collect();
-            if let Some(dir) = first_dir_arg(args.iter().cloned()) {
-                open_root(app, dir, true);
-            } else {
-                // A file — Open with Telechore — goes where `lone` says, which
-                // brings its own window to the front. Named from the second
-                // copy's folder, which may not be ours.
-                // After the first page, as at launch: a second copy started a
-                // moment after the first arrives before that page has, and
-                // the start page's own load closed what it had been given.
-                let files = file_args(args.into_iter(), Path::new(&cwd));
-                if !files.is_empty() {
-                    return when_committed(app, files);
-                }
+            // Against the second copy's folder, which may not be ours.
+            if let Some(dir) = first_dir_arg(args.iter().cloned(), Path::new(&cwd)) {
+                return root_in_main(app, dir);
             }
-            if let Some(w) = app.get_webview_window(WINDOW) {
-                let _ = w.set_focus();
+            // A file — Open with Telechore — goes where `lone` says, which
+            // brings its own window to the front.
+            let files = file_args(args.into_iter(), Path::new(&cwd));
+            if !files.is_empty() {
+                return hand_over(app, files);
             }
+            // Started again with nothing to open: the main window, built
+            // where there is none.
+            front_main(app);
         }));
     }
     // The slot the protocol handler serves out of. It has to exist before the
@@ -1753,6 +1749,13 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
         .setup(move |app| {
             app.manage(SharedExt(Arc::clone(&ext)));
             let handle = app.handle().clone();
+            #[cfg(desktop)]
+            {
+                let main = handle.clone();
+                let _ = BUILD_MAIN.set(Box::new(move || {
+                    build_main(&main);
+                }));
+            }
             // Before the first page is asked for: it is the one that reads them.
             if let Ok(dir) = app.path().app_config_dir() {
                 opened.open(dir.join("prefs.txt"));
@@ -1766,10 +1769,7 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
             // reading a dialog or a drive making up its mind. Loading a real page
             // into it is deliberate too: the stylesheet and the layout are warm by
             // the time there is something to paint.
-            if let Err(e) = start(&handle) {
-                fail(&handle, &e, true);
-                return Ok(());
-            }
+            //
             // A folder is opened when this run was given one, and otherwise not at
             // all: the window comes up on the start page, which says what there is
             // to open. A modal picker in front of a window nobody has seen yet was
@@ -1780,22 +1780,51 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
             // desktop's — so this is where the two platforms differ, in one line
             // each, rather than in two copies of what follows.
             #[cfg(desktop)]
-            let opened = first_dir_arg(std::env::args().skip(1));
+            let opened = first_dir_arg(std::env::args().skip(1), Path::new("."));
             #[cfg(mobile)]
             let opened: Option<PathBuf> = None;
+            // **A launch for a file — Open with Telechore on a closed app —
+            // has no main window**: the file gets a document window of its
+            // own, and Main window builds the main one when it is asked for.
+            // macOS names no file here: it hands them over as `Opened`, which
+            // comes after this, so there the main window waits for the events
+            // already queued (`HANDED`).
+            #[cfg(desktop)]
+            let files = match opened {
+                Some(_) => Vec::new(),
+                None => file_args(std::env::args().skip(1), Path::new(".")),
+            };
+            #[cfg(desktop)]
+            let window = opened.is_some() || (files.is_empty() && !cfg!(target_os = "macos"));
+            #[cfg(mobile)]
+            let window = true;
+            if let Err(e) = start(&handle, window) {
+                fail(&handle, &e, true);
+                return Ok(());
+            }
             match opened {
                 Some(dir) => open_root(&handle, dir, true),
+                #[cfg(desktop)]
+                None if !files.is_empty() => hand_over(&handle, files),
+                #[cfg(target_os = "macos")]
+                None => {
+                    // Decided on the main thread, after what is queued there;
+                    // built off it, as every window after the first is.
+                    let h = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        if !HANDED.load(Ordering::SeqCst) {
+                            thread::spawn(move || build_main(&h));
+                        }
+                    });
+                }
                 // Including on a phone, where there is no argv and no picker to
                 // stand in for it: app storage is a Place on that page, one tap
                 // away, instead of the root nobody chose.
+                #[cfg(not(target_os = "macos"))]
                 None => {
                     if let Some(win) = handle.get_webview_window(WINDOW) {
                         show(&win);
                     }
-                    // A file, Open with Telechore on a closed app: shown alone
-                    // in the main window once its first page is there.
-                    #[cfg(desktop)]
-                    when_committed(&handle, file_args(std::env::args().skip(1), Path::new(".")));
                 }
             }
             Ok(())
@@ -1821,32 +1850,181 @@ pub fn run_with(context: tauri::Context<tauri::Wry>, mut ext: ShellExt) {
             }
             // macOS hands a file to the app as an event, whether it was
             // running or launched for it; the same rule as the command line.
+            // And a click on the Dock icon with no window on screen is a
+            // plain launch while running: the main window.
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Opened { urls } = &event {
-                when_committed(app, urls.iter().filter_map(|u| u.to_file_path().ok()).collect());
+            match &event {
+                // A folder as on the command line: the first one, in the
+                // main window, and the files beside it left.
+                tauri::RunEvent::Opened { urls } => {
+                    let paths: Vec<PathBuf> = urls.iter().filter_map(|u| u.to_file_path().ok()).collect();
+                    match paths.iter().find(|p| p.is_dir()) {
+                        Some(dir) => {
+                            HANDED.store(true, Ordering::SeqCst);
+                            root_in_main(app, dir.clone());
+                        }
+                        None => hand_over(app, paths.into_iter().filter(|p| p.is_file()).collect()),
+                    }
+                }
+                tauri::RunEvent::Reopen { has_visible_windows: false, .. } => front_main(app),
+                _ => {}
             }
             #[cfg(not(target_os = "android"))]
             let _ = (app, event);
         });
 }
 
-/// Hands each of `files` to `lone::open_handed` once the main window's first
-/// page has committed: that page is the start page, and its own load closes
-/// whatever root is open — the reason the Android hand-over waits too.
+/// A file or folder was handed to this run on macOS: the main window it would
+/// otherwise have opened with on the start page is not built (`setup`); a
+/// folder builds its own (`root_in_main`).
+#[cfg(target_os = "macos")]
+static HANDED: AtomicBool = AtomicBool::new(false);
+
+/// Builds the main window where there is none — set in `setup`, where the
+/// handle is the concrete one [`build_main`] takes, so that [`front_main`] can
+/// be generic over the runtime as a plugin's command is.
 #[cfg(desktop)]
-fn when_committed(app: &AppHandle, files: Vec<PathBuf>) {
-    if files.is_empty() {
-        return;
-    }
+static BUILD_MAIN: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// **The main window to the front, built on the start page where there is
+/// none**: a desktop launched for a file has none, and one closed while other
+/// windows stayed is gone (`docs/architecture.md`, *Windows*). Nothing it
+/// shows changes. Off the calling thread: restoring or building a window from
+/// inside a webview's own callback re-enters WebView2, and on Windows the app
+/// stopped responding.
+#[cfg(desktop)]
+pub fn front_main<R: tauri::Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    thread::spawn(move || match app.get_webview_window(WINDOW) {
+        Some(win) => {
+            let _ = app.run_on_main_thread(move || {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            });
+        }
+        None => {
+            if let Some(build) = BUILD_MAIN.get() {
+                build();
+            }
+        }
+    });
+}
+
+/// `then`, with the main window — built on the start page first where there is
+/// none, and once that page has committed, so that a navigation `then` asks
+/// for is not taken back by it. For a link that has to land in the main
+/// window — the Servers page, a game, an action a closed window's page asked
+/// for — whether or not it is open. Off the calling thread.
+#[cfg(desktop)]
+pub fn main_then<R: tauri::Runtime>(app: &AppHandle<R>, then: impl FnOnce(tauri::WebviewWindow<R>) + Send + 'static) {
     let app = app.clone();
     thread::spawn(move || {
+        if app.get_webview_window(WINDOW).is_none() {
+            let Some(build) = BUILD_MAIN.get() else {
+                return;
+            };
+            build();
+            for _ in 0..240 {
+                if committed(&app) {
+                    break;
+                }
+                thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+        if let Some(win) = app.get_webview_window(WINDOW) {
+            then(win);
+        }
+    });
+}
+
+/// The main window, shown — built on the start page, as at a cold start, if
+/// there is none. One build at a time: two asks in a row find the first one's
+/// window. `None` where it could not be built, which has been said.
+#[cfg(desktop)]
+fn build_main(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    static BUILDING: Mutex<()> = Mutex::new(());
+    let _one = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(win) = app.get_webview_window(WINDOW) {
+        show(&win);
+        return Some(win);
+    }
+    let serving = app.try_state::<Serving>()?;
+    // A new webview, with nothing committed in it yet.
+    serving.set_loaded(WINDOW, false);
+    serving.at_home.store(true, Ordering::Relaxed);
+    let title = window_title(&serving.state().cfg);
+    match build_window(app, WINDOW, &serving.home, title, false, None) {
+        Ok(win) => {
+            show(&win);
+            Some(win)
+        }
+        Err(e) => {
+            fail(app, &e, false);
+            None
+        }
+    }
+}
+
+/// A folder named to a running app: the main window's while it is on the start
+/// page, built first where there is none; otherwise a folder window of its own
+/// (`own_window`, as New window makes), so that what the main window shows — a
+/// tree, a terminal — is not taken from under the reader. Once the main
+/// window's page has committed: a start page still loading would close the
+/// root as it arrived, and is not yet the page to ask about.
+#[cfg(desktop)]
+fn root_in_main(app: &AppHandle, dir: PathBuf) {
+    let app = app.clone();
+    thread::spawn(move || {
+        let built = app.get_webview_window(WINDOW).is_none();
+        if built && build_main(&app).is_none() {
+            return;
+        }
         for _ in 0..240 {
             if committed(&app) {
                 break;
             }
             thread::sleep(std::time::Duration::from_millis(250));
         }
+        if !built && !on_the_start_page(&app) {
+            return own_window(&app, treeserve::Root::local(dir), "/".to_string(), false);
+        }
+        let back = app.clone();
+        let _ = app.run_on_main_thread(move || open_root(&back, dir, true));
+    });
+}
+
+/// Hands each of `files` to `lone::open_handed`, a document window each, off
+/// the calling thread: a window is built off the main one. Once the server is
+/// up, which a second copy's hand-over can arrive before. Where none of them
+/// can open and no window is on screen — a launch for a file that is not
+/// there — the main window first, so that the errors sit over it and the run
+/// has something to close.
+#[cfg(desktop)]
+fn hand_over(app: &AppHandle, files: Vec<PathBuf>) {
+    if files.is_empty() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    HANDED.store(true, Ordering::SeqCst);
+    let app = app.clone();
+    thread::spawn(move || {
+        for _ in 0..240 {
+            if app.try_state::<Serving>().is_some() {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(250));
+        }
+        // None of them can open and nothing is on screen: the main window
+        // first, so that the errors have a window under them.
+        if app.webview_windows().is_empty() && !files.iter().any(|f| f.canonicalize().is_ok_and(|f| f.is_file())) {
+            build_main(&app);
+        }
         files.into_iter().for_each(|f| lone::open_handed(&app, f));
+        // One that looked openable and was not, after all.
+        if app.webview_windows().is_empty() {
+            build_main(&app);
+        }
     });
 }
 
@@ -1860,11 +2038,13 @@ fn file_args<I: Iterator<Item = String>>(args: I, cwd: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// First argument that names a readable directory.
+/// First argument that names a readable directory, against `cwd` where
+/// relative, as [`file_args`] reads files: a second copy's arguments are
+/// relative to its folder, not to the running one's.
 #[cfg(desktop)]
-fn first_dir_arg<I: Iterator<Item = String>>(args: I) -> Option<PathBuf> {
+fn first_dir_arg<I: Iterator<Item = String>>(args: I, cwd: &Path) -> Option<PathBuf> {
     args.filter(|a| !a.starts_with('-'))
-        .map(PathBuf::from)
+        .map(|a| cwd.join(a))
         .find_map(|p| p.canonicalize().ok().filter(|p| p.is_dir()))
 }
 
@@ -2271,7 +2451,7 @@ fn serve_root(app: &AppHandle, dir: PathBuf, remember: bool) {
 
     // The server is up from the moment the app is, so re-rooting is the only
     // thing that ever happens here; there is no first-folder special case left.
-    match start(app) {
+    match start(app, true) {
         Ok(()) => {
             if let Some(win) = app.get_webview_window(WINDOW) {
                 show(&win);
@@ -2622,12 +2802,13 @@ fn show(win: &tauri::WebviewWindow) {
     let _ = win.set_focus();
 }
 
-/// Brings up the server and the window, with nothing open.
+/// Brings up the server and, with `window`, the main window, with nothing open.
 ///
 /// Whoever has a folder opens it after this — from argv, from the picker, from a
 /// Place. The window is built either way, because the page that says what there
-/// is to open is a page like any other.
-fn start(app: &AppHandle) -> Result<(), String> {
+/// is to open is a page like any other — but for a desktop launched for a file,
+/// which has a document window instead (`setup`).
+fn start(app: &AppHandle, window: bool) -> Result<(), String> {
     let ext = Arc::clone(&app.state::<SharedExt>().0);
     let mut cfg = Config::rootless();
     // Turns on the page's own chooser: path bar, history buttons, Places,
@@ -2709,7 +2890,9 @@ fn start(app: &AppHandle) -> Result<(), String> {
         at_home: AtomicBool::new(true),
     });
 
-    build_window(app, WINDOW, &home, title, false, None)?;
+    if window {
+        build_window(app, WINDOW, &home, title, false, None)?;
+    }
     check_roots(app);
     Ok(())
 }
@@ -2775,8 +2958,10 @@ pub fn page_window<R: tauri::Runtime>(
     home: &str,
 ) -> Result<tauri::WebviewWindow<R>, String> {
     let ext = Arc::clone(&app.state::<SharedExt>().0);
+    // The main window's size, or the window it came from where that has gone.
     let size = app
         .get_webview_window(WINDOW)
+        .or_else(|| app.get_webview_window(home))
         .and_then(|w| Some((w.inner_size().ok()?, w.scale_factor().ok()?)))
         .map(|(s, k)| (f64::from(s.width) / k, f64::from(s.height) / k))
         .unwrap_or((1200.0, 850.0));
@@ -2790,10 +2975,21 @@ pub fn page_window<R: tauri::Runtime>(
         let home = home.to_string();
         let url = url.clone();
         thread::spawn(move || {
-            if let Some(win) = app.get_webview_window(&home).or_else(|| app.get_webview_window(WINDOW)) {
+            let action = url.path().starts_with("/.ts/");
+            let go = move |win: tauri::WebviewWindow<R>| {
                 let _ = win.navigate(url);
                 let _ = win.unminimize();
                 let _ = win.set_focus();
+            };
+            match (app.get_webview_window(&home), app.get_webview_window(WINDOW)) {
+                (Some(win), _) => go(win),
+                (None, Some(main)) => go(main),
+                // An action lands in a main window built for it. A page of
+                // the tree does not: its root closed with its window, and a
+                // new main window has none, so it would only be sent to the
+                // start page — which is where this leaves the reader.
+                (None, None) if action => main_then(&app, go),
+                (None, None) => front_main(&app),
             }
         });
     }
@@ -2851,7 +3047,7 @@ fn build_window(
     home: &str,
     title: String,
     own: bool,
-    place: Option<(tauri::LogicalSize<f64>, tauri::LogicalPosition<f64>)>,
+    place: Option<(tauri::LogicalSize<f64>, Option<tauri::LogicalPosition<f64>>)>,
 ) -> Result<tauri::WebviewWindow, String> {
     let ext = Arc::clone(&app.state::<SharedExt>().0);
     // The main window's first size, or the one a window of its own is given,
@@ -2859,7 +3055,7 @@ fn build_window(
     // comes out larger than the window it copied (the size read back counts
     // the frame); under X11 and on Windows it is exact.
     let ((w, h), at) = match place {
-        Some((size, at)) => ((size.width, size.height), Some((at.x, at.y))),
+        Some((size, at)) => ((size.width, size.height), at.map(|at| (at.x, at.y))),
         None => ((1200.0, 850.0), None),
     };
     let builder = WebviewWindowBuilder::new(
@@ -3119,9 +3315,12 @@ fn build_window(
                 }
             }
             tauri::WindowEvent::Destroyed if own => window_gone(&app, &label),
-            // The main window gone takes the windows of their own with it:
-            // each is a folder taken out of it, and left on its own its Main
-            // window would lead nowhere.
+            // The main window gone leaves the others where they are: whether
+            // they go too was asked as it closed (the embedder's), and their
+            // Main window builds a new one. What was its own goes with it.
+            #[cfg(desktop)]
+            tauri::WindowEvent::Destroyed => main_gone(&app),
+            #[cfg(mobile)]
             tauri::WindowEvent::Destroyed => {
                 for (other, win) in app.webview_windows() {
                     if has_own_root(&app, &other) {
@@ -3164,7 +3363,7 @@ pub fn open_window(
     if !serving.state().cfg.open_window(label, root, name, document.then(|| path.to_string())) {
         return Err(taken());
     }
-    build_claimed(app, label, path, size, at)
+    build_claimed(app, label, path, size, Some(at))
 }
 
 /// Builds and shows the window `label`, whose root is already recorded — by
@@ -3177,7 +3376,7 @@ fn build_claimed(
     label: &str,
     path: &str,
     size: tauri::LogicalSize<f64>,
-    at: tauri::LogicalPosition<f64>,
+    at: Option<tauri::LogicalPosition<f64>>,
 ) -> Result<tauri::WebviewWindow, String> {
     let serving = app.try_state::<Serving>().ok_or("not started")?;
     let cfg = &serving.state().cfg;
@@ -3254,17 +3453,30 @@ fn new_window(app: &AppHandle, url: &tauri::Url) {
 
 /// A window of its own on `sub`, at `at` in it: a folder window, or with
 /// `document` a document window for that one file. Placed down and right of
-/// the main window, a step further for each window of its own already open.
-/// New window's, and a file handed to the running app's (`lone`).
+/// the main window, a step further for each window of its own already open;
+/// with no main window, of another window of the app, and with none at all —
+/// a launch for a file — at the main window's first size, where the system
+/// puts it. New window's, and a file handed to the app's (`lone`).
 #[cfg(desktop)]
 pub(crate) fn own_window(app: &AppHandle, sub: treeserve::Root, at: String, document: bool) {
     {
-        let Some(main) = app.get_webview_window(WINDOW) else {
-            return;
-        };
         let Some(serving) = app.try_state::<Serving>() else {
             return;
         };
+        // What it is placed from: the main window, a step further for each
+        // window of its own already open; with none, the first of those (the
+        // lowest number), one step less, since it is the first step itself;
+        // with none of those either, any window of the app, one step on.
+        let first_own = || {
+            app.webview_windows()
+                .into_iter()
+                .filter_map(|(l, w)| Some((l.strip_prefix("files-")?.parse::<u32>().ok()?, w)))
+                .min_by_key(|(n, _)| *n)
+                .map(|(_, w)| w)
+        };
+        let main = app.get_webview_window(WINDOW);
+        let own = if main.is_none() { first_own() } else { None };
+        let near = main.clone().or_else(|| own.clone()).or_else(|| app.webview_windows().into_values().next());
         // The label chosen and taken in one step: a double click, or Ctrl+N
         // twice, asks twice before either window is built.
         let (label, open) = serving.state().cfg.claim_window(
@@ -3274,20 +3486,41 @@ pub(crate) fn own_window(app: &AppHandle, sub: treeserve::Root, at: String, docu
             None,
             document.then(|| at.clone()),
         );
-        let scale = main.scale_factor().unwrap_or(1.0);
-        let size = main
-            .inner_size()
+        let scale = near.as_ref().and_then(|w| w.scale_factor().ok()).unwrap_or(1.0);
+        let size = near
+            .as_ref()
+            .and_then(|w| w.inner_size().ok())
             .map(|s| s.to_logical::<f64>(scale))
             .unwrap_or(tauri::LogicalSize::new(1200.0, 850.0));
-        let step = 32.0 * (open + 1) as f64;
-        let at_pos = main
-            .outer_position()
+        let step = match (&main, &own) {
+            (Some(_), _) => 32.0 * (open + 1) as f64,
+            (None, Some(_)) => 32.0 * open.max(1) as f64,
+            (None, None) => 32.0,
+        };
+        let at_pos = near
+            .as_ref()
+            .and_then(|w| w.outer_position().ok())
             .map(|p| p.to_logical::<f64>(scale))
-            .map(|p| tauri::LogicalPosition::new(p.x + step, p.y + step))
-            .unwrap_or(tauri::LogicalPosition::new(step, step));
+            .map(|p| tauri::LogicalPosition::new(p.x + step, p.y + step));
         if let Err(e) = build_claimed(app, &label, &at, size, at_pos) {
             fail(app, &e, false);
         }
+    }
+}
+
+/// The main window has gone, and the app runs on in the windows left: its
+/// folder is closed as the start page closes it, an open on its way to it is
+/// dropped, and a transfer it started stops. Its open folders stay, as they do
+/// across a close and a reopen of the same root. A new main window starts from
+/// here ([`build_main`]).
+#[cfg(desktop)]
+fn main_gone(app: &AppHandle) {
+    transfer::cancel_for(WINDOW);
+    begin_open();
+    if let Some(serving) = app.try_state::<Serving>() {
+        serving.set_loaded(WINDOW, false);
+        serving.at_home.store(true, Ordering::Relaxed);
+        serving.state().cfg.close_root();
     }
 }
 
@@ -4003,21 +4236,10 @@ fn shell_action(app: &AppHandle, label: &str, url: &tauri::Url) -> bool {
     }
     match url.path() {
         // A window of its own's way to the rest: the main window, in front,
-        // and nothing it shows changed. Off this callback and back on the main
-        // thread: restoring a minimized window from inside a webview's own
-        // callback sent WebView2 messages into itself, and the app hung.
-        // A desktop's: a phone has the one window.
+        // and nothing it shows changed — or a new one on the start page where
+        // there is none. A desktop's: a phone has the one window.
         #[cfg(desktop)]
-        "/.ts/main" => off_the_callback(app, |app| {
-            let back = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(win) = back.get_webview_window(WINDOW) {
-                    let _ = win.unminimize();
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
-            });
-        }),
+        "/.ts/main" => front_main(app),
         "/.ts/open" => ask_for_folder(app.clone(), false),
         // New window: the folder or file on screen, in a window of its own.
         #[cfg(desktop)]
@@ -4682,10 +4904,20 @@ pub(crate) fn fail_in(app: &AppHandle, label: &str, msg: &str, fatal: bool) {
 }
 
 /// The window a dialog about `label` is parented to: that one while it is
-/// open, the main one once it has gone. A phone's dialog has no parent.
+/// open, the main one once it has gone, and any other where there is no main
+/// window. A phone's dialog has no parent.
 #[cfg(desktop)]
 pub(crate) fn dialog_parent(app: &AppHandle, label: &str) -> Option<tauri::WebviewWindow> {
-    app.get_webview_window(label).or_else(|| app.get_webview_window(WINDOW))
+    any_window(app, label)
+}
+
+/// The window `label`, else the main one, else any window of the app — for a
+/// question or a box to sit over. Public for an embedder's dialogs.
+#[cfg(desktop)]
+pub fn any_window<R: tauri::Runtime>(app: &AppHandle<R>, label: &str) -> Option<tauri::WebviewWindow<R>> {
+    app.get_webview_window(label)
+        .or_else(|| app.get_webview_window(WINDOW))
+        .or_else(|| app.webview_windows().into_values().next())
 }
 
 /// The one-box rule (`docs/tasks/tree-browser.md`, *Refusal boxes stack*). A
@@ -5154,6 +5386,24 @@ mod tests {
         std::fs::write(dir.join("a.pdf"), b"%PDF").unwrap();
         let args = ["--flag", "a.pdf", "sub", "gone.md"].into_iter().map(String::from);
         assert_eq!(super::file_args(args, &dir), vec![dir.join("a.pdf")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder named relatively is the one in the folder the copy was
+    /// started in, not in the running copy's; an absolute one is itself.
+    #[cfg(desktop)]
+    #[test]
+    fn a_folder_argument_is_read_against_its_copy_s_folder() {
+        let dir = std::env::temp_dir().join(format!("ts-dir-args-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.pdf"), b"%PDF").unwrap();
+        let sub = dir.join("sub").canonicalize().unwrap();
+        let args = || ["--flag", "a.pdf", "sub"].into_iter().map(String::from);
+        assert_eq!(super::first_dir_arg(args(), &dir), Some(sub.clone()));
+        let elsewhere = std::env::temp_dir();
+        assert_eq!(super::first_dir_arg(args(), &elsewhere.join("ts-not-here")), None);
+        let absolute = std::iter::once(sub.display().to_string());
+        assert_eq!(super::first_dir_arg(absolute, &elsewhere), Some(sub));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
