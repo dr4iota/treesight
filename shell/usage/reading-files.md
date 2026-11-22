@@ -4,7 +4,8 @@ Select a file to see it beside the tree:
 
 - “Source” — syntax highlighted, with line numbers unless you turn them off.
 - **Markdown** — rendered, including maths in `$…$` and `$$…$$`, and `mermaid`
-  blocks drawn as diagrams.
+  blocks drawn as diagrams. Code and maths are each in a colour of their own,
+  a shade off the text's.
 - **CSV and TSV** — a table, with the heading row kept in view as you scroll;
   the first 5000 rows are shown.
 - **JSON** — laid out, and JSON Lines a record at a time. A file that does not
@@ -52,8 +53,8 @@ leave, tap that button, or press **Esc** or **F11**, or Back on a phone.
 
 ## Watching a file
 
-Hold “Refresh” to watch the file: it reloads by itself when the file changes,
-and “Refresh” stays lit. Hold it again to stop. Watching stays on through
+Hold “Refresh”, or right-click it, to watch the file: it reloads by itself
+when the file changes, and “Refresh” stays lit. Hold it again to stop. Watching stays on through
 full screen and a tap on “Refresh”, and ends when you open another file or
 switch between Preview, Source and Raw.
 

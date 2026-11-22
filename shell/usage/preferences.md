@@ -2,9 +2,13 @@
 
 The app remembers four settings on this device.
 
-- **Theme**, in the header — “Light”, “Dark”, or “Auto”, which follows
-  the system and is the default. The button shows the theme in use. Clicking
-  it moves to the next.
+- **Theme**, in the header — a click changes the look, a hold keeps it. It
+  says “Auto” and follows the system, which is the default; a click tries the
+  look you are not seeing, and another click goes back to “Auto”. A look you
+  only tried is not remembered when the app starts again. Hold the button, or
+  right-click it, to keep the look on screen: nothing changes but the button,
+  which stays lit while it keeps a theme. Then a click changes between light
+  and dark, still kept, and a hold or right-click goes back to “Auto”.
 - “Line numbers” — on or off, for highlighted source: a switch at the right
   end of the line above the source, beside its size and date.
 - “Sidebar”, in the header — show or hide the left side. Hidden, the file
