@@ -366,6 +366,15 @@ body.fitted .crumbs { margin-right: .65rem; }
    resting values differ and only the mark form is shared. */
 .lbl { display: var(--lbl, inline); }
 .ico { display: inline-flex; }
+/* The theme switch on Auto (`theme_flag`): the sun and the moon both drawn,
+   and the one the system shows kept — the look on screen, while the word says
+   Auto. A kept theme draws its own mark alone. */
+.ts-theme .if-light { display: contents; }
+.ts-theme .if-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  .ts-theme .if-light { display: none; }
+  .ts-theme .if-dark { display: contents; }
+}
 /* How big a drawn mark is, in one place.
 
    Eighteen pixels, and the number is not a taste: a pill's word form is

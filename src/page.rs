@@ -47,6 +47,19 @@ impl ThemeMode {
     }
 }
 
+/// The theme on screen and whether it is kept, from the two settings behind
+/// it: the kept one (`ts_theme`, stored for good) and the one tried for now
+/// (`ts_theme_try`, a session cookie gone at the next launch). A kept light or
+/// dark wins; on a kept Auto, a tried look shows unkept; else Auto, which is
+/// never kept — it is what there is when nothing is.
+pub fn theme_shown(kept: ThemeMode, tried: Option<ThemeMode>) -> (ThemeMode, bool) {
+    match (kept, tried) {
+        (ThemeMode::Auto, Some(t)) => (t, false),
+        (ThemeMode::Auto, None) => (ThemeMode::Auto, false),
+        (k, _) => (k, true),
+    }
+}
+
 /// The main pane's zoom, in percent, smallest and largest.
 pub const ZOOM_MIN: u16 = 50;
 pub const ZOOM_MAX: u16 = 300;
@@ -71,7 +84,10 @@ fn root_attrs(prefs: Prefs<'_>) -> String {
 
 #[derive(Clone, Copy)]
 pub struct Prefs<'a> {
+    /// The theme on screen (`theme_shown`), and whether it is kept: a light
+    /// or dark that is not was tried from Auto and lasts until the next launch.
     pub theme: ThemeMode,
+    pub theme_kept: bool,
     pub ln: bool,
     pub sidebar: bool,
     /// How large the main pane is drawn, in percent: the shell's Ctrl+= and
@@ -187,19 +203,50 @@ fn icon_lineno(on: bool) -> &'static str {
     }
 }
 
-/// Wraps icon paths in an `<svg>` that inherits colour and text size.
-/// The theme flag's mark and the words under it: which setting is chosen, and
-/// what clicking does next.
+/// The theme flag's mark and the words under it, as a shell with scripts draws
+/// it (22 November 2026). **A click changes the look, a hold (or a
+/// right-click) whether it is kept**:
+///
+/// - Auto, unlit: a click tries the other look from the one on screen, for
+///   now; a hold keeps the one on screen.
+/// - A look tried for now, unlit (`theme_try_why`): a click goes back to Auto;
+///   a hold keeps it, the colours staying as they are.
+/// - A kept light or dark, lit: a click goes to the other, still kept; a hold
+///   lets it go back to Auto.
+///
+/// Kept is stored; tried is gone at the next launch.
 ///
 /// Public because the flag is not only in this header any more — a shell that
 /// serves pages of its own beside the tree puts the same control on them, and
 /// three places showing one setting should be three places drawing one mark.
+/// Auto's own mark is for a page with no script (`theme_flag`); one that has
+/// one draws the sun or the moon the system shows.
 pub fn theme_icon(mode: ThemeMode) -> (&'static str, &'static str) {
     match mode {
         ThemeMode::Auto => (
             ICON_THEME_AUTO,
-            "Theme: follows the system. Click for light.",
+            "Theme: follows the system. Click to try the other look. Hold or right-click to keep this one.",
         ),
+        ThemeMode::Light => (ICON_SUN, "Theme: light, kept. Click for dark. Hold or right-click to follow the system."),
+        ThemeMode::Dark => (ICON_MOON, "Theme: dark, kept. Click for light. Hold or right-click to follow the system."),
+    }
+}
+
+/// The words for a look tried from Auto and not kept (`theme_icon` has the
+/// rest). Auto is never tried, so it has the words for Auto.
+pub fn theme_try_why(mode: ThemeMode) -> &'static str {
+    match mode {
+        ThemeMode::Auto => theme_icon(mode).1,
+        ThemeMode::Light => "Theme: light, for now. Click to follow the system. Hold or right-click to keep light.",
+        ThemeMode::Dark => "Theme: dark, for now. Click to follow the system. Hold or right-click to keep dark.",
+    }
+}
+
+/// The same for a page with no script at all (`treeserve` on its own): no hold
+/// to read, so a click steps through all three.
+fn theme_icon_cycle(mode: ThemeMode) -> (&'static str, &'static str) {
+    match mode {
+        ThemeMode::Auto => (ICON_THEME_AUTO, "Theme: follows the system. Click for light."),
         ThemeMode::Light => (ICON_SUN, "Theme: light. Click for dark."),
         ThemeMode::Dark => (ICON_MOON, "Theme: dark. Click to follow the system."),
     }
@@ -386,12 +433,47 @@ pub(crate) fn ln_switch(token: &str, prefs: Prefs<'_>, url_now: &str) -> String 
 
 /// The theme's flag, on every page that has a header: the choice in the word,
 /// the setting in the name (`named_flag`).
-fn theme_flag(token: &str, theme: ThemeMode, url_now: &str) -> String {
+///
+/// **In the app** (`switch`) the switch `theme_icon` describes: lit (`.on`)
+/// while kept. The click is the link — to the other look kept, back to Auto
+/// from one tried, and from Auto to the other look tried. On Auto the mark is
+/// the one the system shows (both drawn, the stylesheet showing one), and
+/// which look is the other only a script can know: the link says dark, and the
+/// shell's `THEME` aims it, and reads the hold. **Without a script**
+/// (`treeserve`) it steps through all three, kept.
+fn theme_flag(token: &str, theme: ThemeMode, kept: bool, url_now: &str, switch: bool) -> String {
+    if !switch {
+        let (mark, why) = theme_icon_cycle(theme);
+        return named_flag(
+            "",
+            &set_href(token, "theme", theme.next().as_str(), url_now),
+            &svg_icon(mark),
+            theme.label(),
+            &format!("{}, theme", theme.label()),
+            why,
+        );
+    }
     let (mark, why) = theme_icon(theme);
+    let (class, key, to, icon, why) = match (theme, kept) {
+        (ThemeMode::Auto, _) => (
+            "ts-theme",
+            "try",
+            ThemeMode::Dark,
+            format!(
+                "<span class=\"if-light\">{}</span><span class=\"if-dark\">{}</span>",
+                svg_icon(ICON_SUN),
+                svg_icon(ICON_MOON)
+            ),
+            why,
+        ),
+        (_, false) => ("ts-theme", "try", ThemeMode::Auto, svg_icon(mark), theme_try_why(theme)),
+        (ThemeMode::Light, true) => ("ts-theme on", "theme", ThemeMode::Dark, svg_icon(mark), why),
+        (ThemeMode::Dark, true) => ("ts-theme on", "theme", ThemeMode::Light, svg_icon(mark), why),
+    };
     named_flag(
-        "",
-        &set_href(token, "theme", theme.next().as_str(), url_now),
-        &svg_icon(mark),
+        class,
+        &set_href(token, key, to.as_str(), url_now),
+        &icon,
         theme.label(),
         &format!("{}, theme", theme.label()),
         why,
@@ -844,7 +926,7 @@ fn head_and_header(
         // of, at any width.
         false => String::new(),
     };
-    controls.push_str(&theme_flag(&state.cfg.action_token, prefs.theme, url_now));
+    controls.push_str(&theme_flag(&state.cfg.action_token, prefs.theme, prefs.theme_kept, url_now, state.cfg.app_ui));
 
     // Up, the way a file manager means it: the folder that contains this one.
     //
@@ -1046,7 +1128,7 @@ fn rootless_page(state: &State, prefs: Prefs<'_>, url_now: &str, content: &str) 
         None => String::new(),
     };
     let mut controls = String::new();
-    controls.push_str(&theme_flag(&state.cfg.action_token, prefs.theme, url_now));
+    controls.push_str(&theme_flag(&state.cfg.action_token, prefs.theme, prefs.theme_kept, url_now, state.cfg.app_ui));
     let data_theme = root_attrs(prefs);
     format!(
         r#"<!DOCTYPE html>
@@ -2913,6 +2995,35 @@ pub fn error_page(
 
 #[cfg(test)]
 mod tests {
+
+    /// In the app a switch: lit while kept, the click to the other one kept;
+    /// unlit while tried, the click back to Auto; on Auto both marks, the
+    /// click a look tried, aimed by the shell's script. Without a script, the
+    /// three in turn.
+    #[test]
+    fn the_theme_flag_is_a_switch_in_the_app_and_a_cycle_without_a_script() {
+        let auto = theme_flag("tok", ThemeMode::Auto, false, "/x", true);
+        assert!(auto.contains("class=\"ts-theme\""), "{auto}");
+        assert!(auto.contains("try=dark") && auto.contains("if-light") && auto.contains("if-dark"), "{auto}");
+        let tried = theme_flag("tok", ThemeMode::Dark, false, "/x", true);
+        assert!(tried.contains("class=\"ts-theme\"") && tried.contains("try=auto"), "{tried}");
+        assert!(tried.contains("for now") && !tried.contains("if-light"), "{tried}");
+        let dark = theme_flag("tok", ThemeMode::Dark, true, "/x", true);
+        assert!(dark.contains("class=\"ts-theme on\"") && dark.contains("theme=light"), "{dark}");
+        let light = theme_flag("tok", ThemeMode::Light, true, "/x", true);
+        assert!(light.contains("class=\"ts-theme on\"") && light.contains("theme=dark"), "{light}");
+        let cycle = theme_flag("tok", ThemeMode::Dark, true, "/x", false);
+        assert!(cycle.contains("theme=auto") && !cycle.contains("ts-theme"), "{cycle}");
+    }
+
+    /// A kept light or dark wins over one tried; a tried one shows on Auto.
+    #[test]
+    fn a_look_tried_shows_only_while_auto_is_kept() {
+        assert!(theme_shown(ThemeMode::Auto, None) == (ThemeMode::Auto, false));
+        assert!(theme_shown(ThemeMode::Auto, Some(ThemeMode::Dark)) == (ThemeMode::Dark, false));
+        assert!(theme_shown(ThemeMode::Light, Some(ThemeMode::Dark)) == (ThemeMode::Light, true));
+        assert!(theme_shown(ThemeMode::Dark, None) == (ThemeMode::Dark, true));
+    }
     use super::*;
     use crate::hl::Hl;
     use crate::{Config, PaneEntry, PaneSection, RootStatus, StartNote};
@@ -2922,6 +3033,7 @@ mod tests {
     fn prefs() -> Prefs<'static> {
         Prefs {
             theme: ThemeMode::Light,
+            theme_kept: true,
             ln: false,
             sidebar: false,
             zoom: 100,

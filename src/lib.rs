@@ -1608,6 +1608,7 @@ fn text_etag(body: &str) -> String {
 fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
     let mut prefs = Prefs {
         theme: state.cfg.theme,
+        theme_kept: false,
         ln: state.cfg.ln,
         sidebar: state.cfg.sidebar,
         zoom: 100,
@@ -1617,6 +1618,7 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
         lone_way: page::LoneWay::None,
         facts: None,
     };
+    let mut tried = None;
     for value in req.named("Cookie") {
         for (k, v) in parse_cookies(value) {
             match k.as_str() {
@@ -1625,6 +1627,7 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
                         prefs.theme = t;
                     }
                 }
+                "ts_theme_try" => tried = ThemeMode::from_str(&v).filter(|t| *t != ThemeMode::Auto),
                 "ts_ln" => prefs.ln = v == "1",
                 "ts_sidebar" => prefs.sidebar = v == "1",
                 "ts_zoom" => prefs.zoom = page::zoom_from_str(&v).unwrap_or(100),
@@ -1632,6 +1635,7 @@ fn prefs_from<'a>(state: &State, req: &Req, open: &'a [String]) -> Prefs<'a> {
             }
         }
     }
+    (prefs.theme, prefs.theme_kept) = page::theme_shown(prefs.theme, tried);
     prefs
 }
 
@@ -1925,6 +1929,17 @@ fn cookie_header(k: &str, v: &str) -> (String, String) {
     )
 }
 
+/// A cookie for this session only: no `Max-Age`, so a browser drops it when it
+/// closes and the app's shell does not write it down.
+fn cookie_for_now(k: &str, v: &str) -> (String, String) {
+    hdr("Set-Cookie", &format!("{}={}; Path=/; SameSite=Lax", k, v))
+}
+
+/// A cookie forgotten.
+fn cookie_gone(k: &str) -> (String, String) {
+    hdr("Set-Cookie", &format!("{}=; Path=/; Max-Age=0; SameSite=Lax", k))
+}
+
 /// Local redirect target from `?back=`, defaulting to the root.
 fn back_target(query: &[(String, String)]) -> String {
     query_get(query, "back")
@@ -2024,12 +2039,24 @@ fn toggle_open(req: &Req, query: &[(String, String)], name: &str) -> Reply {
 /// `/.ts/set?theme=dark&ln=1&sidebar=0&zoom=125&back=/some/where` — store
 /// prefs in cookies and bounce back. Pure SSR option switching, no JS; only the
 /// zoom comes from the shell's script, which has drawn it already.
+///
+/// `theme=` keeps a theme, and lets go of one tried. `try=light` or `dark`
+/// shows a look for now — a session cookie, with Auto kept under it — and
+/// `try=auto` lets it go (`page::theme_shown`).
 fn set_prefs(query: &[(String, String)]) -> Reply {
     let mut reply = Reply::empty(303);
     for (k, v) in query {
         match k.as_str() {
             "theme" if ThemeMode::from_str(v).is_some() => {
                 reply.headers.push(cookie_header("ts_theme", v));
+                reply.headers.push(cookie_gone("ts_theme_try"));
+            }
+            "try" if ThemeMode::from_str(v).is_some() => {
+                reply.headers.push(cookie_header("ts_theme", "auto"));
+                reply.headers.push(match v.as_str() {
+                    "auto" => cookie_gone("ts_theme_try"),
+                    _ => cookie_for_now("ts_theme_try", v),
+                });
             }
             "ln" if v == "0" || v == "1" => {
                 reply.headers.push(cookie_header("ts_ln", v));

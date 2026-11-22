@@ -408,6 +408,102 @@ const WAIT: &str = r#"
 })();
 "#;
 
+/// **A hold**, for the header's switches that have a second job: Refresh (on a
+/// file, Watch on and off) and the theme (back to following the system, or
+/// keeping the look on screen). `window.__tsHold(selector, fn, when)`: a press
+/// on a match held for `HOLD_MS` without moving runs `fn(element)` — while
+/// `when()` says yes, if given — and the click it ends in is not a tap.
+///
+/// Three ways in. The timer; **Android's own long press**, which cancels the
+/// touch at about 500 ms — on the Pixel 9 emulator just before the timer,
+/// every time — and then asks for the link's menu, which is taken as the hold;
+/// and **a right-click** (or the context-menu key), a mouse's second action,
+/// with no press in flight. The link's own menu never opens over any of them.
+const HOLD: &str = r#"
+(function () {
+  if (window.top !== window) return;
+  var HOLD_MS = 500, SLOP = 10;
+  var binds = [], press = null, suppress = null;
+  var find = function (t) {
+    for (var i = 0; i < binds.length; i++) {
+      var a = t && t.closest && t.closest(binds[i].sel);
+      if (a && (!binds[i].when || binds[i].when())) return { b: binds[i], a: a };
+    }
+    return null;
+  };
+  var clear = function () { if (press) clearTimeout(press.timer); press = null; };
+  // A press ends in a click, which is not a tap; a right-click ends in none.
+  var fire = function (hit, press_) { clear(); suppress = press_ ? hit.a : null; hit.b.fn(hit.a); };
+  window.__tsHold = function (sel, fn, when) { binds.push({ sel: sel, fn: fn, when: when }); };
+  addEventListener('pointerdown', function (e) {
+    suppress = null;
+    clear();
+    if (e.button > 0) return;
+    var hit = find(e.target);
+    if (!hit) return;
+    press = { hit: hit, x: e.clientX, y: e.clientY, cancelled: 0, timer: setTimeout(function () { fire(hit, true); }, HOLD_MS) };
+  }, true);
+  addEventListener('pointermove', function (e) {
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > SLOP) clear();
+  }, true);
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
+    addEventListener(t, function (e) {
+      // A touch cancelled, or leaving after that, while a press is held:
+      // Android's menu may be coming. Kept for it; the next press clears it.
+      if (t !== 'pointerup' && e.pointerType === 'touch' && press) {
+        if (press.timer) { clearTimeout(press.timer); press.timer = 0; press.cancelled = Date.now(); }
+        if (press.cancelled) return;
+      }
+      clear();
+    }, true);
+  });
+  // A held press is not a tap: the link does nothing on the click it ends in.
+  addEventListener('click', function (e) {
+    if (!suppress || !(e.target && e.target.closest) || !suppress.contains(e.target)) return;
+    suppress = null;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    // WAIT saw this click as leaving the page; the hold did not leave it.
+    if (typeof window.__tsStay === 'function') window.__tsStay();
+  }, true);
+  addEventListener('contextmenu', function (e) {
+    var hit = find(e.target);
+    if (!hit) return;
+    e.preventDefault();
+    if (press && press.cancelled && Date.now() - press.cancelled < 1000) return fire(press.hit, true);
+    if (press || suppress) return;
+    fire(hit, false);
+  }, true);
+})();
+"#;
+
+/// **The theme switch** (`theme_flag` and `theme_icon` in `page.rs`): a click
+/// changes the look, a hold whether it is kept. On Auto the click tries the
+/// look the screen is not showing, which only a script can tell, so the link
+/// (which says dark) is aimed here and again when the system changes. A hold
+/// on a kept theme (`.on`) goes back to Auto; anywhere else it keeps the look
+/// on screen.
+const THEME: &str = r#"
+(function () {
+  if (window.top !== window) return;
+  var flag = function () { return document.querySelector('a.ts-theme'); };
+  var media = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+  var dark = function () { return !!(media && media.matches); };
+  var mode = function () { return document.documentElement.getAttribute('data-theme') || 'auto'; };
+  var to = function (a, key, m) { return a.getAttribute('href').replace(/([?&])(theme|try)=[a-z]+/, '$1' + key + '=' + m); };
+  var aim = function () {
+    var a = flag();
+    if (a && mode() === 'auto') a.setAttribute('href', to(a, 'try', dark() ? 'light' : 'dark'));
+  };
+  addEventListener('DOMContentLoaded', aim);
+  if (media && media.addEventListener) media.addEventListener('change', aim);
+  if (window.__tsHold) window.__tsHold('a.ts-theme', function (a) {
+    var m = mode();
+    location.assign(to(a, 'theme', a.classList.contains('on') ? 'auto' : m === 'auto' ? (dark() ? 'dark' : 'light') : m));
+  });
+})();
+"#;
+
 /// **Watch** (the header's Refresh, held): the file on screen reloads itself
 /// when it changes on disk. A hold turns it on, and the Refresh link is lit
 /// while it is, as the view and sidebar switches are. The status line says how
@@ -427,7 +523,6 @@ const WAIT: &str = r#"
 const WATCH: &str = r#"
 (function () {
   if (window.top !== window) return;
-  var HOLD_MS = 500, SLOP = 10;
   var link = function () { return document.querySelector('a[href="/.ts/reload"]'); };
   var status = function () { return document.querySelector('.ts-watch'); };
   // The window's history state, which survives a reload on every engine the
@@ -454,7 +549,7 @@ const WATCH: &str = r#"
   if (carry) setState({ tsWatch: null });
   var carried = carry && carry.path === location.pathname ? carry.path : null;
   var note = carry && carry.note ? carry.note : null;
-  var on = false, stamp = null, timer = 0, hold = 0, pressing = null, suppress = false;
+  var on = false, stamp = null, timer = 0;
   var flash = 0, failing = false, gen = 0, behind = false;
   var quiet = function () { return typeof window.__tsQuiet === 'function' && window.__tsQuiet(); };
   var clock = function () { return new Date().toLocaleTimeString(); };
@@ -477,8 +572,8 @@ const WATCH: &str = r#"
     var a = link();
     if (!a) return;
     a.classList.toggle('on', on);
-    a.title = on ? 'Reload this page (F5). Watching for changes: hold to stop'
-      : 'Reload this page (F5). Hold to reload when the file changes';
+    a.title = on ? 'Reload this page (F5). Watching for changes: hold or right-click to stop'
+      : 'Reload this page (F5). Hold or right-click to reload when the file changes';
   };
   var paint = function () { paintLink(); paintStatus(); };
   var timer_ = function () { clearTimeout(timer); timer = setTimeout(look, every() * 1000); };
@@ -547,64 +642,18 @@ const WATCH: &str = r#"
         timer = setTimeout(look, os ? 2000 : every() * 1000);
       });
   };
-  // `cancelled`: when Android took a held press for its own long press. It
-  // cancels the pointer at about HOLD_MS and then asks for the link's menu, and
-  // on the emulator it won the race every time: that menu ends the hold.
-  var cancelled = 0;
-  var cancel = function () { clearTimeout(hold); hold = 0; pressing = null; cancelled = 0; };
+  // The hold, shared with the theme switch (`HOLD`): on a file, it turns
+  // Watch on or off. A right-click does the same with a mouse.
   var held = function () {
-    clearTimeout(hold);
-    hold = 0;
-    pressing = null;
-    cancelled = 0;
-    suppress = true;
     if (on) stop('Watch off', 2000);
     else if (mode() === 'off') show("Can't watch this file here", 4000);
     else start();
   };
-  addEventListener('pointerdown', function (e) {
-    suppress = false;
-    cancelled = 0;
-    var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
-    if (!a || !file() || e.button > 0) return;
-    pressing = { x: e.clientX, y: e.clientY };
-    hold = setTimeout(held, HOLD_MS);
-  }, true);
-  addEventListener('pointermove', function (e) {
-    if (pressing && Math.hypot(e.clientX - pressing.x, e.clientY - pressing.y) > SLOP) cancel();
-  }, true);
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
-    addEventListener(t, function (e) {
-      // A touch cancelled, or leaving after that, while a press is held: the
-      // menu may be coming. Held for it; the next press clears it.
-      if (t !== 'pointerup' && e.pointerType === 'touch' && pressing) {
-        if (hold) { clearTimeout(hold); hold = 0; cancelled = Date.now(); }
-        if (cancelled) return;
-      }
-      cancel();
-    }, true);
-  });
-  // A held press is not a tap: the link does nothing on the click it ends in.
+  if (window.__tsHold) window.__tsHold('a[href="/.ts/reload"]', held, file);
+  // A tap is the link's own reload, and Watch rides it.
   addEventListener('click', function (e) {
     var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
-    if (!a) return;
-    if (suppress) {
-      suppress = false;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      // WAIT saw this click as leaving the page, and a page that is left never
-      // reloads for Watch. The hold did not leave it: take that back.
-      if (typeof window.__tsStay === 'function') window.__tsStay();
-      return;
-    }
-    if (on) setState({ tsWatch: { path: location.pathname, note: null } });
-  }, true);
-  // Android's long press would open the link's menu over the hold.
-  addEventListener('contextmenu', function (e) {
-    var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
-    if (!a) return;
-    if (pressing && cancelled && Date.now() - cancelled < 1000) { e.preventDefault(); held(); return; }
-    if (pressing || suppress) e.preventDefault();
+    if (a && on) setState({ tsWatch: { path: location.pathname, note: null } });
   }, true);
   // Revision: `r1` for a file's first view, one more for each reload of it, and
   // back to `r1` at another file. A reload is this page's own load, which the
@@ -1914,7 +1963,7 @@ addEventListener('DOMContentLoaded', function () {
 fn window_script(custom: Option<String>, ours: &[String]) -> String {
     let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{MENUS}\n{WORDS}\n{ZOOM}\n{FULL}\n{WATCH}\n{}",
+        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{MENUS}\n{WORDS}\n{ZOOM}\n{FULL}\n{HOLD}\n{WATCH}\n{THEME}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
@@ -2867,12 +2916,16 @@ struct JarState(Arc<Jar>);
 /// for which side wins where a platform has a working store of its own, and
 /// `set_pref` for the 303 that a custom scheme cannot carry out either.
 ///
-/// `Path` and `Max-Age` are dropped on the floor: every page is under `/`, and
-/// the file this is written to *is* the expiry. Nothing here is a secret; the
-/// whole content is which theme you picked.
+/// `Path` is dropped on the floor: every page is under `/`. `Max-Age` only says
+/// which of three a cookie is — kept, in the file this is written to, which *is*
+/// the expiry; for this run only, with none (`session`, a theme tried for now);
+/// or forgotten, at `0`. Nothing here is a secret; the whole content is which
+/// theme you picked.
 #[derive(Default)]
 struct Jar {
     cookies: Mutex<BTreeMap<String, String>>,
+    /// The names in `cookies` that are not written down. Locked after it.
+    session: Mutex<std::collections::BTreeSet<String>>,
     /// Where the jar lives. Set in `setup`, because the protocol handler is
     /// registered on the builder — before there is an `AppHandle` to ask.
     file: OnceLock<PathBuf>,
@@ -2895,41 +2948,82 @@ impl Jar {
                 .headers
                 .iter()
                 .filter(|(k, _)| k.eq_ignore_ascii_case("Set-Cookie"))
-                .filter_map(|(_, v)| cookie_pair(v))
+                .filter_map(|(_, v)| cookie_pair(v).map(|(k, val)| (k, val, cookie_life(v))))
                 .collect(),
         );
     }
 
     /// One preference, chosen somewhere other than a reply — see [`set_theme`].
-    fn set(&self, name: &str, value: &str) {
-        self.put(vec![(name.to_string(), value.to_string())]);
+    fn set(&self, name: &str, value: &str, life: Life) {
+        self.put(vec![(name.to_string(), value.to_string(), life)]);
     }
 
-    fn put(&self, pairs: Vec<(String, String)>) {
+    fn put(&self, pairs: Vec<(String, String, Life)>) {
         if pairs.is_empty() {
             return;
         }
         let mut cookies = self.cookies.lock().unwrap();
-        cookies.extend(pairs);
-        self.write(&cookies);
+        let mut session = self.session.lock().unwrap();
+        for (k, v, life) in pairs {
+            match life {
+                Life::Gone => {
+                    cookies.remove(&k);
+                    session.remove(&k);
+                }
+                Life::Session => {
+                    session.insert(k.clone());
+                    cookies.insert(k, v);
+                }
+                Life::Kept => {
+                    session.remove(&k);
+                    cookies.insert(k, v);
+                }
+            }
+        }
+        self.write(&cookies, &session);
     }
 
     /// Forgets one cookie, in memory and in the file.
     fn remove(&self, name: &str) {
-        let mut cookies = self.cookies.lock().unwrap();
-        if cookies.remove(name).is_some() {
-            self.write(&cookies);
-        }
+        self.set(name, "", Life::Gone);
     }
 
-    fn write(&self, cookies: &BTreeMap<String, String>) {
+    fn write(&self, cookies: &BTreeMap<String, String>, session: &std::collections::BTreeSet<String>) {
         if let Some(file) = self.file.get() {
             if let Some(dir) = file.parent() {
                 let _ = fs::create_dir_all(dir);
             }
-            let _ = fs::write(file, jar_text(cookies));
+            let mut kept = cookies.clone();
+            kept.retain(|k, _| !session.contains(k));
+            let _ = fs::write(file, jar_text(&kept));
         }
     }
+}
+
+/// How long a cookie stays in the [`Jar`]: by its `Max-Age`, or `Expires`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Life {
+    Kept,
+    Session,
+    Gone,
+}
+
+fn cookie_life(value: &str) -> Life {
+    let mut life = Life::Session;
+    for attr in value.split(';').skip(1) {
+        let (k, v) = attr.split_once('=').unwrap_or((attr, ""));
+        match k.trim().to_ascii_lowercase().as_str() {
+            "max-age" => {
+                return match v.trim().parse::<i64>() {
+                    Ok(n) if n <= 0 => Life::Gone,
+                    _ => Life::Kept,
+                };
+            }
+            "expires" => life = Life::Kept,
+            _ => {}
+        }
+    }
+    life
 }
 
 /// The name and value out of a `Set-Cookie` value: everything up to the first
@@ -5409,40 +5503,53 @@ fn name_old_recents(app: &AppHandle) {
     save_recent_named(app, recent(app), labels);
 }
 
-/// The theme the shell's own pages are being drawn with.
+/// The theme the shell's own pages are being drawn with, and whether it is
+/// kept (`treeserve::page::theme_shown`): a light or dark tried from Auto is
+/// not, and is gone at the next launch.
 ///
 /// For an embedder whose pages sit beside them: the toggle writes `ts_theme` to
 /// the jar, and nothing outside this crate could read it, so a scheme page of
 /// its own had no way to be dark when the tree was. `Auto` is the answer when
 /// nobody has chosen — the same answer the pages act on, which is to let
 /// `prefers-color-scheme` decide.
+pub fn theme_now<R: tauri::Runtime>(app: &AppHandle<R>) -> (ThemeMode, bool) {
+    let from = |name: &str| {
+        app.try_state::<JarState>()
+            .and_then(|jar| jar.0.cookies.lock().unwrap().get(name).and_then(|v| ThemeMode::from_str(v)))
+    };
+    let kept = from("ts_theme").unwrap_or_else(|| {
+        app.try_state::<Serving>()
+            .map(|s| s.state().cfg.theme)
+            .unwrap_or(ThemeMode::Auto)
+    });
+    treeserve::page::theme_shown(kept, from("ts_theme_try").filter(|t| *t != ThemeMode::Auto))
+}
+
+/// The theme on screen, kept or not ([`theme_now`]).
 pub fn theme<R: tauri::Runtime>(app: &AppHandle<R>) -> ThemeMode {
-    if let Some(jar) = app.try_state::<JarState>()
-        && let Some(mode) = jar
-            .0
-            .cookies
-            .lock()
-            .unwrap()
-            .get("ts_theme")
-            .and_then(|v| ThemeMode::from_str(v))
-    {
-        return mode;
-    }
-    app.try_state::<Serving>()
-        .map(|s| s.state().cfg.theme)
-        .unwrap_or(ThemeMode::Auto)
+    theme_now(app).0
 }
 
 /// Chooses the theme, for a page of an embedder's own that carries the same
-/// control as the tree's header.
+/// control as the tree's header: kept, or (`kept` false, a light or dark) for
+/// this run only, the same as the tree's `/.ts/set?try=`.
 ///
 /// The tree's toggle is a link to `/.ts/set`, which answers with a cookie and a
 /// redirect to a *path* — no use to a page on another scheme, which cannot be
 /// redirected back to. This is the same write without the round trip; the tree
 /// reads it on its next render, and the caller repaints itself.
-pub fn set_theme<R: tauri::Runtime>(app: &AppHandle<R>, mode: ThemeMode) {
+pub fn set_theme<R: tauri::Runtime>(app: &AppHandle<R>, mode: ThemeMode, kept: bool) {
     if let Some(jar) = app.try_state::<JarState>() {
-        jar.0.set("ts_theme", mode.as_str());
+        match (mode, kept) {
+            (ThemeMode::Auto, _) | (_, true) => jar.0.put(vec![
+                ("ts_theme".into(), mode.as_str().into(), Life::Kept),
+                ("ts_theme_try".into(), String::new(), Life::Gone),
+            ]),
+            (_, false) => jar.0.put(vec![
+                ("ts_theme".into(), "auto".into(), Life::Kept),
+                ("ts_theme_try".into(), mode.as_str().into(), Life::Session),
+            ]),
+        }
     }
 }
 
@@ -5922,6 +6029,67 @@ mod tests {
         assert!(after.contains("class=\"app fitted nopane\""), "{after}");
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A theme tried is shown and not written down; keeping it writes it and
+    /// lets the tried one go; trying again keeps Auto under it.
+    #[test]
+    fn a_theme_tried_is_shown_for_now_and_a_kept_one_written() {
+        let dir = std::env::temp_dir().join(format!("treesight-try-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut cfg = Config::new(dir.clone());
+        cfg.app_ui = true;
+        let state = treeserve::state_for(cfg);
+        let jar = Jar::default();
+        jar.open(dir.join("jar.txt"));
+        let click = |q: &str| {
+            let reply = treeserve::handle(
+                &state,
+                &treeserve::Req { url: q.to_string(), headers: Vec::new(), is_get: true },
+            );
+            assert_eq!(reply.status, 303);
+            jar.store(&reply);
+        };
+        let page = || match treeserve::handle(
+            &state,
+            &treeserve::Req {
+                url: "/".to_string(),
+                headers: with_jar(vec![("Accept".into(), "text/html".into())], &jar),
+                is_get: true,
+            },
+        )
+        .body
+        {
+            treeserve::Body::Text(t) => t,
+            _ => panic!("a listing is text"),
+        };
+        let file = || fs::read_to_string(dir.join("jar.txt")).unwrap_or_default();
+
+        click("/.ts/set?try=dark&back=/");
+        let tried = page();
+        assert!(tried.contains("data-theme=\"dark\"") && tried.contains("class=\"ts-theme\""), "{tried}");
+        assert!(tried.contains("try=auto"), "a click goes back to Auto: {tried}");
+        assert_eq!(file(), "ts_theme=auto\n", "nothing tried is written down");
+
+        click("/.ts/set?theme=dark&back=/");
+        let kept = page();
+        assert!(kept.contains("data-theme=\"dark\"") && kept.contains("class=\"ts-theme on\""), "{kept}");
+        assert_eq!(file(), "ts_theme=dark\n");
+        assert!(!jar.cookies.lock().unwrap().contains_key("ts_theme_try"));
+
+        click("/.ts/set?theme=auto&back=/");
+        assert!(page().contains("<html lang=\"en\">"), "back to Auto");
+        assert_eq!(file(), "ts_theme=auto\n");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_cookie_lives_by_its_max_age() {
+        assert_eq!(cookie_life("a=1; Path=/; Max-Age=31536000"), Life::Kept);
+        assert_eq!(cookie_life("a=1; Path=/; SameSite=Lax"), Life::Session);
+        assert_eq!(cookie_life("a=; Path=/; Max-Age=0"), Life::Gone);
+        assert_eq!(cookie_life("a=1; Expires=Wed, 21 Oct 2037 07:28:00 GMT"), Life::Kept);
     }
 
     /// What `set_pref` hands the router. A route that changes one entry of a set
