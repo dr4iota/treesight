@@ -547,26 +547,42 @@ const WATCH: &str = r#"
         timer = setTimeout(look, os ? 2000 : every() * 1000);
       });
   };
-  var cancel = function () { clearTimeout(hold); hold = 0; pressing = null; };
+  // `cancelled`: when Android took a held press for its own long press. It
+  // cancels the pointer at about HOLD_MS and then asks for the link's menu, and
+  // on the emulator it won the race every time: that menu ends the hold.
+  var cancelled = 0;
+  var cancel = function () { clearTimeout(hold); hold = 0; pressing = null; cancelled = 0; };
+  var held = function () {
+    clearTimeout(hold);
+    hold = 0;
+    pressing = null;
+    cancelled = 0;
+    suppress = true;
+    if (on) stop('Watch off', 2000);
+    else if (mode() === 'off') show("Can't watch this file here", 4000);
+    else start();
+  };
   addEventListener('pointerdown', function (e) {
     suppress = false;
+    cancelled = 0;
     var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
     if (!a || !file() || e.button > 0) return;
     pressing = { x: e.clientX, y: e.clientY };
-    hold = setTimeout(function () {
-      hold = 0;
-      pressing = null;
-      suppress = true;
-      if (on) stop('Watch off', 2000);
-      else if (mode() === 'off') show("Can't watch this file here", 4000);
-      else start();
-    }, HOLD_MS);
+    hold = setTimeout(held, HOLD_MS);
   }, true);
   addEventListener('pointermove', function (e) {
     if (pressing && Math.hypot(e.clientX - pressing.x, e.clientY - pressing.y) > SLOP) cancel();
   }, true);
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
-    addEventListener(t, cancel, true);
+    addEventListener(t, function (e) {
+      // A touch cancelled, or leaving after that, while a press is held: the
+      // menu may be coming. Held for it; the next press clears it.
+      if (t !== 'pointerup' && e.pointerType === 'touch' && pressing) {
+        if (hold) { clearTimeout(hold); hold = 0; cancelled = Date.now(); }
+        if (cancelled) return;
+      }
+      cancel();
+    }, true);
   });
   // A held press is not a tap: the link does nothing on the click it ends in.
   addEventListener('click', function (e) {
@@ -586,7 +602,9 @@ const WATCH: &str = r#"
   // Android's long press would open the link's menu over the hold.
   addEventListener('contextmenu', function (e) {
     var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
-    if (a && (pressing || suppress)) e.preventDefault();
+    if (!a) return;
+    if (pressing && cancelled && Date.now() - cancelled < 1000) { e.preventDefault(); held(); return; }
+    if (pressing || suppress) e.preventDefault();
   }, true);
   // Revision: `r1` for a file's first view, one more for each reload of it, and
   // back to `r1` at another file. A reload is this page's own load, which the
