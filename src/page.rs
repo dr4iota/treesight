@@ -1243,15 +1243,42 @@ fn status_line(state: &State, root: &Root, prefs: Prefs<'_>) -> String {
     // date and time whole on a pointer's hover: every view of a file, Preview
     // included, says this much about it here (4 November 2026). Worked out as
     // the page is drawn, as a listing's rows are.
+    // The size, and the age that the shell's script ticks forward (`data-mtime`,
+    // in milliseconds). In the shell the revision follows, `r1` at first, which
+    // the script counts up on each refresh of this file.
     let facts = match prefs.facts {
-        Some((len, Some(t))) => format!(
-            "<span class=\"facts\" title=\"{}\">{} &middot; {}</span>",
-            html_escape(&fmt_time(t)),
-            human_size(len),
-            html_escape(&fmt_age_short(t, std::time::SystemTime::now())),
-        ),
+        Some((len, Some(t))) => {
+            let ms = t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+            let rev = if state.cfg.app_ui {
+                " &middot; <span class=\"ts-rev\" hidden>r1</span>"
+            } else {
+                ""
+            };
+            format!(
+                "<span class=\"facts\" title=\"{}\"><span class=\"ts-size\">{}</span> &middot; \
+                 <span class=\"ts-age\" data-mtime=\"{ms}\" data-len=\"{len}\">{}</span>{rev}</span>",
+                html_escape(&fmt_time(t)),
+                human_size(len),
+                html_escape(&fmt_age_live(t, std::time::SystemTime::now())),
+            )
+        }
         Some((len, None)) => format!("<span class=\"facts\">{}</span>", human_size(len)),
         None => String::new(),
+    };
+    // Watch's word, on a file that can be watched: hidden until the shell's
+    // script turns Watch on, then says how it looks at the file. `off` where
+    // the backend cannot say, and the script says so when asked to watch.
+    // Not for a copy made only to show a file, as the Refresh link is not.
+    let facts = match prefs.facts {
+        Some(_) if prefs.lone_way != LoneWay::Save => {
+            let mode = match root.vfs.watch() {
+                crate::vfs::Watch::Off => "off".to_string(),
+                crate::vfs::Watch::Os => "os".to_string(),
+                crate::vfs::Watch::Poll { every_s } => format!("poll:{every_s}"),
+            };
+            format!("{facts}<span class=\"ts-watch\" data-watch=\"{mode}\" hidden></span>")
+        }
+        _ => facts,
     };
     // A copy made only to show a file sits in the app's own cache, whose path
     // means nothing to the reader: the file's name, as the window is titled.

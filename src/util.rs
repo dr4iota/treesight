@@ -353,6 +353,17 @@ pub fn fmt_age_short(t: SystemTime, now: SystemTime) -> String {
     }
 }
 
+/// The short age for a file's own status line, which the page ticks: seconds
+/// under a minute, so *3s ago* moves on each second. Folder rows do not tick and
+/// keep [`fmt_age_short`].
+pub fn fmt_age_live(t: SystemTime, now: SystemTime) -> String {
+    let secs = now.duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    if (1..60).contains(&secs) {
+        return format!("{secs}s ago");
+    }
+    fmt_age_short(t, now)
+}
+
 /// The age as a count of its largest whole unit. Zero is under a minute.
 fn age_parts(t: SystemTime, now: SystemTime) -> (u64, &'static str) {
     let secs = now.duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
@@ -431,6 +442,12 @@ mod tests {
         let short = |secs: u64| fmt_age_short(t, at(1_791_366_000 + secs));
         assert_eq!(ago(30), "just now");
         assert_eq!(short(30), "now");
+        let live = |secs: u64| fmt_age_live(t, at(1_791_366_000 + secs));
+        assert_eq!(live(0), "now");
+        assert_eq!(live(3), "3s ago");
+        assert_eq!(live(59), "59s ago");
+        assert_eq!(live(60), "1m ago");
+        assert_eq!(short(3), "now", "folder rows keep their short form");
         assert_eq!(ago(60), "1 minute ago");
         assert_eq!(ago(150), "2 minutes ago");
         assert_eq!(short(150), "2m ago");

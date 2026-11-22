@@ -23,6 +23,9 @@ comrak = { version = "0.52.0", default-features = false }
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 libm = "0.2"
 mermaid-rs-renderer = { version = "0.3", default-features = false }
+# The OS's word that a folder changed, for Watch on a desktop: inotify, FSEvents
+# or ReadDirectoryChangesW. CC0-1.0, accepted for the licences page.
+notify = "8.2"
 pulldown-latex = "0.8.0"
 syntect = { version = "5.3.0", default-features = false }
 tiny_http = { version = "0.12.0", optional = true }

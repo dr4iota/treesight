@@ -1945,6 +1945,8 @@ footer .where { flex: 1 1 auto; min-width: 0; }
 /* The file's size and how long ago, at the far end: short, and kept whole —
    the path before it is what gives way. */
 footer .facts { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
+/* Watch's word, after the facts: how the file is being watched, or why not. */
+footer .ts-watch { flex: 0 0 auto; margin-left: .6em; white-space: nowrap; color: var(--muted); }
 /* The version takes the width of its own text and no more, and gives none of it
    back: `flex-shrink: 0` for the reason the leaf has it — a box that shrinks by
    a fraction of a pixel is a box with an ellipsis in it, and three characters

@@ -309,7 +309,7 @@ const WAIT: &str = r#"
   // no host** (docs/architecture.md, *Links carry no host*), so an href
   // that names a scheme is somebody else's — plain localhost included.
   var inPlace = function (u) {
-    return /^\/\.ts\/(act|remove|print|mkdir|upload|cancel|open|set)$/.test(u.pathname)
+    return /^\/\.ts\/(act|remove|print|mkdir|upload|cancel|open|set|full)$/.test(u.pathname)
       || u.searchParams.has('dl');
   };
   addEventListener('click', function (e) {
@@ -390,6 +390,9 @@ const WAIT: &str = r#"
     if (Date.now() < leaving || busy()) { later(1000); return; }
     location.reload();
   };
+  // For Watch (`WATCH`): whether a reload now is under no one's hand, and the
+  // page is not being left — the same test this script reloads by.
+  window.__tsQuiet = function () { return leaving !== Infinity && Date.now() >= leaving && !busy(); };
   // The shell took a link and answered it with a refusal instead of a page —
   // a folder nothing can open, a new folder's name refused — so this page
   // was not left after all (`fail`), and the wait takes up again.
@@ -402,6 +405,254 @@ const WAIT: &str = r#"
   addEventListener('DOMContentLoaded', function () {
     if (document.querySelector('.notice[data-wait]')) later(3000);
   });
+})();
+"#;
+
+/// **Watch** (the header's Refresh, held): the file on screen reloads itself
+/// when it changes on disk. A hold turns it on, and the Refresh link is lit
+/// while it is, as the view and sidebar switches are. The status line says how
+/// it looks at the file (`.ts-watch`, which the page left hidden with the mode
+/// its backend gives: `poll:2`, or `off`), and flashes why a hold did nothing or
+/// why it stopped. Off again by a hold, and by anything that takes the page
+/// away: the page's own script is gone with it, so only a reload the watch made
+/// itself carries it over — `history.state` (`tsWatch`), written just before
+/// that reload and read once by the page it leads to, and only if it is the same
+/// file. A plain tap on Refresh keeps it too, since that is a reload. Not session
+/// storage: the opaque `treesight:` origin refuses it on Linux and macOS.
+///
+/// The file is asked about every `poll` seconds, `/.ts/stamp` — its size and
+/// mtime, from the root's backend. It reloads only when the page is quiet
+/// (`window.__tsQuiet`, the reload WAIT makes), and the scroll is kept by
+/// `SCROLLERS`. A 404 turns Watch off: a folder, or a backend that cannot watch.
+const WATCH: &str = r#"
+(function () {
+  if (window.top !== window) return;
+  var HOLD_MS = 500, SLOP = 10;
+  var link = function () { return document.querySelector('a[href="/.ts/reload"]'); };
+  var status = function () { return document.querySelector('.ts-watch'); };
+  // The window's history state, which survives a reload on every engine the
+  // shell runs on; session storage does not on an opaque origin (Linux, macOS).
+  // No URL, as full screen writes its state: an absolute one is another origin
+  // on `treesight:`, and the write is refused there.
+  var setState = function (patch) {
+    try {
+      history.replaceState(Object.assign({}, history.state || {}, patch), '');
+    } catch (e) {}
+  };
+  // A file's address does not end in a slash, and the shell's own pages are
+  // not files; a folder's listing always does.
+  var file = function () {
+    var p = location.pathname;
+    return p.charAt(p.length - 1) !== '/' && p.indexOf('/.ts/') !== 0;
+  };
+  var mode = function () { var s = status(); return (s && s.getAttribute('data-watch')) || 'off'; };
+  var every = function () { var m = /^poll:(\d+)$/.exec(mode()); return m ? +m[1] : 0; };
+  // Read once, here: the carry says this page is a reload of a watch, and the
+  // note says when the last change reloaded it. Both are cleared at once.
+  var carry = null;
+  try { carry = (history.state && history.state.tsWatch) || null; } catch (e) {}
+  if (carry) setState({ tsWatch: null });
+  var carried = carry && carry.path === location.pathname ? carry.path : null;
+  var note = carry && carry.note ? carry.note : null;
+  var on = false, stamp = null, timer = 0, hold = 0, pressing = null, suppress = false;
+  var flash = 0, failing = false, gen = 0, behind = false;
+  var quiet = function () { return typeof window.__tsQuiet === 'function' && window.__tsQuiet(); };
+  var clock = function () { return new Date().toLocaleTimeString(); };
+  // The status line's word: `text` for `ms`, then what it was. Empty hides it.
+  var show = function (text, ms) {
+    var s = status();
+    clearTimeout(flash);
+    flash = 0;
+    if (s) { s.textContent = text; s.hidden = !text; }
+    if (ms) flash = setTimeout(paintStatus, ms);
+  };
+  // The watch word flashes when Watch starts and when the server reports a
+  // different mode; the line is otherwise empty while Watch runs.
+  var watchWord = function () { return 'Watching · ' + (mode() === 'os' ? 'on change' : 'every ' + every() + ' s'); };
+  var paintStatus = function () {
+    failing = false;
+    show('', 0);
+  };
+  var paintLink = function () {
+    var a = link();
+    if (!a) return;
+    a.classList.toggle('on', on);
+    a.title = on ? 'Reload this page (F5). Watching for changes: hold to stop'
+      : 'Reload this page (F5). Hold to reload when the file changes';
+  };
+  var paint = function () { paintLink(); paintStatus(); };
+  var timer_ = function () { clearTimeout(timer); timer = setTimeout(look, every() * 1000); };
+  var stop = function (text, ms) {
+    on = false;
+    clearTimeout(timer);
+    timer = 0;
+    paint();
+    if (text) show(text, ms);
+  };
+  var start = function () { on = true; stamp = null; gen = 0; behind = false; paint(); show(watchWord(), 4000); look(); };
+  // `os`: the server holds the request until the OS reports a change past
+  // `gen` (or 20 s pass), so the next look goes at once. `behind`: a change
+  // was seen while the page was busy, so the next look does not wait for another.
+  var look = function () {
+    clearTimeout(timer);
+    timer = 0;
+    if (!on) return;
+    var os = mode() === 'os';
+    if (!os && document.hidden) return timer_();
+    var wait = os && stamp !== null && !behind;
+    var reported = null;
+    fetch('/.ts/stamp?path=' + encodeURIComponent(location.pathname)
+        + (wait ? '&after=' + gen + '&last=' + encodeURIComponent(stamp) : ''),
+      { cache: 'no-store', credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw r.status;
+        // What the server is actually doing: `os`, or `poll:N` where its
+        // watcher did not start. The status line follows it, not the mode the
+        // page was drawn with.
+        reported = r.headers.get('X-Watch');
+        return r.text();
+      })
+      .then(function (t) {
+        if (!on) return;
+        if (t === null) return stop("Stopped: this file can't be watched any more", 4000);
+        if (reported && reported !== mode()) {
+          var s = status();
+          if (s) s.setAttribute('data-watch', reported);
+          paintStatus();
+          if (on) show(watchWord(), 4000);
+        }
+        var p = t.split(' ');
+        var now = p[0] + ' ' + p[1];
+        gen = +p[2] || 0;
+        if (failing) paintStatus();
+        if (stamp === null) stamp = now;
+        else if (now !== stamp) {
+          if (quiet()) {
+            setState({ tsWatch: { path: location.pathname, note: clock() } });
+            location.reload();
+            return;
+          }
+          behind = true;
+          timer = setTimeout(look, 1000);
+          return;
+        }
+        behind = false;
+        if (os) return look();
+        timer_();
+      }, function () {
+        if (!on) return;
+        failing = true;
+        show('Watching · no answer from the server yet', 0);
+        timer = setTimeout(look, os ? 2000 : every() * 1000);
+      });
+  };
+  var cancel = function () { clearTimeout(hold); hold = 0; pressing = null; };
+  addEventListener('pointerdown', function (e) {
+    suppress = false;
+    var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
+    if (!a || !file() || e.button > 0) return;
+    pressing = { x: e.clientX, y: e.clientY };
+    hold = setTimeout(function () {
+      hold = 0;
+      pressing = null;
+      suppress = true;
+      if (on) stop('Watch off', 2000);
+      else if (mode() === 'off') show("Can't watch this file here", 4000);
+      else start();
+    }, HOLD_MS);
+  }, true);
+  addEventListener('pointermove', function (e) {
+    if (pressing && Math.hypot(e.clientX - pressing.x, e.clientY - pressing.y) > SLOP) cancel();
+  }, true);
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
+    addEventListener(t, cancel, true);
+  });
+  // A held press is not a tap: the link does nothing on the click it ends in.
+  addEventListener('click', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
+    if (!a) return;
+    if (suppress) {
+      suppress = false;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      // WAIT saw this click as leaving the page, and a page that is left never
+      // reloads for Watch. The hold did not leave it: take that back.
+      if (typeof window.__tsStay === 'function') window.__tsStay();
+      return;
+    }
+    if (on) setState({ tsWatch: { path: location.pathname, note: null } });
+  }, true);
+  // Android's long press would open the link's menu over the hold.
+  addEventListener('contextmenu', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a[href="/.ts/reload"]');
+    if (a && (pressing || suppress)) e.preventDefault();
+  }, true);
+  // Revision: `r1` for a file's first view, one more for each reload of it, and
+  // back to `r1` at another file. A reload is this page's own load, which the
+  // navigation type says; the number rides in `history.state` across it.
+  var ages = [[365 * 86400, 'y'], [30 * 86400, 'mo'], [7 * 86400, 'w'], [86400, 'd'], [3600, 'h'], [60, 'm']];
+  var ago = function (ms) {
+    var secs = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (secs < 60) return secs === 0 ? 'now' : secs + 's ago';
+    for (var i = 0; i < ages.length; i++) {
+      if (secs >= ages[i][0]) return Math.floor(secs / ages[i][0]) + ages[i][1] + ' ago';
+    }
+    return 'now';
+  };
+  // Rewrites the age in place, with no reload. Every second while the file is
+  // under a minute old, where the words change each second; else every 30 s.
+  // Returns the delay until the next tick.
+  var tickAges = function () {
+    var els = document.querySelectorAll('.ts-age[data-mtime]');
+    var fresh = false;
+    for (var i = 0; i < els.length; i++) {
+      var ms = +els[i].getAttribute('data-mtime');
+      els[i].textContent = ago(ms);
+      if (Date.now() - ms < 60000) fresh = true;
+    }
+    return fresh ? 1000 : 30000;
+  };
+  // Stops while the page is hidden, and starts again the moment it shows.
+  var ticker = 0;
+  var ticking = function () {
+    clearTimeout(ticker);
+    ticker = 0;
+    if (document.hidden) return;
+    ticker = setTimeout(ticking, tickAges());
+  };
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) ticking(); });
+  // The file's own identity as the page drew it: its mtime and length.
+  var fileKey = function () {
+    var a = document.querySelector('.ts-age[data-mtime]');
+    return a ? a.getAttribute('data-mtime') + ' ' + a.getAttribute('data-len') : '';
+  };
+  // A reload counts only if the file changed since this view: a tap on an
+  // unchanged file, or F5, is the same revision, as an automatic reload always
+  // is a change.
+  var revision = function (key) {
+    var prev = null;
+    try { prev = (history.state && history.state.tsRev) || null; } catch (x) {}
+    if (!prev || prev.path !== location.pathname) return { n: 1, key: key };
+    var changed = prev.key !== undefined && prev.key !== key;
+    return { n: changed ? prev.n + 1 : prev.n, key: key };
+  };
+  var init = function () {
+    on = file() && mode() !== 'off' && carried === location.pathname;
+    paint();
+    if (file()) {
+      var rv = revision(fileKey());
+      var n = rv.n;
+      setState({ tsRev: { path: location.pathname, n: n, key: rv.key } });
+      var r = document.querySelector('.ts-rev');
+      if (r) { r.textContent = 'r' + n; r.hidden = false; }
+    }
+    ticking();
+    if (on && note) show('Changed at ' + note + ', reloaded', 4000);
+    if (on) look();
+  };
+  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 "#;
 
@@ -718,7 +969,7 @@ const FULL: &str = r#"
     if (held() || !offered()) return;
     hold(true);
     root().setAttribute('data-ts-full', '');
-    history.pushState({ tsFull: 1 }, '');
+    history.pushState(Object.assign({}, history.state || {}, { tsFull: 1 }), '');
     draw();
     show();
     told();
@@ -776,7 +1027,7 @@ const FULL: &str = r#"
   // Back from an entry of ours to the one before it, which is not.
   addEventListener('popstate', function () {
     if (!held()) return;
-    if (jumping) { jumping = false; history.replaceState({ tsFull: 1 }, ''); return; }
+    if (jumping) { jumping = false; history.replaceState(Object.assign({}, history.state || {}, { tsFull: 1 }), ''); return; }
     if (!(history.state && history.state.tsFull)) leave(true);
   });
   addEventListener('message', function (e) {
@@ -818,7 +1069,7 @@ const FULL: &str = r#"
     if (!offered()) { hold(false); root().removeAttribute('data-ts-full'); tell(false); return; }
     // An entry of this page's own for Back to take, as going in pushed one:
     // a page reached in full screen is left by Back, before Back leaves it.
-    if (!(history.state && history.state.tsFull)) history.pushState({ tsFull: 1 }, '');
+    if (!(history.state && history.state.tsFull)) history.pushState(Object.assign({}, history.state || {}, { tsFull: 1 }), '');
     draw();
     show();
     var f = viewer();
@@ -1633,7 +1884,7 @@ addEventListener('DOMContentLoaded', function () {
 fn window_script(custom: Option<String>, ours: &[String]) -> String {
     let ours = ours.iter().map(|o| format!("'{}'", js_quoted(o))).collect::<Vec<_>>().join(", ");
     format!(
-        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{MENUS}\n{WORDS}\n{ZOOM}\n{FULL}\n{}",
+        "{VIEWPORT}\n{ROOTED}\n{RESTORE}\n{WAIT}\n{SCROLLERS}\n{PROGRESS}\n{MENUS}\n{WORDS}\n{ZOOM}\n{FULL}\n{WATCH}\n{}",
         custom.unwrap_or_else(|| SHORTCUTS.to_string())
     )
     .replace(HOME_SLOT, treeserve::HOME_PATH)
@@ -5521,7 +5772,7 @@ mod tests {
         assert!(mine.contains("pageshow"), "no restore");
         assert!(mine.contains(".notice[data-wait]"), "no wait for a notice that waits");
         assert!(mine.contains("if (leaving === Infinity ||"), "a page being left would be reloaded under its navigation");
-        assert!(mine.contains("(act|remove|print|mkdir|upload|cancel|open|set)"), "a link the shell answers in place would end the wait");
+        assert!(mine.contains("(act|remove|print|mkdir|upload|cancel|open|set|full)"), "a link the shell answers in place would end the wait");
         assert!(mine.contains("navigationType === 'traverse'"), "Back would reload under its navigation");
         assert!(mine.contains("f.value !== f.defaultValue"), "a reload would wipe a field's unsent text");
         assert!(mine.contains("getElementById('ts-drawer')"), "a reload would shut the drawer under the reader");

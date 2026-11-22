@@ -408,6 +408,19 @@ pub fn new_name(name: &str) -> Result<&str, &'static str> {
 /// escape check guards what a URL can *navigate to*, not every byte a listing
 /// may summarize; a backend is free to confine harder in every method, and
 /// the renderer depends on it either way only through `resolve`.
+/// How a page can learn that a file changed, for Watch. `Off` where nothing can
+/// say so cheaply: a backend that cannot be asked at all, or a platform that
+/// changes files under the app without telling anything (mobile local storage).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Watch {
+    Off,
+    /// The backend says when a change happens (`Vfs::changes`): the page waits
+    /// for it, and asks the file's size and mtime only then.
+    Os,
+    /// The file's size and mtime asked for every `every_s` seconds.
+    Poll { every_s: u32 },
+}
+
 pub trait Vfs: Send + Sync {
     /// The canonical form of `path`: symlinks resolved, confinement checked.
     fn resolve(&self, path: &VfsPath) -> Result<VfsPath, ResolveError>;
@@ -433,6 +446,19 @@ pub trait Vfs: Send + Sync {
     /// already on this device is the same bytes under a second name, and on a
     /// platform with nowhere to put it a Download button is a button that cannot
     /// do the thing it says.
+    /// How a page can watch a file here (`Watch`). Off unless the backend says
+    /// otherwise, so a backend that does nothing about it needs no code.
+    fn watch(&self) -> Watch {
+        Watch::Off
+    }
+
+    /// The count of changes under this root, for `Watch::Os`. With `after`, it
+    /// waits up to `within` for the count to pass it. `None` where the OS
+    /// reports nothing, so the caller polls instead.
+    fn changes(&self, _after: Option<u64>, _within: std::time::Duration) -> Option<u64> {
+        None
+    }
+
     fn downloadable(&self) -> bool {
         true
     }
@@ -673,6 +699,12 @@ impl Within {
 }
 
 impl Vfs for Within {
+    fn watch(&self) -> Watch {
+        self.inner.watch()
+    }
+    fn changes(&self, after: Option<u64>, within: std::time::Duration) -> Option<u64> {
+        self.inner.changes(after, within)
+    }
     fn resolve(&self, path: &VfsPath) -> Result<VfsPath, ResolveError> {
         let full = self.inner.resolve(&self.full(path))?;
         self.back(&full).ok_or(ResolveError::Outside)
@@ -765,13 +797,131 @@ impl Vfs for Within {
 /// Display strings strip it via [`display_path`].
 pub struct LocalFs {
     root: PathBuf,
+    /// Whether the OS reports changes made by anyone under this root: false
+    /// for a network share, or a folder another OS serves (`\\wsl$`, `/mnt/c`
+    /// in WSL), whose changes never reach this machine's watcher.
+    native: bool,
+    /// The OS watcher for this root, started by the first `changes` (the first
+    /// stamp after Watch is held), and `None` where it could not be started.
+    watcher: std::sync::OnceLock<Option<OsWatch>>,
+}
+
+/// Filesystem types whose changes are made elsewhere, so no local watcher
+/// hears them: network mounts, and WSL's view of the Windows drives (9p).
+const FOREIGN_FS: &[&str] = &["cifs", "smb3", "smbfs", "nfs", "nfs4", "9p", "afs", "ceph", "glusterfs"];
+
+/// `/proc/mounts` writes a space, tab, newline and backslash in a mount point as
+/// an octal escape (`\040`), so a path with one of them would not match.
+fn unescape_mount(point: &str) -> String {
+    // Bytes, not characters: a non-ASCII name is written one octal byte at a time
+    // (`\303\251` for `é`), and the bytes only mean something together.
+    let src = point.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len() {
+        let octal = |b: u8| (b'0'..=b'7').contains(&b);
+        if src[i] == b'\\' && i + 4 <= src.len() && src[i + 1..i + 4].iter().all(|&b| octal(b)) {
+            let value = (src[i + 1] - b'0') as u16 * 64 + (src[i + 2] - b'0') as u16 * 8 + (src[i + 3] - b'0') as u16;
+            out.push(value as u8);
+            i += 4;
+        } else {
+            out.push(src[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether `root` is on a mapped network drive (`Z:` after `net use`), which a
+/// local watcher does not hear. Asks the OS for the drive's type (`DRIVE_REMOTE`).
+#[cfg(windows)]
+fn remote_drive(root: &std::path::Path) -> bool {
+    const DRIVE_REMOTE: u32 = 4;
+    unsafe extern "system" {
+        fn GetDriveTypeW(root: *const u16) -> u32;
+    }
+    let text = root.to_string_lossy();
+    let bare = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    let drive: String = bare.chars().take(2).collect();
+    if !drive.ends_with(':') || drive.len() != 2 {
+        return false;
+    }
+    let mut wide: Vec<u16> = format!("{drive}\\").encode_utf16().collect();
+    wide.push(0);
+    unsafe { GetDriveTypeW(wide.as_ptr()) == DRIVE_REMOTE }
+}
+
+#[cfg(not(windows))]
+fn remote_drive(_root: &std::path::Path) -> bool {
+    false
+}
+
+/// Whether `root` is a folder on this machine's own filesystem, whose changes
+/// the OS reports. Windows: a UNC or `\\wsl` path is another machine or OS
+/// (`\\?\` with a drive letter is local). Linux: the type of the mount that
+/// holds `root`, read from `mounts` (a `/proc/mounts` text). Other systems: yes.
+pub fn native_root(root: &std::path::Path, mounts: Option<&str>) -> bool {
+    let text = root.to_string_lossy();
+    if cfg!(windows) {
+        let unc = text.starts_with(r"\\?\UNC\") || (text.starts_with(r"\\") && !text.starts_with(r"\\?\"));
+        return !unc && !remote_drive(root);
+    }
+    let Some(mounts) = mounts else { return true };
+    // The mount with the longest mount point that holds `root`.
+    let mut best: Option<(usize, &str)> = None;
+    for line in mounts.lines() {
+        let mut f = line.split_whitespace();
+        let (_dev, point, fstype) = match (f.next(), f.next(), f.next()) {
+            (Some(d), Some(p), Some(t)) => (d, p, t),
+            _ => continue,
+        };
+        let point = unescape_mount(point);
+        if root.starts_with(&point) && best.as_ref().is_none_or(|(len, _)| point.len() > *len) {
+            best = Some((point.len(), fstype));
+        }
+    }
+    match best {
+        Some((_, fstype)) => !(FOREIGN_FS.contains(&fstype) || fstype.starts_with("fuse.")),
+        None => true,
+    }
+}
+
+/// The count of changes the OS reports under a root, and a condition to wait on
+/// it. The watcher is kept here, which is what keeps it running.
+struct OsWatch {
+    changes: std::sync::Arc<(std::sync::Mutex<u64>, std::sync::Condvar)>,
+    _watcher: notify::RecommendedWatcher,
+}
+
+impl OsWatch {
+    fn start(root: &std::path::Path) -> Option<OsWatch> {
+        use notify::Watcher;
+        let changes = std::sync::Arc::new((std::sync::Mutex::new(0u64), std::sync::Condvar::new()));
+        let seen = std::sync::Arc::clone(&changes);
+        // An error from the OS is a change too: the page then asks the file,
+        // which is the safe answer when the watcher cannot say what moved.
+        let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
+            let (count, cv) = &*seen;
+            *count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+            cv.notify_all();
+        })
+        .ok()?;
+        watcher.watch(root, notify::RecursiveMode::Recursive).ok()?;
+        Some(OsWatch { changes, _watcher: watcher })
+    }
 }
 
 impl LocalFs {
     /// `root` should already be canonicalized, as [`crate::Config::new`]'s
     /// callers have always done.
     pub fn new(root: PathBuf) -> LocalFs {
-        LocalFs { root }
+        let mounts = if cfg!(target_os = "linux") { std::fs::read_to_string("/proc/mounts").ok() } else { None };
+        let native = native_root(&root, mounts.as_deref());
+        LocalFs { root, native, watcher: std::sync::OnceLock::new() }
+    }
+
+    fn os_watch(&self) -> Option<&OsWatch> {
+        self.watcher.get_or_init(|| OsWatch::start(&self.root)).as_ref()
     }
 
     /// Downloading a local file means saving a copy of it somewhere else, which
@@ -805,6 +955,38 @@ impl LocalFs {
 }
 
 impl Vfs for LocalFs {
+    /// The OS's word on changes, through `changes`: asking here is cheap, and the
+    /// watcher itself starts at the first `changes`, the first stamp after Watch
+    /// is held, not the first page drawn. Mobile storage is changed by the
+    /// platform and the other apps under the app, so there is nothing to ask and
+    /// Watch is off.
+    fn watch(&self) -> Watch {
+        if cfg!(any(target_os = "android", target_os = "ios")) {
+            Watch::Off
+        } else if self.native {
+            Watch::Os
+        } else {
+            // Another machine or OS changes these files, and no watcher here
+            // hears it: ask the file every couple of seconds instead.
+            Watch::Poll { every_s: 2 }
+        }
+    }
+
+    fn changes(&self, after: Option<u64>, within: std::time::Duration) -> Option<u64> {
+        let os = self.os_watch()?;
+        let (count, cv) = &*os.changes;
+        let guard = count.lock().unwrap_or_else(|e| e.into_inner());
+        Some(match after {
+            None => *guard,
+            Some(after) => {
+                let (guard, _) = cv
+                    .wait_timeout_while(guard, within, |n| *n <= after)
+                    .unwrap_or_else(|e| e.into_inner());
+                *guard
+            }
+        })
+    }
+
     /// This machine's own filesystem, by definition.
     fn on_this_device(&self) -> bool {
         true

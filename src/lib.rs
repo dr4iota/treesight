@@ -37,6 +37,7 @@ pub fn is_action(path: &str) -> bool {
             path,
             HOME_PATH
                 | "/.ts/wait"
+                | "/.ts/stamp"
                 | "/.ts/reload"
                 | "/.ts/cancel"
                 | "/.ts/app.css"
@@ -1442,6 +1443,99 @@ impl Reply {
     }
 }
 
+/// `size mtime-ms` of the file at `?path=`, for the page's Watch. A 404 for
+/// anything it must not watch: no file, a folder, or a root whose backend says
+/// it cannot be watched (`Vfs::watch`), which the page then stops watching.
+fn stamp_reply(root: &Root, query: &[(String, String)]) -> Reply {
+    let watch = root.vfs.watch();
+    if watch == vfs::Watch::Off {
+        return Reply::empty(404);
+    }
+    let Some(path) = query_get(query, "path") else {
+        return Reply::empty(400);
+    };
+    let Ok(resolved) = resolve_in_root(root.vfs.as_ref(), path) else {
+        return Reply::empty(404);
+    };
+    // `size mtime-ms`, or the reason there is none: a file that is gone or is
+    // not a file is 404, which stops Watch; anything else is a 503, which the
+    // page retries.
+    let stat = || -> Result<String, Reply> {
+        let meta = root.vfs.metadata(&resolved.path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Reply::empty(404),
+            _ => Reply::empty(503),
+        })?;
+        if !meta.is_file {
+            return Err(Reply::empty(404));
+        }
+        let ms = meta
+            .mtime
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis());
+        Ok(format!("{} {}", meta.len, ms))
+    };
+    let mut key = match stat() {
+        Ok(k) => k,
+        Err(reply) => return reply,
+    };
+    // Where the OS reports changes, the answer waits until this file's size or
+    // mtime differs from `last` (what the page holds), for up to 20 s. Other
+    // changes under the root wake the wait, but do not end it. Where the OS
+    // reports nothing, the wait is a 2 s poll of the file. The count is read
+    // before the file, so a change between the two wakes the next wait.
+    // What the page is told the watch is, in `X-Watch`: `os` where the OS's
+    // watcher runs, else the poll this answer is making. The page's status line
+    // says that, so it never says "on change" for a watcher that did not start.
+    let mut count = 0;
+    let mut mode = match watch {
+        vfs::Watch::Poll { every_s } => format!("poll:{every_s}"),
+        _ => format!("poll:{FALLBACK_POLL_S}"),
+    };
+    if watch == vfs::Watch::Os {
+        let live = root.vfs.changes(None, std::time::Duration::ZERO);
+        if live.is_some() {
+            mode = "os".to_string();
+        }
+        count = live.unwrap_or(0);
+        let after = query_get(query, "after").and_then(|a| a.parse::<u64>().ok());
+        let last = query_get(query, "last");
+        match (after, last) {
+            (Some(after), Some(last)) => {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                let mut seen = after;
+                while key == last {
+                    let left = deadline.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    match root.vfs.changes(Some(seen), left) {
+                        Some(c) => seen = c,
+                        None => std::thread::sleep(left.min(std::time::Duration::from_secs(FALLBACK_POLL_S))),
+                    }
+                    key = match stat() {
+                        Ok(k) => k,
+                        Err(reply) => return reply,
+                    };
+                    // Unrelated changes wake the wait and end nothing. A pause
+                    // turns a burst of them into one stat, not a hot loop.
+                    if key == last {
+                        let pause = std::time::Duration::from_millis(500);
+                        std::thread::sleep(pause.min(deadline.saturating_duration_since(std::time::Instant::now())));
+                    }
+                }
+                count = seen;
+            }
+            _ => {}
+        }
+    }
+    Reply::text(200, "text/plain; charset=utf-8", format!("{key} {count}"))
+        .with("Cache-Control", "no-store")
+        .with("X-Watch", &mode)
+}
+
+/// The poll, in seconds, where a root has no OS signal to wait for.
+const FALLBACK_POLL_S: u64 = 2;
+
 fn html_reply(status: u16, body: String) -> Reply {
     Reply::text(status, "text/html; charset=utf-8", body)
         .with("X-Content-Type-Options", "nosniff")
@@ -1455,12 +1549,15 @@ fn html_reply(status: u16, body: String) -> Reply {
         // are init scripts and exempt, but their `invoke` rides the webview's
         // IPC — the `ipc:`/`http://ipc.localhost` pair in connect-src — and
         // without that grant the prompt drawn over a wait page could not
-        // answer. A plain browser has no such scheme and loses nothing.
+        // answer. The same grant carries Watch's `/.ts/stamp`, which is a
+        // connection too: `treesight:` is the opaque origin's scheme (Linux,
+        // macOS), `http://treesight.localhost` the others (Windows, Android),
+        // and `'self'` matches neither. A plain browser loses nothing.
         .with(
             "Content-Security-Policy",
             "default-src 'none'; style-src 'self' 'unsafe-inline'; \
              img-src 'self' data:; media-src 'self'; object-src 'self'; \
-             frame-src 'self'; connect-src ipc: http://ipc.localhost; \
+             frame-src 'self'; connect-src ipc: http://ipc.localhost treesight: http://treesight.localhost; \
              form-action 'self'; base-uri 'none'",
         )
         // Every page is a snapshot of a directory taken when it was asked for,
@@ -1660,6 +1757,17 @@ pub fn handle_in(state: &State, req: &Req, window: Option<&str>) -> Reply {
         // shut the server's own folder.
         HOME_PATH if state.cfg.app_ui => {
             return html_reply(200, page::start_page(state, prefs, &url_now));
+        }
+        // A file's size and mtime, for the page's Watch (`WATCH` in the shell):
+        // the one thing that says the file changed. Read-only, so it is not an
+        // action. Refused where nothing should be watched: a folder, and a root
+        // on Android's own storage (`saf:`, and any local root there), which the
+        // platform changes without telling anything.
+        "/.ts/stamp" if state.cfg.app_ui => {
+            return match root.as_deref() {
+                Some(root) => stamp_reply(root, &query),
+                None => Reply::empty(404),
+            };
         }
         "/.ts/wait" if state.cfg.app_ui => {
             let path = query_get(&query, "path").unwrap_or_default();
@@ -2299,7 +2407,7 @@ mod tests {
             .map(|(_, v)| v.clone())
             .expect("a policy on every page");
         assert!(csp.contains("default-src 'none'"), "{csp}");
-        assert!(csp.contains("connect-src ipc: http://ipc.localhost"), "{csp}");
+        assert!(csp.contains("connect-src ipc: http://ipc.localhost treesight: http://treesight.localhost"), "{csp}");
         assert!(csp.contains("style-src 'self' 'unsafe-inline'"), "{csp}");
     }
 
@@ -2328,6 +2436,110 @@ mod tests {
 
     /// HTML's Preview cannot go anywhere by itself: no refresh, no frame of
     /// its own, sandboxed.
+    #[test]
+    fn a_root_on_a_foreign_filesystem_is_polled_not_watched() {
+        use super::vfs::native_root;
+        use std::path::Path;
+        let mounts = "/dev/sda1 / ext4 rw 0 0\nC:\\ /mnt/c 9p rw 0 0\nnas:/export /mnt/nas nfs4 rw 0 0\nsshfs:h /home/u/remote fuse.sshfs rw 0 0\n";
+        if cfg!(windows) {
+            return;
+        }
+        assert!(native_root(Path::new("/home/u/mix"), Some(mounts)));
+        assert!(!native_root(Path::new("/mnt/c/Users/x/notes"), Some(mounts)), "WSL's Windows drive");
+        assert!(!native_root(Path::new("/mnt/nas/share"), Some(mounts)), "a network share");
+        assert!(!native_root(Path::new("/home/u/remote/x"), Some(mounts)), "a FUSE mount");
+        assert!(native_root(Path::new("/mnt/cat/x"), Some(mounts)), "a look-alike is not /mnt/c");
+        let accented = "nas:/x /mnt/caf\\303\\251 cifs rw 0 0\n";
+        assert!(!native_root(Path::new("/mnt/café/docs"), Some(accented)), "a non-ASCII point, decoded as UTF-8");
+        assert!(native_root(Path::new("/home/u/mix"), None), "no mount table: assume local");
+        let spaced = "nas:/x /mnt/my\\040nas cifs rw 0 0\n";
+        assert!(!native_root(Path::new("/mnt/my nas/docs"), Some(spaced)), "an escaped space in the point");
+    }
+
+    #[test]
+    fn a_local_root_is_watched_by_the_os_and_says_when_it_changes() {
+        let dir = std::env::temp_dir().join(format!("ts-os-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let vfs = super::vfs::LocalFs::new(dir.canonicalize().unwrap());
+        use super::vfs::Vfs as _;
+        if cfg!(any(target_os = "android", target_os = "ios")) {
+            assert_eq!(vfs.watch(), super::vfs::Watch::Off);
+        } else {
+            assert_eq!(vfs.watch(), super::vfs::Watch::Os, "the watcher starts here");
+        }
+        let before = vfs.changes(None, std::time::Duration::ZERO).unwrap();
+        let writer = dir.join("a.md");
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::fs::write(writer, "changed").unwrap();
+        });
+        let after = vfs.changes(Some(before), std::time::Duration::from_secs(10)).unwrap();
+        t.join().unwrap();
+        assert!(after > before, "the change was reported: {before} then {after}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_stamp_wait_ends_on_this_file_and_not_on_another_in_the_root() {
+        let dir = std::env::temp_dir().join(format!("ts-waitfile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "one").unwrap();
+        std::fs::write(dir.join("b.md"), "one").unwrap();
+        let root = super::Root::local(dir.canonicalize().unwrap());
+        let key = |p: &str| {
+            let r = super::stamp_reply(&root, &[("path".to_string(), p.to_string())]);
+            match r.body {
+                super::Body::Text(t) => t,
+                _ => panic!("a stamp is text"),
+            }
+        };
+        let first = key("/a.md");
+        let (stamp, count) = first.rsplit_once(' ').unwrap();
+        let (last_key, after) = (stamp.to_string(), count.to_string());
+        let (a, b) = (dir.join("a.md"), dir.join("b.md"));
+        let writer = std::thread::spawn(move || {
+            // Another file in the root changes first, and the wait must not end on it.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::fs::write(&b, "two two").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::fs::write(&a, "three three three").unwrap();
+        });
+        let started = std::time::Instant::now();
+        let reply = super::stamp_reply(
+            &root,
+            &[
+                ("path".to_string(), "/a.md".to_string()),
+                ("after".to_string(), after),
+                ("last".to_string(), last_key.clone()),
+            ],
+        );
+        writer.join().unwrap();
+        let text = match reply.body {
+            super::Body::Text(t) => t,
+            _ => panic!("a stamp is text"),
+        };
+        assert!(text.starts_with("17 "), "the wait ended on a.md's change: {text}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(15), "{:?}", started.elapsed());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stamp_is_size_and_mtime_of_a_file_only() {
+        let dir = std::env::temp_dir().join(format!("ts-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.md"), "hello").unwrap();
+        let root = super::Root::local(dir.canonicalize().unwrap());
+        let at = |p: &str| vec![("path".to_string(), p.to_string())];
+        match super::stamp_reply(&root, &at("/a.md")).body {
+            super::Body::Text(t) => assert!(t.starts_with("5 "), "{t}"),
+            _ => panic!("the stamp is text"),
+        }
+        assert_eq!(super::stamp_reply(&root, &at("/sub")).status, 404, "a folder is not watched");
+        assert_eq!(super::stamp_reply(&root, &at("/gone.md")).status, 404);
+        assert_eq!(super::stamp_reply(&root, &[]).status, 400);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn a_previewed_page_cannot_navigate_by_itself() {
         let page = b"<META HTTP-EQUIV=\"refresh\" content=\"0;url=/.ts/root?path=/\"><meta http-equiv=refresh content=0><p>http-equiv</p>\
@@ -2978,7 +3190,8 @@ mod tests {
         assert!(!page.contains("/.ts/reload") && !page.contains("/.ts/window"), "{page}");
         assert!(!page.contains("--lone-lbl"), "its words are never dropped: {page}");
         // The file's size and how long ago, at the status line's right end.
-        assert!(page.contains("<span class=\"facts\" title=\"") && page.contains("9 B &middot; "), "{page}");
+        assert!(page.contains("<span class=\"facts\" title=\"") && page.contains("<span class=\"ts-size\">9 B</span> &middot; "), "{page}");
+        assert!(page.contains("<span class=\"ts-age\" data-mtime=\""), "the age ticks from its time: {page}");
         // A copy with no time of its own from the sender says its size alone.
         state.cfg.set_lone(Some(super::Lone { document: "/report.md".into(), temporary: true, dated: false }));
         let page = text(get("/report.md", None));
