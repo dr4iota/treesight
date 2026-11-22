@@ -50,6 +50,23 @@ Scrolling and zooming stay in full screen, and so does a link to a heading in
 the same file: Back then returns to where you were, still in full screen. To
 leave, tap that button, or press **Esc** or **F11**, or Back on a phone.
 
+## Watching a file
+
+Hold “Refresh” to watch the file: it reloads by itself when the file changes,
+and “Refresh” stays lit. Hold it again to stop. Watching stays on through
+full screen and a tap on “Refresh”, and ends when you open another file or
+switch between Preview, Source and Raw.
+
+A file on this computer reloads as soon as it changes. A file on an SSH
+server, or in a folder another system shares, such as a network drive or
+WSL, is checked every few seconds instead. A phone's own storage
+cannot be watched, and the hold says so.
+
+The status line at the bottom shows the file's size, how long ago it last
+changed, counting up, and `r2`, `r3`… for each reload in which it had changed.
+
+## Sending a file
+
 What you can do with the file is a second set of controls: any action the app
 adds, then “Send”, which opens a menu. “Send” holds “Download…”, which
 saves a copy of the file as it is stored, and “Print…” on a rendered file
