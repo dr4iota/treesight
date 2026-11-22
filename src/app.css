@@ -20,6 +20,12 @@
   --important: #8250df;
   --warning: #9a6700;
   --caution: #cf222e;
+  /* A rendered document's text, and the two kinds of text inside it that read
+     differently from prose. The default skin keeps them muted, a shade off the
+     body colour; a skin may set them as it likes. */
+  --md-fg: var(--fg);
+  --code-fg: #7a3b22;
+  --math-fg: #456a20;
   /* How much of `--link` a switch that is on is filled with. More in dark,
      where 14% of a blue over near-black was a fill nobody could see. */
   --on-tint: 14%;
@@ -45,6 +51,9 @@
     --important: #ab7df8;
     --warning: #d29922;
     --caution: #f85149;
+    --md-fg: var(--fg);
+    --code-fg: #f0c7a8;
+    --math-fg: #cae49f;
     --on-tint: 28%;
     --press: rgba(68, 147, 248, .28);
     --press-err: rgba(255, 123, 114, .28);
@@ -66,6 +75,9 @@
   --important: #ab7df8;
   --warning: #d29922;
   --caution: #f85149;
+  --md-fg: var(--fg);
+  --code-fg: #f0c7a8;
+  --math-fg: #cae49f;
   --on-tint: 28%;
   --press: rgba(68, 147, 248, .28);
   --press-err: rgba(255, 123, 114, .28);
@@ -1591,7 +1603,7 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
 }
 
 /* Markdown body */
-.md { max-width: 52rem; counter-reset: eq-number; }
+.md { max-width: 52rem; counter-reset: eq-number; color: var(--md-fg); }
 .md h1, .md h2 { border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
 .md h1 { font-size: 1.7rem; }
 .md h2 { font-size: 1.35rem; }
@@ -1601,6 +1613,7 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
 }
 .md img { max-width: 100%; }
 .md code {
+  color: var(--code-fg);
   background: var(--bg-subtle);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1620,6 +1633,10 @@ form.newdir .err { flex-basis: 100%; margin: 0; color: var(--err); font-size: .8
   padding: 0;
   font-size: 14px;
 }
+.md a code { color: inherit; }
+/* Display and inline math alike, with an equation's number. A formula that
+   did not parse keeps `--err` (`code.math-error`, math.css). */
+.md math, .md .math-tag { color: var(--math-fg); }
 .md blockquote {
   margin: 0;
   padding: 0 1em;
@@ -2364,6 +2381,9 @@ body.nothing .start .row > a.aside {
     --important: #8250df;
     --warning: #9a6700;
     --caution: #cf222e;
+    --md-fg: var(--fg);
+    --code-fg: #7a3b22;
+    --math-fg: #456a20;
   }
   header, footer, nav.tree, #ts-drawer ~ .shell nav.tree, form.filter, .matchnote, .filemeta .lnsw,
   .drawer-toggle, .drawer-btn, .drawer-scrim,
