@@ -894,7 +894,18 @@ const FULL: &str = r#"
   var held = function () { try { return sessionStorage.getItem(KEY) === '1'; } catch (e) { return false; } };
   var hold = function (on) { try { if (on) sessionStorage.setItem(KEY, '1'); else sessionStorage.removeItem(KEY); } catch (e) {} };
   // Before the first paint, so a page in full screen never shows its header.
-  if (held() && root()) root().setAttribute('data-ts-full', '');
+  // WebView2 and Android's WebView run this before the parser has made
+  // `<html>`, where WebKit runs it after; there the attribute goes on the
+  // element as it arrives. Without that a reload in full screen — F5, or
+  // Watch's — drew the header in a window still full screen.
+  if (held()) {
+    if (root()) root().setAttribute('data-ts-full', '');
+    else new MutationObserver(function (m, o) {
+      if (!root()) return;
+      o.disconnect();
+      if (held()) root().setAttribute('data-ts-full', '');
+    }).observe(document, { childList: true });
+  }
   var token = function () { var m = document.querySelector('meta[name="ts-token"]'); return m ? m.content : ''; };
   var tell = function (on) { location.assign('/.ts/full?on=' + (on ? 1 : 0) + '&t=' + encodeURIComponent(token())); };
   var link = function () { return document.querySelector('a[href^="/.ts/full"]'); };
@@ -1067,6 +1078,7 @@ const FULL: &str = r#"
     if (!tree() || !held()) return;
     // A page with nothing to show alone — a folder, the start page — ends it.
     if (!offered()) { hold(false); root().removeAttribute('data-ts-full'); tell(false); return; }
+    root().setAttribute('data-ts-full', '');
     // An entry of this page's own for Back to take, as going in pushed one:
     // a page reached in full screen is left by Back, before Back leaves it.
     if (!(history.state && history.state.tsFull)) history.pushState(Object.assign({}, history.state || {}, { tsFull: 1 }), '');
