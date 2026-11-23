@@ -1049,7 +1049,13 @@ Two rules it is built on:
   Android `versionCode` is derived from it, and dropping the field does not
   fall back to Cargo — the CLI writes no version at all and Gradle ships its
   own default), and Cargo insists on one too. There is no right answer to pick
-  between them, so `Stamp` refuses to pick.
+  between them, so `Stamp` refuses to pick. A config with no version leaves
+  Cargo's alone, which is treesight's own case: it has no Android build, so
+  since 22 November 2026 its `tauri.conf.json` names none and every crate here
+  takes the workspace's (`[workspace.package]` in the root `Cargo.toml`) — a
+  bump is that one line. 0.3.1 was bumped in treeserve alone and shipped a
+  treesight that said 0.3.0. Telechore, which builds for Android, keeps both
+  and is held to them by this check.
 
 A build script does not rerun because you committed, so `Stamp` watches `HEAD`,
 the ref it names and `packed-refs` — and only where those exist, since cargo

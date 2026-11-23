@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "treesight",
-  "version": "0.3.0",
   "identifier": "xyz.driota.treesight",
   "build": {
     "frontendDist": "dist"

@@ -4,9 +4,16 @@ members = ["app", "shell", "stamp"]
 # needs system webview libraries, so it is opt-in via `-p treesight`.
 default-members = ["."]
 
+# The release's number, in one place: treeserve, the desktop app and the shell
+# take it from here (`version.workspace`), and the app's tauri.conf.json names
+# none, so Tauri takes the app's. 0.3.1 was bumped here alone and shipped a
+# treesight that said 0.3.0. `stamp` is a build helper with its own.
+[workspace.package]
+version = "0.3.1"
+
 [package]
 name = "treeserve"
-version = "0.3.1"
+version.workspace = true
 edition = "2024"
 description = "Single-binary file/code tree server with server-rendered syntax highlighting, markdown, Mermaid diagrams, LaTeX math and dark/light themes — zero JS"
 license = "MIT OR Apache-2.0"
