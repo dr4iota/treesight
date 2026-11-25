@@ -9,7 +9,7 @@ default-members = ["."]
 # none, so Tauri takes the app's. 0.3.1 was bumped here alone and shipped a
 # treesight that said 0.3.0. `stamp` is a build helper with its own.
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 
 [package]
 name = "treeserve"
